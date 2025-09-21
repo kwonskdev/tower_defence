@@ -28,21 +28,30 @@ func _ready():
 	Logger.ui_log("GridRenderer initialized")
 
 func _draw():
+	if grid_system == null:
+		return
+
 	_draw_grid()
 	_draw_cells()
 	_draw_hover_highlight()
 
 func _draw_grid():
+	var grid_size = grid_system.get_grid_size()
+	var total_size = Vector2(grid_size.x * GridSystem.CELL_SIZE, grid_size.y * GridSystem.CELL_SIZE)
+
+	# 배경 그리기
+	draw_rect(Rect2(Vector2.ZERO, total_size), Color(0.1, 0.1, 0.1), true)
+
 	if not show_grid_lines:
 		return
 
-	var grid_size = grid_system.get_grid_size()
-
+	# 세로선 그리기
 	for x in range(grid_size.x + 1):
 		var start_pos = Vector2(x * GridSystem.CELL_SIZE, 0)
 		var end_pos = Vector2(x * GridSystem.CELL_SIZE, grid_size.y * GridSystem.CELL_SIZE)
 		draw_line(start_pos, end_pos, grid_line_color, 1.0)
 
+	# 가로선 그리기
 	for y in range(grid_size.y + 1):
 		var start_pos = Vector2(0, y * GridSystem.CELL_SIZE)
 		var end_pos = Vector2(grid_size.x * GridSystem.CELL_SIZE, y * GridSystem.CELL_SIZE)

@@ -19,7 +19,6 @@ signal tower_selection_requested(position: Vector2i)
 
 func _ready():
 	_setup_scroll_container()
-	_setup_camera()
 	_initialize_systems()
 	_setup_connections()
 
@@ -29,14 +28,10 @@ func _setup_scroll_container():
 	scroll_container = ScrollContainer.new()
 	scroll_container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll_container.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	scroll_container.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll_container.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	scroll_container.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	scroll_container.anchors_preset = Control.PRESET_FULL_RECT
 	add_child(scroll_container)
-
-func _setup_camera():
-	camera = Camera2D.new()
-	camera.enabled = true
-	add_child(camera)
 
 func _initialize_systems():
 	grid_system = GridSystem.new()
@@ -50,12 +45,20 @@ func _initialize_systems():
 func _setup_grid_renderer():
 	grid_renderer = GridRenderer.new()
 	grid_renderer.grid_system = grid_system
+	grid_renderer.position = Vector2.ZERO
 	grid_renderer.cell_clicked.connect(_on_cell_clicked)
 	grid_renderer.cell_hovered.connect(_on_cell_hovered)
-	scroll_container.add_child(grid_renderer)
 
+	# GridRenderer를 감쌀 컨테이너 노드 생성
+	var grid_container = Control.new()
 	var grid_world_size = grid_renderer.get_grid_world_size()
-	scroll_container.custom_minimum_size = grid_world_size
+	grid_container.custom_minimum_size = grid_world_size
+	grid_container.size = grid_world_size
+
+	grid_container.add_child(grid_renderer)
+	scroll_container.add_child(grid_container)
+
+	Logger.ui_log("Grid setup: size=%v, world_size=%v" % [grid_system.get_grid_size(), grid_world_size])
 
 func _setup_connections():
 	grid_system.tower_placed.connect(_on_tower_placed)
