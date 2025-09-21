@@ -45,8 +45,36 @@ func _ready():
 	current_stats = base_stats.duplicate()
 	_initialize_monster_type()
 	_setup_collision()
+	_setup_visual()
 
 	Logger.monster_ai_log("Monster initialized: %s (Type: %s)" % [monster_name, _type_to_string(monster_type)])
+
+func _setup_visual():
+	var sprite = get_node("Sprite2D") as Sprite2D
+	if sprite:
+		var texture = ImageTexture.new()
+		var image = Image.create(40, 40, false, Image.FORMAT_RGB8)
+
+		var monster_color = _get_monster_display_color()
+		image.fill(monster_color)
+
+		texture.set_image(image)
+		sprite.texture = texture
+
+		Logger.monster_ai_log("Monster visual setup: %s (%s)" % [monster_name, _type_to_string(monster_type)])
+
+func _get_monster_display_color() -> Color:
+	match monster_type:
+		MonsterType.NORMAL:
+			return Color.WHITE
+		MonsterType.AGGRESSIVE:
+			return Color.DARK_RED
+		MonsterType.SUPPORT:
+			return Color.CYAN
+		MonsterType.FLYING:
+			return Color.LIGHT_BLUE
+		_:
+			return Color.GRAY
 
 func _initialize_monster_type():
 	match monster_type:

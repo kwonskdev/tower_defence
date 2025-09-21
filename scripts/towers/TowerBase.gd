@@ -53,6 +53,40 @@ func _ready():
 	_initialize_tower()
 	_setup_components()
 	_apply_attribute_bonuses()
+	_setup_visual()
+
+func _setup_visual():
+	var sprite = get_node("Sprite2D") as Sprite2D
+	if sprite:
+		var texture = ImageTexture.new()
+		var image = Image.create(60, 60, false, Image.FORMAT_RGB8)
+
+		var tower_color = _get_tower_display_color()
+		image.fill(tower_color)
+
+		texture.set_image(image)
+		sprite.texture = texture
+
+		Logger.tower_log("Tower visual setup: %s color" % _color_to_string(color))
+
+func _get_tower_display_color() -> Color:
+	match color:
+		TowerColor.RED:
+			return Color.RED
+		TowerColor.ORANGE:
+			return Color.ORANGE
+		TowerColor.YELLOW:
+			return Color.YELLOW
+		TowerColor.GREEN:
+			return Color.GREEN
+		TowerColor.BLUE:
+			return Color.BLUE
+		TowerColor.INDIGO:
+			return Color(0.3, 0.0, 0.5)  # 남색
+		TowerColor.VIOLET:
+			return Color.MAGENTA
+		_:
+			return Color.GRAY
 
 func _initialize_tower():
 	current_stats = base_stats.duplicate()
