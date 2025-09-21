@@ -122,6 +122,8 @@ func _setup_flying_monster():
 	special_abilities.append("ignore_maze")
 
 func _setup_collision():
+	collision_layer = 8  # 몬스터 물리 레이어
+	collision_mask = 1   # 기본 물리 레이어(타워)와 충돌
 	var collision_shape = CollisionShape2D.new()
 	var circle_shape = CircleShape2D.new()
 	circle_shape.radius = 20
@@ -129,6 +131,8 @@ func _setup_collision():
 	add_child(collision_shape)
 
 	var area = Area2D.new()
+	area.collision_layer = 4  # 몬스터 레이어
+	area.collision_mask = 2   # 타워 레이어와만 상호작용
 	var area_collision = CollisionShape2D.new()
 	var area_circle = CircleShape2D.new()
 	area_circle.radius = 25
@@ -163,11 +167,19 @@ func _move_along_path(delta):
 	var target_grid_pos = current_path[current_path_index]
 	target_position = grid_system.grid_to_world_position(target_grid_pos)
 
+	# 물리 기반 이동으로 타워 충돌 감지
 	var direction = (target_position - global_position).normalized()
 	var move_speed = current_stats.speed * _get_speed_multiplier()
 
 	velocity = direction * move_speed
-	move_and_slide()
+
+	# CharacterBody2D의 move_and_slide()로 충돌 처리
+	var collision_occurred = move_and_slide()
+
+	# 충돌이 발생하면 경로 재계산
+	if collision_occurred and get_slide_collision_count() > 0:
+		Logger.monster_ai_log("Collision detected, recalculating path for %s" % monster_name)
+		_recalculate_path_from_current_position()
 
 	var distance_to_target = global_position.distance_to(target_position)
 	if distance_to_target < 10:
@@ -176,6 +188,19 @@ func _move_along_path(delta):
 
 		if current_path_index >= current_path.size():
 			_reach_goal()
+
+func _recalculate_path_from_current_position():
+	var current_grid_pos = grid_system.world_to_grid_position(global_position)
+	var goal_grid_pos = grid_system.get_goal_position()
+
+	if monster_type == MonsterType.FLYING:
+		_create_direct_path(current_grid_pos, goal_grid_pos)
+	else:
+		current_path = _calculate_path_with_limited_vision(current_grid_pos, goal_grid_pos)
+
+	current_path_index = 0
+	Logger.monster_ai_log("Path recalculated from %v, new path length: %d" % [current_grid_pos, current_path.size()])
+
 
 func _update_special_abilities(delta):
 	if "tower_attack" in special_abilities:

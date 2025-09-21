@@ -154,8 +154,6 @@ func _spawn_test_monster():
 		monster.monster_died.connect(_on_monster_died)
 		monster.goal_reached.connect(_on_monster_reached_goal)
 
-		add_child(monster)
-
 		monsters_spawned += 1
 		monster_spawned.emit(monster)
 

@@ -154,3 +154,9 @@ func get_lane_world_offset(lane_index: int) -> Vector2:
 	var grid_size = GridSystem.GRID_WIDTH * GridSystem.CELL_SIZE
 	var spacing = 50
 	return Vector2(lane_index * (grid_size + spacing), 0)
+
+func set_grid_system_for_lane(lane_index: int, grid_system: GridSystem):
+	var lane = get_lane(lane_index)
+	if not lane.is_empty():
+		lane["grid_system"] = grid_system
+		Logger.info("GridSystem set for lane %d" % lane_index, "LANE")

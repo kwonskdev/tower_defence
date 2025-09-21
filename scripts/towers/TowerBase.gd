@@ -95,12 +95,26 @@ func _initialize_tower():
 	attack_timer.timeout.connect(_perform_attack)
 	add_child(attack_timer)
 
+	# 물리적 충돌체 추가 (몬스터가 지나갈 수 없게)
+	var static_body = StaticBody2D.new()
+	static_body.collision_layer = 1  # 기본 물리 레이어
+	static_body.collision_mask = 0   # 다른 것과 충돌하지 않음
+	var body_collision = CollisionShape2D.new()
+	var body_shape = RectangleShape2D.new()
+	body_shape.size = Vector2(60, 60)  # 타워 크기
+	body_collision.shape = body_shape
+	static_body.add_child(body_collision)
+	add_child(static_body)
+
+	# 공격 범위 감지용 Area2D
 	range_area = Area2D.new()
-	var collision_shape = CollisionShape2D.new()
-	var circle_shape = CircleShape2D.new()
-	circle_shape.radius = current_stats.range
-	collision_shape.shape = circle_shape
-	range_area.add_child(collision_shape)
+	range_area.collision_layer = 2  # 타워 레이어
+	range_area.collision_mask = 4   # 몬스터 레이어와만 상호작용
+	var range_collision = CollisionShape2D.new()
+	var range_shape = CircleShape2D.new()
+	range_shape.radius = current_stats.range
+	range_collision.shape = range_shape
+	range_area.add_child(range_collision)
 	range_area.area_entered.connect(_on_target_entered_range)
 	range_area.area_exited.connect(_on_target_exited_range)
 	add_child(range_area)

@@ -18,8 +18,8 @@ func _ready():
 	Logger.info("MainGame started")
 
 	_setup_screen_layout()
-	_initialize_game_manager()
 	_initialize_ui_components()
+	_initialize_game_manager()
 	_setup_connections()
 
 	Logger.game_state_log("Game initialized successfully")
@@ -37,8 +37,6 @@ func _setup_screen_layout():
 func _initialize_game_manager():
 	game_manager = GameManager.new()
 	add_child(game_manager)
-
-	game_manager.start_game(GameManager.GameMode.COOP, 1)
 
 func _initialize_ui_components():
 	_create_tower_selection_ui()
@@ -76,6 +74,17 @@ func _setup_connections():
 		game_manager.economy_manager.gold_changed.connect(_on_gold_changed)
 		game_manager.economy_manager.lives_changed.connect(_on_lives_changed)
 		game_manager.economy_manager.income_changed.connect(_on_income_changed)
+		game_manager.monster_spawned.connect(_on_monster_spawned)
+
+		# GameManager의 LaneManager에 GridSystem 연결
+		var lane_manager = game_manager.get_lane_manager()
+		var grid_system = game_field.get_grid_system()
+		if lane_manager and grid_system:
+			lane_manager.set_grid_system_for_lane(0, grid_system)
+
+	# 모든 연결이 완료된 후 게임 시작
+	if game_manager:
+		game_manager.start_game(GameManager.GameMode.COOP, 1)
 
 func _on_tower_selected(tower_type: String):
 	Logger.ui_log("Tower selected from UI: %s" % tower_type)
@@ -112,6 +121,13 @@ func _update_resource_display():
 			economy.get_lives(),
 			economy.get_income_per_second()
 		)
+
+func _on_monster_spawned(monster: MonsterBase):
+	if game_field:
+		var grid_renderer = game_field.get_grid_renderer()
+		if grid_renderer:
+			grid_renderer.add_child(monster)
+			Logger.ui_log("Monster added to game field: %s" % monster.monster_name)
 
 func _notification(what):
 	if what == NOTIFICATION_WM_CLOSE_REQUEST:

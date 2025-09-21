@@ -25,7 +25,10 @@ func _ready():
 		grid_system = GridSystem.new()
 
 	grid_system.grid_updated.connect(_on_grid_updated)
-	Logger.ui_log("GridRenderer initialized")
+
+	# 그리기를 강제로 호출
+	queue_redraw()
+	Logger.ui_log("GridRenderer initialized with grid size: %v" % grid_system.get_grid_size())
 
 func _draw():
 	if grid_system == null:
@@ -39,8 +42,8 @@ func _draw_grid():
 	var grid_size = grid_system.get_grid_size()
 	var total_size = Vector2(grid_size.x * GridSystem.CELL_SIZE, grid_size.y * GridSystem.CELL_SIZE)
 
-	# 배경 그리기
-	draw_rect(Rect2(Vector2.ZERO, total_size), Color(0.1, 0.1, 0.1), true)
+	# 배경 그리기 (더 밝게)
+	draw_rect(Rect2(Vector2.ZERO, total_size), Color(0.2, 0.2, 0.2), true)
 
 	if not show_grid_lines:
 		return
@@ -101,9 +104,9 @@ func _get_cell_color(cell_type: GridSystem.CellType) -> Color:
 		GridSystem.CellType.TOWER:
 			return tower_cell_color
 		GridSystem.CellType.PATH_START:
-			return spawn_cell_color
+			return Color(0.0, 1.0, 0.0, 0.8)  # 더 밝은 녹색
 		GridSystem.CellType.PATH_END:
-			return goal_cell_color
+			return Color(1.0, 0.0, 0.0, 0.8)  # 더 밝은 빨간색
 		GridSystem.CellType.BLOCKED:
 			return Color.BLACK
 		_:
@@ -116,7 +119,7 @@ func _input(event):
 		_handle_mouse_click(event)
 
 func _handle_mouse_motion(event: InputEventMouseMotion):
-	var world_pos = to_local(event.position)
+	var world_pos = to_local(event.global_position)
 	var grid_pos = grid_system.world_to_grid_position(world_pos)
 
 	if grid_pos != hovering_position:
@@ -131,7 +134,7 @@ func _handle_mouse_click(event: InputEventMouseButton):
 	if event.button_index != MOUSE_BUTTON_LEFT:
 		return
 
-	var world_pos = to_local(event.position)
+	var world_pos = to_local(event.global_position)
 	var grid_pos = grid_system.world_to_grid_position(world_pos)
 
 	if grid_system.is_valid_position(grid_pos):

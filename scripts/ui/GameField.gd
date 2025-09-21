@@ -43,22 +43,34 @@ func _initialize_systems():
 	_setup_grid_renderer()
 
 func _setup_grid_renderer():
+	# SubViewport + Node2D 방식으로 다시 시도 (제대로 설정)
+	var grid_world_size = Vector2(640, 3200)  # 10x50 * 64
+
+	# SubViewport 생성 및 설정
+	var viewport = SubViewport.new()
+	viewport.size = grid_world_size
+	viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	viewport.handle_input_locally = false
+
+	# GridRenderer 생성
 	grid_renderer = GridRenderer.new()
 	grid_renderer.grid_system = grid_system
 	grid_renderer.position = Vector2.ZERO
 	grid_renderer.cell_clicked.connect(_on_cell_clicked)
 	grid_renderer.cell_hovered.connect(_on_cell_hovered)
 
-	# GridRenderer를 감쌀 컨테이너 노드 생성
-	var grid_container = Control.new()
-	var grid_world_size = grid_renderer.get_grid_world_size()
-	grid_container.custom_minimum_size = grid_world_size
-	grid_container.size = grid_world_size
+	viewport.add_child(grid_renderer)
 
-	grid_container.add_child(grid_renderer)
-	scroll_container.add_child(grid_container)
+	# SubViewportContainer 사용
+	var viewport_container = SubViewportContainer.new()
+	viewport_container.stretch = true
+	viewport_container.custom_minimum_size = grid_world_size
+	viewport_container.size = grid_world_size
+	viewport_container.add_child(viewport)
 
-	Logger.ui_log("Grid setup: size=%v, world_size=%v" % [grid_system.get_grid_size(), grid_world_size])
+	scroll_container.add_child(viewport_container)
+
+	Logger.ui_log("Grid setup with SubViewportContainer: size=%v" % grid_world_size)
 
 func _setup_connections():
 	grid_system.tower_placed.connect(_on_tower_placed)
@@ -201,6 +213,10 @@ func get_lane_manager() -> LaneManager:
 
 func get_color_bonus_system() -> ColorBonusSystem:
 	return color_bonus_system
+
+func get_grid_renderer() -> GridRenderer:
+	return grid_renderer
+
 
 func _input(event):
 	if event.is_action_pressed("ui_cancel") and placement_mode:
