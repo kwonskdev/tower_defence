@@ -21,9 +21,9 @@ grow_horizontal = 2
 grow_vertical = 2
 
 [node name="TopUI" type="Panel" parent="VBoxContainer"]
-custom_minimum_size = Vector2(0, 100)
 layout_mode = 2
-size_flags_vertical = 0
+size_flags_vertical = 3
+size_flags_stretch_ratio = 0.2
 
 [node name="HBoxContainer" type="HBoxContainer" parent="VBoxContainer/TopUI"]
 layout_mode = 1
@@ -33,13 +33,6 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="TitleLabel" type="Label" parent="VBoxContainer/TopUI/HBoxContainer"]
-layout_mode = 2
-size_flags_horizontal = 3
-text = "Tower Defense - Grid: 10x50"
-horizontal_alignment = 1
-vertical_alignment = 1
-
 [node name="ToolLabel" type="Label" parent="VBoxContainer/TopUI/HBoxContainer"]
 layout_mode = 2
 size_flags_horizontal = 3
@@ -47,13 +40,28 @@ text = "Tool: NONE"
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="InstructionsLabel" type="Label" parent="VBoxContainer/TopUI/HBoxContainer"]
+[node name="ToolButtons" type="HBoxContainer" parent="VBoxContainer/TopUI/HBoxContainer"]
 layout_mode = 2
 size_flags_horizontal = 3
-text = "1:Tower 2:Obstacle 3:Path E:Eraser ESC:None"
-horizontal_alignment = 1
-vertical_alignment = 1
+alignment = 1
+
+[node name="TowerButton" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/ToolButtons"]
+layout_mode = 2
+text = "타워"
+
+[node name="ObstacleButton" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/ToolButtons"]
+layout_mode = 2
+text = "장애물"
+
+[node name="EraserButton" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/ToolButtons"]
+layout_mode = 2
+text = "지우개"
+
+[node name="ClearButton" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/ToolButtons"]
+layout_mode = 2
+text = "전체삭제"
 
 [node name="GameField" parent="VBoxContainer" instance=ExtResource("2_y7n5k")]
 layout_mode = 2
 size_flags_vertical = 3
+size_flags_stretch_ratio = 0.8

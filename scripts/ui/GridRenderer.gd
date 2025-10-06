@@ -6,7 +6,7 @@ signal cell_hovered(grid_position: Vector2i)
 
 const GRID_WIDTH = 10
 const GRID_HEIGHT = 50
-const CELL_SIZE = 40
+var CELL_SIZE = 40
 
 var grid_color = Color.WHITE
 var highlight_color = Color.YELLOW
@@ -17,8 +17,16 @@ var obstacle_color = Color.RED
 var highlighted_cells: Dictionary = {}
 
 func _ready():
+	update_grid_size()
+	mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+func update_grid_size():
 	custom_minimum_size = Vector2(GRID_WIDTH * CELL_SIZE, GRID_HEIGHT * CELL_SIZE)
-	mouse_filter = Control.MOUSE_FILTER_PASS
+
+func set_container_width(width: float):
+	CELL_SIZE = int(width / GRID_WIDTH)
+	update_grid_size()
+	queue_redraw()
 
 func _draw():
 	draw_grid_background()
@@ -49,17 +57,6 @@ func draw_grid_lines():
 		var end_pos = Vector2(GRID_WIDTH * CELL_SIZE, y * CELL_SIZE)
 		draw_line(start_pos, end_pos, grid_color, 1.0)
 
-func _gui_input(event):
-	if event is InputEventMouseButton:
-		if event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-			var grid_pos = screen_to_grid(event.position)
-			if is_valid_grid_position(grid_pos):
-				cell_clicked.emit(grid_pos)
-
-	elif event is InputEventMouseMotion:
-		var grid_pos = screen_to_grid(event.position)
-		if is_valid_grid_position(grid_pos):
-			cell_hovered.emit(grid_pos)
 
 func screen_to_grid(screen_pos: Vector2) -> Vector2i:
 	return Vector2i(int(screen_pos.x / CELL_SIZE), int(screen_pos.y / CELL_SIZE))

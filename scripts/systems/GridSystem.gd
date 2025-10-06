@@ -172,7 +172,11 @@ func get_cells_with_state(state: CellState) -> Array[Vector2i]:
 func clear_all_cells():
 	for y in range(GRID_HEIGHT):
 		for x in range(GRID_WIDTH):
-			set_cell_state(Vector2i(x, y), CellState.EMPTY)
+			var pos = Vector2i(x, y)
+			var current_state = get_cell_state(pos)
+			# SPAWN과 EXIT는 유지, 나머지만 삭제
+			if current_state != CellState.SPAWN and current_state != CellState.EXIT:
+				set_cell_state(pos, CellState.EMPTY)
 
 func create_horizontal_path(y_position: int, start_x: int = 0, end_x: int = GRID_WIDTH - 1):
 	if y_position < 0 or y_position >= GRID_HEIGHT:
