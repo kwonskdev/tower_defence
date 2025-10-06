@@ -1,0 +1,59 @@
+[gd_scene load_steps=3 format=3 uid="uid://c0pkj0bw5xn7k"]
+
+[ext_resource type="Script" uid="uid://dl0r3xm8mwsii" path="res://scripts/main/MainGame.gd" id="1_x8k9m"]
+[ext_resource type="PackedScene" uid="uid://c5j8fhrv1vwap" path="res://scenes/ui/GameField.tscn" id="2_y7n5k"]
+
+[node name="MainGame" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_x8k9m")
+
+[node name="VBoxContainer" type="VBoxContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="TopUI" type="Panel" parent="VBoxContainer"]
+custom_minimum_size = Vector2(0, 100)
+layout_mode = 2
+size_flags_vertical = 0
+
+[node name="HBoxContainer" type="HBoxContainer" parent="VBoxContainer/TopUI"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="TitleLabel" type="Label" parent="VBoxContainer/TopUI/HBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Tower Defense - Grid: 10x50"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="ToolLabel" type="Label" parent="VBoxContainer/TopUI/HBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Tool: NONE"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="InstructionsLabel" type="Label" parent="VBoxContainer/TopUI/HBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "1:Tower 2:Obstacle 3:Path E:Eraser ESC:None"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="GameField" parent="VBoxContainer" instance=ExtResource("2_y7n5k")]
+layout_mode = 2
+size_flags_vertical = 3
