@@ -33,33 +33,87 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="ToolLabel" type="Label" parent="VBoxContainer/TopUI/HBoxContainer"]
+[node name="TowerButton" type="Button" parent="VBoxContainer/TopUI/HBoxContainer"]
 layout_mode = 2
 size_flags_horizontal = 3
-text = "Tool: NONE"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="ToolButtons" type="HBoxContainer" parent="VBoxContainer/TopUI/HBoxContainer"]
-layout_mode = 2
-size_flags_horizontal = 3
-alignment = 1
-
-[node name="TowerButton" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/ToolButtons"]
-layout_mode = 2
+size_flags_vertical = 3
+size_flags_stretch_ratio = 3.0
 text = "타워"
 
-[node name="ObstacleButton" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/ToolButtons"]
+[node name="Empty1Button" type="Button" parent="VBoxContainer/TopUI/HBoxContainer"]
 layout_mode = 2
-text = "장애물"
+size_flags_horizontal = 3
+size_flags_vertical = 3
+size_flags_stretch_ratio = 3.0
+text = "빈칸1"
 
-[node name="EraserButton" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/ToolButtons"]
+[node name="Empty2Button" type="Button" parent="VBoxContainer/TopUI/HBoxContainer"]
 layout_mode = 2
-text = "지우개"
+size_flags_horizontal = 3
+size_flags_vertical = 3
+size_flags_stretch_ratio = 3.0
+text = "빈칸2"
 
-[node name="ClearButton" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/ToolButtons"]
+[node name="PlayerGrid" type="GridContainer" parent="VBoxContainer/TopUI/HBoxContainer"]
 layout_mode = 2
-text = "전체삭제"
+size_flags_horizontal = 3
+size_flags_vertical = 3
+size_flags_stretch_ratio = 3.0
+columns = 3
+
+[node name="Player1" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/PlayerGrid"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+text = "1"
+
+[node name="Player2" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/PlayerGrid"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+text = "2"
+
+[node name="Player3" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/PlayerGrid"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+text = "3"
+
+[node name="Player8" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/PlayerGrid"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+text = "8"
+
+[node name="BonusButton" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/PlayerGrid"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+text = "B"
+
+[node name="Player4" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/PlayerGrid"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+text = "4"
+
+[node name="Player7" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/PlayerGrid"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+text = "7"
+
+[node name="Player6" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/PlayerGrid"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+text = "6"
+
+[node name="Player5" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/PlayerGrid"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+text = "5"
 
 [node name="GameField" parent="VBoxContainer" instance=ExtResource("2_y7n5k")]
 layout_mode = 2

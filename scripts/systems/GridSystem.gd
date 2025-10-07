@@ -13,7 +13,7 @@ enum CellState {
 	EXIT
 }
 
-const GRID_WIDTH = 10
+const GRID_WIDTH = 12
 const GRID_HEIGHT = 50
 
 var grid_data: Array[Array] = []
@@ -37,8 +37,7 @@ func initialize_grid():
 
 func connect_renderer(renderer: GridRenderer):
 	if grid_renderer:
-		grid_renderer.cell_clicked.disconnect(_on_cell_clicked)
-		grid_renderer.cell_hovered.disconnect(_on_cell_hovered)
+		disconnect_renderer()
 
 	grid_renderer = renderer
 
@@ -46,6 +45,14 @@ func connect_renderer(renderer: GridRenderer):
 		grid_renderer.cell_clicked.connect(_on_cell_clicked)
 		grid_renderer.cell_hovered.connect(_on_cell_hovered)
 		update_all_visuals()
+
+func disconnect_renderer():
+	if grid_renderer:
+		if grid_renderer.cell_clicked.is_connected(_on_cell_clicked):
+			grid_renderer.cell_clicked.disconnect(_on_cell_clicked)
+		if grid_renderer.cell_hovered.is_connected(_on_cell_hovered):
+			grid_renderer.cell_hovered.disconnect(_on_cell_hovered)
+		grid_renderer = null
 
 func _on_cell_clicked(grid_position: Vector2i):
 	print("Cell clicked: ", grid_position, " - State: ", get_state_name(get_cell_state(grid_position)))

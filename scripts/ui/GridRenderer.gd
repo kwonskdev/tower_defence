@@ -4,7 +4,7 @@ class_name GridRenderer
 signal cell_clicked(grid_position: Vector2i)
 signal cell_hovered(grid_position: Vector2i)
 
-const GRID_WIDTH = 10
+const GRID_WIDTH = 12
 const GRID_HEIGHT = 50
 var CELL_SIZE = 40
 
