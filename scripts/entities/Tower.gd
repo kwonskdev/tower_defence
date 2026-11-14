@@ -90,99 +90,144 @@ func _draw() -> void:
 	var s := cell_px * (0.55 if _is_stacked() else 0.88)
 	var c: Color = color_info.color
 	var attrs: PackedStringArray = kind.attrs
+	var has_long := "long" in attrs
+	var has_power := "power" in attrs
+	var has_splash := "splash" in attrs
 
-	# 바닥판 + 색깔 테두리
+	# 바닥판 + 색깔 테두리 (테두리 색은 색깔 보너스용으로 건설할 때 랜덤 배정된 색)
 	draw_rect(Rect2(-s * 0.5, -s * 0.5, s, s), Color(0.13, 0.13, 0.17))
 	draw_rect(Rect2(-s * 0.5, -s * 0.5, s, s), Color(c, 0.28))
 	draw_rect(Rect2(-s * 0.5, -s * 0.5, s, s), c, false, 3.0)
 
-	# 속성 배지 (아래 두 개): 그림으로 어떤 속성인지 바로 알아보게 한다
-	var badge_r := s * 0.2
-	_draw_attr_badge(kind.attrs[0], Vector2(-s * 0.27, s * 0.27), badge_r)
-	_draw_attr_badge(kind.attrs[1], Vector2(s * 0.27, s * 0.27), badge_r)
-
-	var barrel_color := Color(0.75, 0.78, 0.85)
+	# 타워의 생김새 자체가 속성을 말한다 (별도의 표시 없이 한눈에 구분되도록)
+	#  장거리 = 아주 긴 가는 포신 / 고화력 = 굵은 대포 + 포구 블록
+	#  범위   = 나팔 모양 포구 + 둥근 포탄(박격포) / 대공 = 쌍둥이 미사일(분홍 머리)
+	#  트랩   = 포신 없이 납작하게 깔린 가시판
 	if not kind.blocks:
-		# 트랩: 낮은 돔 + 가시 (포신 없음, 몬스터가 위로 지나갈 수 있음)
-		draw_circle(Vector2.ZERO, s * 0.26, Color(0.3, 0.3, 0.2))
-		for i in range(6):
-			var a := i * TAU / 6.0 + _t * 0.8
-			draw_line(Vector2.from_angle(a) * s * 0.2, Vector2.from_angle(a) * s * 0.36, _attr_color(0), 2.5)
-		if kind.anti_air:
-			_draw_air_dish(s)
+		_draw_trap_plate(s, has_long, has_power, has_splash, kind.anti_air)
+	elif kind.anti_air:
+		_draw_missiles(s, has_long, has_power, has_splash)
+	else:
+		_draw_gun(s, has_long, has_power, has_splash)
+
+
+func _aim_angle() -> float:
+	return preview_aim if preview else _aim
+
+
+## 포신(대포/박격포): 길이=장거리, 굵기+포구 블록=고화력, 나팔 포구+포탄=범위
+func _draw_gun(s: float, has_long: bool, has_power: bool, has_splash: bool) -> void:
+	var steel := Color(0.78, 0.8, 0.88)
+	var dark := Color(0.16, 0.17, 0.24)
+	var length := s * (0.95 if has_long else 0.5) - _recoil * s * 0.1
+	var width := s * (0.3 if has_power else (0.1 if has_long else 0.15))
+	var hub := s * (0.3 if has_power else 0.22)
+
+	draw_set_transform(Vector2.ZERO, _aim_angle(), Vector2.ONE)
+	draw_rect(Rect2(0, -width * 0.5, length, width), steel)
+	draw_rect(Rect2(0, -width * 0.5, length, width), dark, false, 1.5)
+	# 속성 색 띠 두 줄 (포신에 두른 줄무늬)
+	draw_rect(Rect2(length * 0.2, -width * 0.5 - 1, maxf(3.0, length * 0.09), width + 2), _attr_color(0))
+	draw_rect(Rect2(length * 0.38, -width * 0.5 - 1, maxf(3.0, length * 0.09), width + 2), _attr_color(1))
+	if has_power:
+		# 묵직한 포구 블록
+		draw_rect(Rect2(length - s * 0.17, -width * 0.72, s * 0.17, width * 1.44), dark)
+		draw_rect(Rect2(length - s * 0.17, -width * 0.72, s * 0.17, width * 1.44), steel, false, 1.5)
+	if has_splash:
+		# 나팔처럼 벌어진 포구 + 그 앞의 둥근 포탄
+		draw_colored_polygon(PackedVector2Array([
+			Vector2(length * 0.68, -width * 0.5), Vector2(length, -width * 1.2),
+			Vector2(length, width * 1.2), Vector2(length * 0.68, width * 0.5),
+		]), steel)
+		draw_polyline(PackedVector2Array([
+			Vector2(length * 0.68, -width * 0.5), Vector2(length, -width * 1.2),
+			Vector2(length, width * 1.2), Vector2(length * 0.68, width * 0.5),
+		]), dark, 1.5)
+		var bomb := Vector2(length + s * 0.14, 0)
+		draw_circle(bomb, s * 0.15, Color(0.1, 0.1, 0.14))
+		draw_arc(bomb, s * 0.15, 0.0, TAU, 14, Balance.TOWER_ATTRS["splash"].color, 2.0)
+		draw_circle(bomb + Vector2(s * 0.05, -s * 0.12), s * 0.04, Color(1.0, 0.7, 0.2))  # 도화선 불꽃
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+	draw_circle(Vector2.ZERO, hub, Color(0.28, 0.3, 0.38))
+	draw_arc(Vector2.ZERO, hub, 0.0, TAU, 18, dark, 2.0)
+	draw_circle(Vector2.ZERO, hub * 0.5, color_info.color)
+
+
+## 대공: 나란한 쌍둥이 미사일. 길이=장거리, 굵기=고화력, 둥근 머리=범위 (아니면 분홍 뾰족 머리)
+func _draw_missiles(s: float, has_long: bool, has_power: bool, has_splash: bool) -> void:
+	var steel := Color(0.85, 0.87, 0.93)
+	var dark := Color(0.16, 0.17, 0.24)
+	var air: Color = Balance.TOWER_ATTRS["air"].color
+	var ml := s * (0.85 if has_long else 0.52) - _recoil * s * 0.1
+	var mw := s * (0.2 if has_power else 0.1)
+	var off := s * (0.17 if has_power else 0.13)
+	var x0 := s * 0.06
+
+	draw_set_transform(Vector2.ZERO, _aim_angle(), Vector2.ONE)
+	for side in [-1.0, 1.0]:
+		var y: float = side * off
+		draw_rect(Rect2(x0, y - mw * 0.5, ml, mw), steel)
+		draw_rect(Rect2(x0, y - mw * 0.5, ml, mw), dark, false, 1.2)
+		draw_rect(Rect2(x0 + ml * 0.35, y - mw * 0.5 - 1, maxf(2.5, ml * 0.1), mw + 2), _attr_color(0 if kind.attrs[0] != "air" else 1))
+		if has_splash:
+			var head := Vector2(x0 + ml + mw * 0.2, y)
+			draw_circle(head, mw * 0.95, Balance.TOWER_ATTRS["splash"].color)
+			draw_arc(head, mw * 0.95, 0.0, TAU, 12, dark, 1.2)
+		else:
+			draw_colored_polygon(PackedVector2Array([
+				Vector2(x0 + ml, y - mw * 0.55), Vector2(x0 + ml + mw * 1.7, y), Vector2(x0 + ml, y + mw * 0.55),
+			]), air)
+		# 꼬리 날개
+		for fin in [-1.0, 1.0]:
+			draw_colored_polygon(PackedVector2Array([
+				Vector2(x0, y + fin * mw * 0.5), Vector2(x0 - mw * 0.9, y + fin * mw * 1.2), Vector2(x0 + mw * 0.7, y + fin * mw * 0.5),
+			]), dark)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+	var hub := s * 0.2
+	draw_circle(Vector2.ZERO, hub, Color(0.28, 0.3, 0.38))
+	draw_arc(Vector2.ZERO, hub, 0.0, TAU, 16, dark, 2.0)
+	draw_circle(Vector2.ZERO, hub * 0.5, color_info.color)
+
+
+## 트랩: 포신 없이 납작하게 깔린 가시판. 가시 길이=장거리, 굵기=고화력, 파동=범위, 위로 솟은 침=대공
+func _draw_trap_plate(s: float, has_long: bool, has_power: bool, has_splash: bool, has_air: bool) -> void:
+	var spike: Color = Balance.TOWER_ATTRS["trap"].color
+	var dark := Color(0.16, 0.17, 0.24)
+
+	if has_splash:
+		var splash: Color = Balance.TOWER_ATTRS["splash"].color
+		draw_arc(Vector2.ZERO, s * 0.44, 0.0, TAU, 24, Color(splash, 0.75), 2.5)
+		draw_arc(Vector2.ZERO, s * 0.3, 0.0, TAU, 20, Color(splash, 0.55), 2.0)
+
+	if has_air:
+		# 위로 솟은 침 (대공 트랩): 분홍 끝이 하늘을 향한다
+		var air: Color = Balance.TOWER_ATTRS["air"].color
+		var w := s * (0.12 if has_power else 0.075)
+		for i in range(5):
+			var x := (i - 2) * s * 0.18
+			var h := s * (0.78 if has_long else 0.55) * (1.0 if i % 2 == 0 else 0.72)
+			var base_y := s * 0.32
+			draw_colored_polygon(PackedVector2Array([
+				Vector2(x - w, base_y), Vector2(x, base_y - h), Vector2(x + w, base_y),
+			]), spike)
+			draw_circle(Vector2(x, base_y - h), w * 0.7, air)
+		draw_rect(Rect2(-s * 0.42, s * 0.3, s * 0.84, s * 0.1), dark)
 		return
 
-	# 포탑 + 회전하는 포신 (속성에 따라 모양이 다름)
-	var length := s * 0.5
-	var width := s * 0.13
-	if "long" in attrs:
-		length = s * 0.75
-		width = s * 0.1
-	if "power" in attrs:
-		width = s * 0.22
-	if "splash" in attrs:
-		length = s * 0.38
-		width = s * 0.28
-	length -= _recoil * s * 0.1
-
-	draw_set_transform(Vector2.ZERO, preview_aim if preview else _aim, Vector2.ONE)
-	draw_rect(Rect2(0, -width * 0.5, length, width), barrel_color)
-	draw_rect(Rect2(length - s * 0.06, -width * 0.5 - 1, s * 0.06, width + 2), _attr_color(0))
-	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-	draw_circle(Vector2.ZERO, s * 0.24, Color(0.28, 0.3, 0.38))
-	draw_circle(Vector2.ZERO, s * 0.13, c)
-	if kind.anti_air:
-		_draw_air_dish(s)
-
-
-## 속성을 나타내는 둥근 배지. 속성마다 모양이 달라서 글자 없이도 구분된다.
-##  장거리 = 조준경(십자선) / 고화력 = 폭발 별 / 범위 = 퍼지는 파동 / 트랩 = 가시 / 대공 = 위로 향한 화살표
-func _draw_attr_badge(attr_id: String, center: Vector2, rad: float) -> void:
-	var col: Color = Balance.TOWER_ATTRS[attr_id].color
-	draw_circle(center, rad, Color(0.05, 0.05, 0.09, 0.92))
-	draw_arc(center, rad, 0.0, TAU, 20, col, maxf(1.5, rad * 0.12))
-	var g := rad * 0.62
-	match attr_id:
-		"long":
-			draw_arc(center, g * 0.75, 0.0, TAU, 16, col, maxf(1.5, g * 0.18))
-			for i in range(4):
-				var d := Vector2.from_angle(i * PI * 0.5)
-				draw_line(center + d * g * 0.4, center + d * g * 1.2, col, maxf(1.5, g * 0.18))
-			draw_circle(center, g * 0.16, col)
-		"power":
-			var star := PackedVector2Array()
-			for i in range(10):
-				var rr := g * 1.15 if i % 2 == 0 else g * 0.5
-				star.append(center + Vector2.from_angle(-PI * 0.5 + i * PI * 0.2) * rr)
-			draw_colored_polygon(star, col)
-		"splash":
-			draw_circle(center, g * 0.2, col)
-			draw_arc(center, g * 0.6, 0.0, TAU, 16, col, maxf(1.5, g * 0.16))
-			draw_arc(center, g * 1.05, 0.0, TAU, 20, Color(col, 0.65), maxf(1.5, g * 0.14))
-		"trap":
-			for i in range(-1, 2):
-				var x := i * g * 0.62
-				draw_colored_polygon(PackedVector2Array([
-					center + Vector2(x - g * 0.3, g * 0.75),
-					center + Vector2(x, -g * 0.8),
-					center + Vector2(x + g * 0.3, g * 0.75),
-				]), col)
-		"air":
-			draw_colored_polygon(PackedVector2Array([
-				center + Vector2(0, -g * 1.15),
-				center + Vector2(g * 0.85, g * 0.0),
-				center + Vector2(g * 0.3, g * 0.0),
-				center + Vector2(g * 0.3, g * 0.95),
-				center + Vector2(-g * 0.3, g * 0.95),
-				center + Vector2(-g * 0.3, g * 0.0),
-				center + Vector2(-g * 0.85, g * 0.0),
-			]), col)
-
-
-## 대공 속성 표시: 포탑 위의 레이더 접시 + 위로 솟은 미사일 핀
-func _draw_air_dish(s: float) -> void:
-	var air := Balance.TOWER_ATTRS["air"].color
-	var p := Vector2(-s * 0.28, -s * 0.28)
-	draw_arc(p, s * 0.17, PI * 0.1, PI * 1.1, 10, air, 3.0)
-	draw_line(p, p + Vector2(0, -s * 0.2), air, 2.0)
-	draw_circle(p + Vector2(0, -s * 0.2), s * 0.04, Color.WHITE)
+	# 사방으로 뻗은 가시
+	var count := 8
+	var spike_len := s * (0.5 if has_long else 0.34)
+	var spike_w := s * (0.22 if has_power else 0.1)
+	for i in range(count):
+		var a := i * TAU / count + PI / count
+		var d := Vector2.from_angle(a)
+		var perp := Vector2(-d.y, d.x)
+		var base := d * s * 0.14
+		draw_colored_polygon(PackedVector2Array([
+			base + perp * spike_w * 0.5, d * spike_len, base - perp * spike_w * 0.5,
+		]), spike)
+		draw_polyline(PackedVector2Array([base + perp * spike_w * 0.5, d * spike_len, base - perp * spike_w * 0.5]), dark, 1.2)
+	draw_circle(Vector2.ZERO, s * 0.15, Color(0.3, 0.3, 0.2))
+	draw_arc(Vector2.ZERO, s * 0.15, 0.0, TAU, 14, dark, 2.0)
