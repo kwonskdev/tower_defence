@@ -9,7 +9,8 @@ enum CellState {
 	OBSTACLE,
 	PATH,
 	SPAWN,
-	EXIT
+	EXIT,
+	TRAP_TOWER  # 길을 막지 않는 타워
 }
 
 const GRID_WIDTH = 12
@@ -82,12 +83,10 @@ func update_cell_visual(position: Vector2i, state: CellState):
 		CellState.EMPTY:
 			grid_renderer.clear_cell_highlight(position)
 			return
-		CellState.TOWER:
-			color = Color.BLUE
-			color.a = 0.6
-		CellState.OBSTACLE:
-			color = Color.RED
-			color.a = 0.6
+		CellState.TOWER, CellState.TRAP_TOWER, CellState.OBSTACLE:
+			# 타워는 Tower 노드가, 장애물(보스 몸통)은 보스가 직접 그린다
+			grid_renderer.clear_cell_highlight(position)
+			return
 		CellState.PATH:
 			color = Color.GREEN
 			color.a = 0.4
@@ -148,4 +147,5 @@ func get_state_name(state: CellState) -> String:
 		CellState.PATH: return "PATH"
 		CellState.SPAWN: return "SPAWN"
 		CellState.EXIT: return "EXIT"
+		CellState.TRAP_TOWER: return "TRAP_TOWER"
 		_: return "UNKNOWN"

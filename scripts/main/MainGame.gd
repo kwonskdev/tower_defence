@@ -14,6 +14,7 @@ class_name MainGame
 const MONSTER_KIND_BY_INDEX := {1: "income", 2: "balanced", 3: "power"}
 
 var hud_label: Label
+var tower_view: GridContainer
 var _hud_timer := 0.0
 
 # 플레이어 버튼들
@@ -47,7 +48,40 @@ func setup_ui():
 			monster_buttons[idx].tooltip_text = "%s  비용 %d / 수입 +%d / 보스 DPS %.1f" % [
 				kind.name, kind.cost, kind.income, kind.dps]
 
+	_create_tower_view()
 	_create_hud()
+
+func _create_tower_view():
+	# 타워 배럭: 속성 2개 조합 타워 선택 (코드로 생성, 몬스터 뷰와 같은 자리를 쓴다)
+	var left_panel: Control = main_view.get_parent()
+	tower_view = GridContainer.new()
+	tower_view.columns = Balance.TOWER_COMBOS.size() + 1
+	tower_view.visible = false
+	left_panel.add_child(tower_view)
+	tower_view.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	var back := Button.new()
+	back.text = "←"
+	back.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	back.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	back.pressed.connect(_on_tower_back_pressed)
+	tower_view.add_child(back)
+
+	for kind_id in Balance.TOWER_COMBOS:
+		var kind := Balance.tower_kind(kind_id)
+		var b := Button.new()
+		var short := ""
+		for a in kind.attrs:
+			short += Balance.TOWER_ATTRS[a].short
+		b.text = short + "\n" + str(kind.cost)
+		b.tooltip_text = "%s  비용 %d / 사거리 %.1f / 공격력 %.1f / 쿨다운 %.2fs%s%s" % [
+			kind.name, kind.cost, kind.range, kind.damage, kind.cooldown,
+			" / 범위 %.1f" % kind.splash if kind.splash > 0.0 else "",
+			"" if kind.blocks else " / 길을 막지 못함"]
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		b.pressed.connect(_on_tower_kind_selected.bind(kind_id))
+		tower_view.add_child(b)
 
 func _create_hud():
 	# 하단 상태 표시줄 (골드/생명/보스). 입력은 통과시킨다.
@@ -80,9 +114,10 @@ func _update_hud():
 	match boss.state:
 		BossController.State.VICTORY: state_text = "  [승리]"
 		BossController.State.DEFEAT: state_text = "  [패배]"
-	hud_label.text = "골드 %d (+%d/%.0fs)  생명 %d  타워 %d개%s\n보스 %d/%d  남은 %ds  보스DPS %.1f" % [
+	var selected := Balance.tower_kind(game_field.selected_tower_kind)
+	hud_label.text = "골드 %d (+%d/%.0fs)  생명 %d  타워 %d개%s\n선택 타워: %s (%d골드)\n보스 %d/%d  남은 %ds  보스DPS %.1f" % [
 		lane.gold, lane.income, Balance.INCOME_INTERVAL, lane.lives, lane.towers.size(), state_text,
-		int(boss.hp), int(boss.max_hp), int(boss.time_left), boss.total_dps]
+		selected.name, selected.cost, int(boss.hp), int(boss.max_hp), int(boss.time_left), boss.total_dps]
 
 func connect_signals():
 	# 버튼 클릭 이벤트 연결
@@ -125,8 +160,21 @@ func reset_game():
 
 # 버튼 클릭 이벤트 핸들러들
 func _on_tower_button_pressed():
+	# 타워 배럭으로 전환
+	Log.info(Log.Category.UI, "타워 배럭 열기")
+	main_view.visible = false
+	tower_view.visible = true
+
+func _on_tower_back_pressed():
+	tower_view.visible = false
+	main_view.visible = true
+
+func _on_tower_kind_selected(kind_id: String):
 	if game_field:
+		game_field.set_tower_kind(kind_id)
 		game_field.set_current_tool(GameField.PlacementTool.TOWER)
+	tower_view.visible = false
+	main_view.visible = true
 
 func _on_monster_button_pressed():
 	# 몬스터 뷰로 전환

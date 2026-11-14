@@ -10,6 +10,7 @@ var lanes: Dictionary = {}  # player_id -> LaneController (참여한 플레이�
 var current_player_id: int = 0  # 지금 화면에 보고 있는 레인
 var local_player_id: int = 0    # 내 플레이어 (타워 건설/몬스터 생산은 내 레인에서만)
 var boss: BossController
+var selected_tower_kind: String = Balance.TOWER_COMBOS[0]
 
 var current_tool: PlacementTool = PlacementTool.NONE
 
@@ -176,20 +177,26 @@ func place_tower(grid_position: Vector2i) -> bool:
 		return false
 	var grid_system := get_current_grid_system()
 	var tag := grid_system.lane_tag()
+	var kind := Balance.tower_kind(selected_tower_kind)
 
-	if lane.is_cell_occupied(grid_position):
-		Log.debug(Log.Category.TOWER, "[%s] 타워 건설 실패 %s: 몬스터가 있는 칸" % [tag, grid_position])
-		return false
 	if not grid_system.is_cell_empty(grid_position):
 		Log.debug(Log.Category.TOWER, "[%s] 타워 건설 실패 %s: 빈 칸 아님(%s)" % [
 			tag, grid_position, grid_system.get_state_name(grid_system.get_cell_state(grid_position))])
 		return false
-	if not lane.try_spend(Balance.TOWER_COST, "타워 건설 %s" % grid_position):
+	# 길을 막는 타워는 몬스터와 몸이 겹친 칸에 지을 수 없다 (트랩은 위로 지나가므로 가능)
+	if kind.blocks and lane.is_cell_occupied(grid_position):
+		Log.debug(Log.Category.TOWER, "[%s] 타워 건설 실패 %s: 몬스터가 있는 칸" % [tag, grid_position])
+		return false
+	if not lane.try_spend(kind.cost, "타워 건설 %s(%s)" % [grid_position, kind.name]):
 		return false
 
-	grid_system.set_cell_state(grid_position, GridSystem.CellState.TOWER)
-	Log.info(Log.Category.TOWER, "[%s] 타워 건설 %s" % [tag, grid_position])
+	lane.build_tower(grid_position, selected_tower_kind)
+	Log.info(Log.Category.TOWER, "[%s] 타워 건설 %s: %s" % [tag, grid_position, kind.name])
 	return true
+
+func set_tower_kind(kind_id: String):
+	selected_tower_kind = kind_id
+	Log.info(Log.Category.UI, "타워 종류 선택: %s" % Balance.tower_kind(kind_id).name)
 
 ## 몬스터를 생산해 보스 레인으로 보낸다 (수입 영구 증가)
 func send_monster(kind_id: String) -> bool:

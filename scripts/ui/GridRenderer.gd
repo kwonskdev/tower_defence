@@ -3,7 +3,7 @@ class_name GridRenderer
 
 const GRID_WIDTH = 12
 const GRID_HEIGHT = 50
-var CELL_SIZE = 40
+var CELL_SIZE: int = 40
 
 var grid_color = Color.WHITE
 
