@@ -3,7 +3,7 @@ class_name Tower
 ## 타워 1기. 사거리 안에서 기지에 가장 가까운 몬스터를 조준해 투사체를 발사한다.
 ## - 대공 속성 타워는 공중 몬스터만, 그 외 타워는 지상 몬스터만 공격한다.
 ## 외형: 바닥판 테두리 = 랜덤 배정된 색깔, 아래 두 점 = 속성 색, 포신 모양 = 속성 조합.
-## preview=true이면 아이콘용 미리보기: 포신이 천천히 돌기만 한다.
+## preview=true이면 아이콘용 미리보기: 가만히 서 있다 (선택창이 산만하지 않도록 아무것도 움직이지 않는다).
 
 var cell: Vector2i
 var kind: Dictionary      # Balance.tower_kind() 결과
@@ -14,6 +14,7 @@ var stack_index: int = 0  # 같은 칸에 겹친 트랩 중 몇 번째인지
 # 아이콘 미리보기용
 var preview: bool = false
 var preview_cell: float = 40.0
+var preview_aim: float = -PI * 0.25  # 아이콘에서 포신이 가리키는 방향 (오른쪽 위)
 
 # 한 칸에 트랩이 여러 개일 때 칸 안에서의 위치 (셀 단위)
 const STACK_OFFSETS := [
@@ -52,11 +53,7 @@ func center_cell_pos() -> Vector2:
 
 func _process(delta: float) -> void:
 	if preview:
-		if is_visible_in_tree():
-			_t += delta
-			_aim += delta * 0.9
-			queue_redraw()
-		return
+		return  # 아이콘은 가만히 둔다
 
 	_t += delta
 	_recoil = maxf(0.0, _recoil - delta * 5.0)
@@ -99,9 +96,10 @@ func _draw() -> void:
 	draw_rect(Rect2(-s * 0.5, -s * 0.5, s, s), Color(c, 0.28))
 	draw_rect(Rect2(-s * 0.5, -s * 0.5, s, s), c, false, 3.0)
 
-	# 속성 표시 (아래 두 점)
-	draw_circle(Vector2(-s * 0.3, s * 0.3), s * 0.09, _attr_color(0))
-	draw_circle(Vector2(s * 0.3, s * 0.3), s * 0.09, _attr_color(1))
+	# 속성 배지 (아래 두 개): 그림으로 어떤 속성인지 바로 알아보게 한다
+	var badge_r := s * 0.2
+	_draw_attr_badge(kind.attrs[0], Vector2(-s * 0.27, s * 0.27), badge_r)
+	_draw_attr_badge(kind.attrs[1], Vector2(s * 0.27, s * 0.27), badge_r)
 
 	var barrel_color := Color(0.75, 0.78, 0.85)
 	if not kind.blocks:
@@ -127,7 +125,7 @@ func _draw() -> void:
 		width = s * 0.28
 	length -= _recoil * s * 0.1
 
-	draw_set_transform(Vector2.ZERO, _aim, Vector2.ONE)
+	draw_set_transform(Vector2.ZERO, preview_aim if preview else _aim, Vector2.ONE)
 	draw_rect(Rect2(0, -width * 0.5, length, width), barrel_color)
 	draw_rect(Rect2(length - s * 0.06, -width * 0.5 - 1, s * 0.06, width + 2), _attr_color(0))
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
@@ -137,10 +135,54 @@ func _draw() -> void:
 		_draw_air_dish(s)
 
 
+## 속성을 나타내는 둥근 배지. 속성마다 모양이 달라서 글자 없이도 구분된다.
+##  장거리 = 조준경(십자선) / 고화력 = 폭발 별 / 범위 = 퍼지는 파동 / 트랩 = 가시 / 대공 = 위로 향한 화살표
+func _draw_attr_badge(attr_id: String, center: Vector2, rad: float) -> void:
+	var col: Color = Balance.TOWER_ATTRS[attr_id].color
+	draw_circle(center, rad, Color(0.05, 0.05, 0.09, 0.92))
+	draw_arc(center, rad, 0.0, TAU, 20, col, maxf(1.5, rad * 0.12))
+	var g := rad * 0.62
+	match attr_id:
+		"long":
+			draw_arc(center, g * 0.75, 0.0, TAU, 16, col, maxf(1.5, g * 0.18))
+			for i in range(4):
+				var d := Vector2.from_angle(i * PI * 0.5)
+				draw_line(center + d * g * 0.4, center + d * g * 1.2, col, maxf(1.5, g * 0.18))
+			draw_circle(center, g * 0.16, col)
+		"power":
+			var star := PackedVector2Array()
+			for i in range(10):
+				var rr := g * 1.15 if i % 2 == 0 else g * 0.5
+				star.append(center + Vector2.from_angle(-PI * 0.5 + i * PI * 0.2) * rr)
+			draw_colored_polygon(star, col)
+		"splash":
+			draw_circle(center, g * 0.2, col)
+			draw_arc(center, g * 0.6, 0.0, TAU, 16, col, maxf(1.5, g * 0.16))
+			draw_arc(center, g * 1.05, 0.0, TAU, 20, Color(col, 0.65), maxf(1.5, g * 0.14))
+		"trap":
+			for i in range(-1, 2):
+				var x := i * g * 0.62
+				draw_colored_polygon(PackedVector2Array([
+					center + Vector2(x - g * 0.3, g * 0.75),
+					center + Vector2(x, -g * 0.8),
+					center + Vector2(x + g * 0.3, g * 0.75),
+				]), col)
+		"air":
+			draw_colored_polygon(PackedVector2Array([
+				center + Vector2(0, -g * 1.15),
+				center + Vector2(g * 0.85, g * 0.0),
+				center + Vector2(g * 0.3, g * 0.0),
+				center + Vector2(g * 0.3, g * 0.95),
+				center + Vector2(-g * 0.3, g * 0.95),
+				center + Vector2(-g * 0.3, g * 0.0),
+				center + Vector2(-g * 0.85, g * 0.0),
+			]), col)
+
+
 ## 대공 속성 표시: 포탑 위의 레이더 접시 + 위로 솟은 미사일 핀
 func _draw_air_dish(s: float) -> void:
 	var air := Balance.TOWER_ATTRS["air"].color
-	var p := Vector2(s * 0.28, -s * 0.28)
+	var p := Vector2(-s * 0.28, -s * 0.28)
 	draw_arc(p, s * 0.17, PI * 0.1, PI * 1.1, 10, air, 3.0)
 	draw_line(p, p + Vector2(0, -s * 0.2), air, 2.0)
 	draw_circle(p + Vector2(0, -s * 0.2), s * 0.04, Color.WHITE)

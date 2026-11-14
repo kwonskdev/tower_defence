@@ -56,4 +56,5 @@ func _layout() -> void:
 	elif _node is Tower:
 		var t: Tower = _node
 		t.preview_cell = s * 1.0
+		t.queue_redraw()  # 크기가 바뀌면 다시 그린다 (아이콘은 평소에 다시 그리지 않는다)
 	_node.position = center
