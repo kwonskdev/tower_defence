@@ -10,6 +10,7 @@ var lanes: Dictionary = {}  # player_id -> LaneController (참여한 플레이�
 var current_player_id: int = 0  # 지금 화면에 보고 있는 레인
 var local_player_id: int = 0    # 내 플레이어 (타워 건설/몬스터 생산은 내 레인에서만)
 var boss: BossController
+var lane_scroll_rows: Dictionary = {}  # 레인별로 마지막에 보던 위치 (맨 위 줄 번호). 레인을 바꿔도 각자 위치를 기억한다
 var selected_tower_kind: String = Balance.TOWER_COMBOS[0]
 
 var current_tool: PlacementTool = PlacementTool.NONE
@@ -149,6 +150,11 @@ func switch_player(player_id: int):
 	if player_id < 0 or player_id > BOSS_LANE_ID:
 		Log.warn(Log.Category.UI, "잘못된 플레이어 전환 요청: %d" % player_id)
 		return
+	if player_id == current_player_id:
+		return
+
+	# 떠나는 레인의 스크롤 위치를 기억해 둔다 (칸 크기가 바뀌어도 되도록 줄 번호로 저장)
+	lane_scroll_rows[current_player_id] = get_v_scroll() / float(grid_renderer.CELL_SIZE)
 
 	# 이전 플레이어의 렌더러 연결 해제
 	get_current_grid_system().disconnect_renderer()
@@ -165,7 +171,23 @@ func switch_player(player_id: int):
 	if boss:
 		boss.set_lane_visible(player_id == BOSS_LANE_ID)
 
-	Log.info(Log.Category.UI, "레인 전환 -> %s" % get_current_grid_system().lane_tag())
+	# 새 레인에서 마지막으로 보던 위치로 돌아간다
+	var row: float = lane_scroll_rows.get(player_id, _default_scroll_row(player_id))
+	set_v_scroll(maxi(0, int(row * grid_renderer.CELL_SIZE)))
+
+	Log.info(Log.Category.UI, "레인 전환 -> %s (스크롤 %d번째 줄)" % [get_current_grid_system().lane_tag(), int(row)])
+
+## 처음 보는 레인의 시작 위치. 보스 레인은 보스가 화면 가운데에 오도록 한다.
+func _default_scroll_row(lane_id: int) -> float:
+	if lane_id == BOSS_LANE_ID:
+		var visible_rows := size.y / float(grid_renderer.CELL_SIZE)
+		return maxf(0.0, Balance.BOSS_CENTER.y - visible_rows * 0.5)
+	return 0.0
+
+## 레인의 row번째 줄이 화면 가운데에 오도록 스크롤한다 (미니맵 클릭/드래그용)
+func scroll_to_row(row: float):
+	var target := row * grid_renderer.CELL_SIZE - size.y * 0.5
+	set_v_scroll(maxi(0, int(target)))
 
 func place_tower(grid_position: Vector2i) -> bool:
 	if current_player_id != local_player_id:

@@ -118,6 +118,28 @@ func _attach_minimap(button: Button, lane_index: int):
 	view.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	button.add_child(view)
 	view.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	button.gui_input.connect(_on_minimap_gui_input.bind(button, lane_index))
+
+## 미니맵 조작
+## - 다른 레인을 누르면: 그 레인으로 전환 (그 레인에서 마지막으로 보던 위치로 돌아간다)
+## - 지금 보는 레인을 누르거나 누른 채 끌면: 누른 위치로 이동
+func _on_minimap_gui_input(event: InputEvent, button: Button, lane_index: int):
+	if event is InputEventMouseButton:
+		if event.button_index != MOUSE_BUTTON_LEFT or not event.pressed:
+			return
+		if game_field.current_player_id != lane_index:
+			game_field.switch_player(lane_index)
+			return
+	elif event is InputEventMouseMotion:
+		if (event.button_mask & MOUSE_BUTTON_MASK_LEFT) == 0 or game_field.current_player_id != lane_index:
+			return
+	else:
+		return
+
+	# 미니맵 안에서 누른 높이 -> 레인의 몇 번째 줄인지 (MiniMapView의 안쪽 여백 2px 반영)
+	var inner_h := button.size.y - 4.0
+	var row := clampf((event.position.y - 2.0) / inner_h, 0.0, 1.0) * GridSystem.GRID_HEIGHT
+	game_field.scroll_to_row(row)
 
 func _create_hud():
 	# 하단 상태 표시줄 (골드/생명/보스). 입력은 통과시킨다.
