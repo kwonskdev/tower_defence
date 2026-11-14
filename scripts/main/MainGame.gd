@@ -15,7 +15,7 @@ class_name MainGame
 @onready var monster_buttons: Array[Button] = []
 
 func _ready():
-	print("MainGame started - Grid Map System")
+	Log.info(Log.Category.GAME, "MainGame 시작")
 	setup_ui()
 	connect_signals()
 
@@ -34,9 +34,6 @@ func setup_ui():
 			monster_buttons.append(button)
 
 func connect_signals():
-	if game_field and game_field.grid_renderer:
-		game_field.grid_renderer.cell_clicked.connect(_on_cell_clicked)
-
 	# 버튼 클릭 이벤트 연결
 	if tower_button:
 		tower_button.pressed.connect(_on_tower_button_pressed)
@@ -57,21 +54,11 @@ func connect_signals():
 	for i in range(1, monster_buttons.size()):
 		monster_buttons[i].pressed.connect(_on_monster_selected.bind(i))
 
-func _on_cell_clicked(grid_position: Vector2i):
-	if game_field:
-		game_field._on_grid_cell_clicked(grid_position)
-		update_tool_display()
-
-func update_tool_display():
-	# UI 업데이트 (라벨 제거됨)
-	pass
-
 func _input(event):
 	# 마우스 우클릭으로 도구 취소
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_RIGHT:
 		if game_field:
 			game_field.set_current_tool(GameField.PlacementTool.NONE)
-			update_tool_display()
 
 	# 키보드 단축키 유지 (모바일에서는 사용 안 함)
 	if event is InputEventKey and event.pressed:
@@ -82,50 +69,40 @@ func _input(event):
 				get_tree().quit()
 
 func reset_game():
-	print("Resetting game...")
+	Log.info(Log.Category.GAME, "게임 리셋")
 	get_tree().reload_current_scene()
-
-func clear_grid():
-	if game_field:
-		game_field.clear_all_cells()
-		print("Grid cleared")
-
-func center_view_on_spawn():
-	if game_field:
-		game_field.center_view_on_cell(Vector2i(0, 5))
 
 # 버튼 클릭 이벤트 핸들러들
 func _on_tower_button_pressed():
 	if game_field:
 		game_field.set_current_tool(GameField.PlacementTool.TOWER)
-		update_tool_display()
 
 func _on_monster_button_pressed():
 	# 몬스터 뷰로 전환
+	Log.info(Log.Category.UI, "몬스터 배럭 열기")
 	main_view.visible = false
 	monster_view.visible = true
 
 func _on_empty2_button_pressed():
 	if game_field:
 		game_field.set_current_tool(GameField.PlacementTool.NONE)
-		update_tool_display()
 
 # 플레이어 전환 핸들러
 func _on_player_button_pressed(player_id: int):
 	if game_field:
 		game_field.switch_player(player_id)
-		update_tool_display()
 
 # 보너스 맵 버튼 핸들러
 func _on_bonus_button_pressed():
-	print("Bonus map button pressed - 나중에 구현")
+	Log.info(Log.Category.UI, "보너스 맵 버튼 (미구현)")
 
 # 뒤로 가기 버튼 핸들러
 func _on_back_button_pressed():
 	# 메인 뷰로 돌아가기
+	Log.info(Log.Category.UI, "몬스터 배럭 닫기")
 	monster_view.visible = false
 	main_view.visible = true
 
 # 몬스터 선택 핸들러
 func _on_monster_selected(monster_id: int):
-	print("Monster ", monster_id, " selected")
+	Log.info(Log.Category.UI, "몬스터 M%d 선택 (미구현)" % (monster_id + 1))

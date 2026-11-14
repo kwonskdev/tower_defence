@@ -1,14 +1,13 @@
 extends ScrollContainer
 class_name GameField
 
-@onready var grid_renderer: GridRenderer
+var grid_renderer: GridRenderer
 
 const MAX_PLAYERS = 8
 var grid_systems: Array[GridSystem] = []
 var current_player_id: int = 0
 
 var current_tool: PlacementTool = PlacementTool.NONE
-var scroll_speed: float = 500.0
 
 # 마우스 드래그 스크롤 변수들
 var is_dragging: bool = false
@@ -18,10 +17,7 @@ var drag_threshold: float = 10.0  # 드래그로 인식할 최소 거리
 
 enum PlacementTool {
 	NONE,
-	TOWER,
-	OBSTACLE,
-	PATH,
-	ERASER
+	TOWER
 }
 
 func _ready():
@@ -37,9 +33,9 @@ func setup_game_field():
 	for i in range(MAX_PLAYERS):
 		var grid_system = GridSystem.new()
 		grid_system.name = "GridSystem_" + str(i)
+		grid_system.player_id = i
 		add_child(grid_system)
 		grid_systems.append(grid_system)
-		grid_system.cell_state_changed.connect(_on_cell_state_changed)
 
 	# 첫 번째 플레이어의 그리드를 표시
 	get_current_grid_system().connect_renderer(grid_renderer)
@@ -56,13 +52,9 @@ func setup_game_field():
 		grid_renderer.set_container_width(container_width)
 
 func setup_scroll_container():
-	scroll_horizontal = false  # 가로 스크롤 완전 비활성화
-	scroll_vertical = true
+	# 가로 스크롤 비활성화 (세로 드래그 스크롤만 사용)
+	horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	follow_focus = true
-
-func _on_cell_state_changed(position: Vector2i, old_state: GridSystem.CellState, new_state: GridSystem.CellState):
-	var grid_system = get_current_grid_system()
-	print("Cell [", position.x, ",", position.y, "] changed from ", grid_system.get_state_name(old_state), " to ", grid_system.get_state_name(new_state))
 
 func _input(event):
 	if not get_global_rect().has_point(get_global_mouse_position()):
@@ -116,38 +108,21 @@ func handle_cell_click(event):
 			_on_grid_cell_clicked(grid_pos)
 
 
-func apply_scroll(delta: Vector2):
-	var current_scroll = Vector2(get_h_scroll(), get_v_scroll())
-	var new_scroll = current_scroll + delta * get_process_delta_time()
-
-	var max_scroll_h = get_h_scroll_bar().max_value if get_h_scroll_bar() else 0
-	var max_scroll_v = get_v_scroll_bar().max_value if get_v_scroll_bar() else 0
-
-	new_scroll.x = clamp(new_scroll.x, 0, max_scroll_h)
-	new_scroll.y = clamp(new_scroll.y, 0, max_scroll_v)
-
-	set_h_scroll(int(new_scroll.x))
-	set_v_scroll(int(new_scroll.y))
-
 func _on_grid_cell_clicked(grid_position: Vector2i):
+	Log.debug(Log.Category.UI, "셀 클릭 %s (도구=%s)" % [grid_position, PlacementTool.keys()[current_tool]])
 	if current_tool == PlacementTool.NONE:
 		return
 
 	match current_tool:
 		PlacementTool.TOWER:
 			place_tower(grid_position)
-		PlacementTool.OBSTACLE:
-			place_obstacle(grid_position)
-		PlacementTool.PATH:
-			place_path(grid_position)
-		PlacementTool.ERASER:
-			clear_cell(grid_position)
 
 func get_current_grid_system() -> GridSystem:
 	return grid_systems[current_player_id]
 
 func switch_player(player_id: int):
 	if player_id < 0 or player_id >= MAX_PLAYERS:
+		Log.warn(Log.Category.UI, "잘못된 플레이어 전환 요청: %d" % player_id)
 		return
 
 	# 이전 플레이어의 렌더러 연결 해제
@@ -158,71 +133,22 @@ func switch_player(player_id: int):
 
 	# 새 플레이어의 렌더러 연결
 	get_current_grid_system().connect_renderer(grid_renderer)
-	get_current_grid_system().update_all_visuals()
 
-	print("Switched to Player ", player_id + 1)
+	Log.info(Log.Category.UI, "플레이어 맵 전환 -> P%d" % (player_id + 1))
 
 func place_tower(grid_position: Vector2i) -> bool:
 	var grid_system = get_current_grid_system()
 	if grid_system.is_cell_empty(grid_position):
 		grid_system.set_cell_state(grid_position, GridSystem.CellState.TOWER)
+		Log.info(Log.Category.TOWER, "[P%d] 타워 건설 %s" % [current_player_id + 1, grid_position])
 		return true
+	Log.debug(Log.Category.TOWER, "[P%d] 타워 건설 실패 %s: 빈 칸 아님(%s)" % [
+		current_player_id + 1, grid_position, grid_system.get_state_name(grid_system.get_cell_state(grid_position))])
 	return false
-
-func place_obstacle(grid_position: Vector2i) -> bool:
-	var grid_system = get_current_grid_system()
-	if grid_system.is_cell_empty(grid_position):
-		grid_system.set_cell_state(grid_position, GridSystem.CellState.OBSTACLE)
-		return true
-	return false
-
-func place_path(grid_position: Vector2i) -> bool:
-	var grid_system = get_current_grid_system()
-	if grid_system.is_cell_empty(grid_position):
-		grid_system.set_cell_state(grid_position, GridSystem.CellState.PATH)
-		return true
-	return false
-
-func clear_cell(grid_position: Vector2i) -> bool:
-	var grid_system = get_current_grid_system()
-	grid_system.set_cell_state(grid_position, GridSystem.CellState.EMPTY)
-	return true
-
-func center_view_on_cell(grid_position: Vector2i):
-	if not grid_renderer or not is_inside_tree():
-		return
-
-	var world_pos = grid_renderer.grid_to_screen(grid_position)
-	var viewport_size = get_viewport_rect().size
-
-	var target_scroll = Vector2(
-		world_pos.x - viewport_size.x * 0.5,
-		world_pos.y - viewport_size.y * 0.5
-	)
-
-	var max_scroll_h = get_h_scroll_bar().max_value if get_h_scroll_bar() else 0
-	var max_scroll_v = get_v_scroll_bar().max_value if get_v_scroll_bar() else 0
-
-	target_scroll.x = clamp(target_scroll.x, 0, max_scroll_h)
-	target_scroll.y = clamp(target_scroll.y, 0, max_scroll_v)
-
-	set_h_scroll(int(target_scroll.x))
-	set_v_scroll(int(target_scroll.y))
-
-func get_grid_system() -> GridSystem:
-	return get_current_grid_system()
-
-func get_grid_renderer() -> GridRenderer:
-	return grid_renderer
-
-func clear_all_cells():
-	var grid_system = get_current_grid_system()
-	if grid_system:
-		grid_system.clear_all_cells()
 
 func get_current_tool() -> PlacementTool:
 	return current_tool
 
 func set_current_tool(tool: PlacementTool):
 	current_tool = tool
-	print("Tool changed to: ", PlacementTool.keys()[tool])
+	Log.info(Log.Category.UI, "도구 변경: %s" % PlacementTool.keys()[tool])

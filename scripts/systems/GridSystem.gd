@@ -2,7 +2,6 @@ extends Node
 class_name GridSystem
 
 signal cell_state_changed(position: Vector2i, old_state: CellState, new_state: CellState)
-signal grid_initialized()
 
 enum CellState {
 	EMPTY,
@@ -18,6 +17,10 @@ const GRID_HEIGHT = 50
 
 var grid_data: Array[Array] = []
 var grid_renderer: GridRenderer
+var player_id: int = 0  # 로그 식별용 (0-based)
+
+# 초기 배치처럼 한꺼번에 바꿀 때 셀 단위 로그가 쏟아지는 것을 막기 위한 플래그
+var _suppress_cell_log: bool = false
 
 func _ready():
 	initialize_grid()
@@ -32,33 +35,15 @@ func initialize_grid():
 		for x in range(GRID_WIDTH):
 			grid_data[y][x] = CellState.EMPTY
 
-	grid_initialized.emit()
-	print("Grid System initialized: ", GRID_WIDTH, "x", GRID_HEIGHT)
+	Log.info(Log.Category.GRID, "[P%d] 그리드 초기화 %dx%d" % [player_id + 1, GRID_WIDTH, GRID_HEIGHT])
 
 func connect_renderer(renderer: GridRenderer):
-	if grid_renderer:
-		disconnect_renderer()
-
 	grid_renderer = renderer
-
 	if grid_renderer:
-		grid_renderer.cell_clicked.connect(_on_cell_clicked)
-		grid_renderer.cell_hovered.connect(_on_cell_hovered)
 		update_all_visuals()
 
 func disconnect_renderer():
-	if grid_renderer:
-		if grid_renderer.cell_clicked.is_connected(_on_cell_clicked):
-			grid_renderer.cell_clicked.disconnect(_on_cell_clicked)
-		if grid_renderer.cell_hovered.is_connected(_on_cell_hovered):
-			grid_renderer.cell_hovered.disconnect(_on_cell_hovered)
-		grid_renderer = null
-
-func _on_cell_clicked(grid_position: Vector2i):
-	print("Cell clicked: ", grid_position, " - State: ", get_state_name(get_cell_state(grid_position)))
-
-func _on_cell_hovered(grid_position: Vector2i):
-	pass
+	grid_renderer = null
 
 func get_cell_state(position: Vector2i) -> CellState:
 	if not is_valid_position(position):
@@ -68,6 +53,7 @@ func get_cell_state(position: Vector2i) -> CellState:
 
 func set_cell_state(position: Vector2i, new_state: CellState) -> bool:
 	if not is_valid_position(position):
+		Log.warn(Log.Category.GRID, "[P%d] 범위 밖 셀 변경 시도: %s" % [player_id + 1, position])
 		return false
 
 	var old_state = grid_data[position.y][position.x]
@@ -75,6 +61,9 @@ func set_cell_state(position: Vector2i, new_state: CellState) -> bool:
 		return true
 
 	grid_data[position.y][position.x] = new_state
+	if not _suppress_cell_log:
+		Log.debug(Log.Category.GRID, "[P%d] 셀 %s: %s -> %s" % [
+			player_id + 1, position, get_state_name(old_state), get_state_name(new_state)])
 	cell_state_changed.emit(position, old_state, new_state)
 	update_cell_visual(position, new_state)
 
@@ -126,80 +115,8 @@ func is_valid_position(position: Vector2i) -> bool:
 func is_cell_empty(position: Vector2i) -> bool:
 	return get_cell_state(position) == CellState.EMPTY
 
-func is_cell_walkable(position: Vector2i) -> bool:
-	var state = get_cell_state(position)
-	return state == CellState.EMPTY or state == CellState.PATH or state == CellState.SPAWN or state == CellState.EXIT
-
-func get_neighbors(position: Vector2i, include_diagonals: bool = false) -> Array[Vector2i]:
-	var neighbors: Array[Vector2i] = []
-	var directions: Array[Vector2i] = []
-
-	if include_diagonals:
-		directions = [
-			Vector2i(-1, -1), Vector2i(0, -1), Vector2i(1, -1),
-			Vector2i(-1, 0),                   Vector2i(1, 0),
-			Vector2i(-1, 1),  Vector2i(0, 1),  Vector2i(1, 1)
-		]
-	else:
-		directions = [
-			Vector2i(0, -1),  # Up
-			Vector2i(1, 0),   # Right
-			Vector2i(0, 1),   # Down
-			Vector2i(-1, 0)   # Left
-		]
-
-	for dir in directions:
-		var neighbor = position + dir
-		if is_valid_position(neighbor):
-			neighbors.append(neighbor)
-
-	return neighbors
-
-func get_walkable_neighbors(position: Vector2i, include_diagonals: bool = false) -> Array[Vector2i]:
-	var walkable: Array[Vector2i] = []
-	var neighbors = get_neighbors(position, include_diagonals)
-
-	for neighbor in neighbors:
-		if is_cell_walkable(neighbor):
-			walkable.append(neighbor)
-
-	return walkable
-
-func get_cells_with_state(state: CellState) -> Array[Vector2i]:
-	var cells: Array[Vector2i] = []
-
-	for y in range(GRID_HEIGHT):
-		for x in range(GRID_WIDTH):
-			var pos = Vector2i(x, y)
-			if get_cell_state(pos) == state:
-				cells.append(pos)
-
-	return cells
-
-func clear_all_cells():
-	for y in range(GRID_HEIGHT):
-		for x in range(GRID_WIDTH):
-			var pos = Vector2i(x, y)
-			var current_state = get_cell_state(pos)
-			# SPAWN과 EXIT는 유지, 나머지만 삭제
-			if current_state != CellState.SPAWN and current_state != CellState.EXIT:
-				set_cell_state(pos, CellState.EMPTY)
-
-func create_horizontal_path(y_position: int, start_x: int = 0, end_x: int = GRID_WIDTH - 1):
-	if y_position < 0 or y_position >= GRID_HEIGHT:
-		return
-
-	for x in range(start_x, end_x + 1):
-		set_cell_state(Vector2i(x, y_position), CellState.PATH)
-
-func create_vertical_path(x_position: int, start_y: int = 0, end_y: int = GRID_HEIGHT - 1):
-	if x_position < 0 or x_position >= GRID_WIDTH:
-		return
-
-	for y in range(start_y, end_y + 1):
-		set_cell_state(Vector2i(x_position, y), CellState.PATH)
-
 func setup_game_path():
+	_suppress_cell_log = true
 	# 맨 위 행 전체를 시작점(SPAWN)으로 설정
 	for x in range(GRID_WIDTH):
 		set_cell_state(Vector2i(x, 0), CellState.SPAWN)
@@ -207,8 +124,10 @@ func setup_game_path():
 	# 맨 아래 행 전체를 도착점(EXIT)으로 설정
 	for x in range(GRID_WIDTH):
 		set_cell_state(Vector2i(x, GRID_HEIGHT - 1), CellState.EXIT)
+	_suppress_cell_log = false
 
 	# 나머지는 모두 EMPTY로 유지 (몬스터가 자유롭게 이동 가능)
+	Log.info(Log.Category.GRID, "[P%d] 스폰(y=0)/도착(y=%d) 라인 설정 완료" % [player_id + 1, GRID_HEIGHT - 1])
 
 func get_state_name(state: CellState) -> String:
 	match state:
@@ -219,6 +138,3 @@ func get_state_name(state: CellState) -> String:
 		CellState.SPAWN: return "SPAWN"
 		CellState.EXIT: return "EXIT"
 		_: return "UNKNOWN"
-
-func get_grid_size() -> Vector2i:
-	return Vector2i(GRID_WIDTH, GRID_HEIGHT)
