@@ -257,6 +257,10 @@ func _finish(result: State, reason: String) -> void:
 		boss_failed.emit(reason)
 
 
+func get_sent_monsters() -> Array[Monster]:
+	return _sent_monsters
+
+
 func set_lane_visible(is_shown: bool) -> void:
 	_lane_visible = is_shown
 	if _view:

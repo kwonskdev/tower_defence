@@ -5,6 +5,9 @@ const GRID_WIDTH = 12
 const GRID_HEIGHT = 50
 var CELL_SIZE: int = 40
 
+# 맨 아래 HUD가 마지막 줄들을 덮지 않도록 스크롤 끝에 두는 여백(px)
+const BOTTOM_PADDING := 100
+
 var grid_color = Color.WHITE
 
 var highlighted_cells: Dictionary = {}
@@ -14,7 +17,7 @@ func _ready():
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 func update_grid_size():
-	custom_minimum_size = Vector2(GRID_WIDTH * CELL_SIZE, GRID_HEIGHT * CELL_SIZE)
+	custom_minimum_size = Vector2(GRID_WIDTH * CELL_SIZE, GRID_HEIGHT * CELL_SIZE + BOTTOM_PADDING)
 
 func set_container_width(width: float):
 	CELL_SIZE = int(width / GRID_WIDTH)

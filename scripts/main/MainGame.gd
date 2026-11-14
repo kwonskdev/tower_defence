@@ -49,6 +49,7 @@ func setup_ui():
 				kind.name, kind.cost, kind.income, kind.dps]
 
 	_create_tower_view()
+	_create_minimaps()
 	_create_hud()
 
 func _create_tower_view():
@@ -83,10 +84,26 @@ func _create_tower_view():
 		b.pressed.connect(_on_tower_kind_selected.bind(kind_id))
 		tower_view.add_child(b)
 
+func _create_minimaps():
+	# 오른쪽 3x3 버튼 위에 축소 레인 화면을 겹쳐 그린다 (눌러서 레인 전환하는 기능은 그대로)
+	for i in range(player_buttons.size()):
+		_attach_minimap(player_buttons[i], i)
+	_attach_minimap(boss_button, GameField.BOSS_LANE_ID)
+
+func _attach_minimap(button: Button, lane_index: int):
+	button.text = ""
+	var view := MiniMapView.new()
+	view.game_field = game_field
+	view.lane_index = lane_index
+	view.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	button.add_child(view)
+	view.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
 func _create_hud():
 	# 하단 상태 표시줄 (골드/생명/보스). 입력은 통과시킨다.
 	var panel := PanelContainer.new()
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.z_index = 100  # 타워/몬스터/이펙트(z_index 1~4)보다 항상 위에 그린다
 	panel.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
 	panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	hud_label = Label.new()
@@ -115,9 +132,15 @@ func _update_hud():
 		BossController.State.VICTORY: state_text = "  [승리]"
 		BossController.State.DEFEAT: state_text = "  [패배]"
 	var selected := Balance.tower_kind(game_field.selected_tower_kind)
-	hud_label.text = "골드 %d (+%d/%.0fs, 다음 수입 %d초)  생명 %d  타워 %d개%s\n선택 타워: %s (%d골드)\n보스 %d/%d  남은 %ds  보스DPS %.1f" % [
+	# 보스 공격 현황: 보스 앞에 서 있는 몬스터들이 1초에 주는 피해의 합
+	var attack_text := "보스를 공격 중인 몬스터 없음"
+	if boss.total_dps > 0.0:
+		var eta := boss.hp / boss.total_dps
+		attack_text = "보스에게 초당 %.1f 피해 -> 이 속도면 %d초 뒤 처치%s" % [
+			boss.total_dps, ceili(eta), " (시간 부족!)" if eta > boss.time_left else ""]
+	hud_label.text = "골드 %d (+%d/%.0fs, 다음 수입 %d초)  생명 %d  타워 %d개%s\n선택 타워: %s (%d골드)\n보스 %d/%d  남은 %d초\n%s" % [
 		lane.gold, lane.income, Balance.INCOME_INTERVAL, ceili(lane.income_time_left()), lane.lives, lane.towers.size(), state_text,
-		selected.name, selected.cost, int(boss.hp), int(boss.max_hp), int(boss.time_left), boss.total_dps]
+		selected.name, selected.cost, int(boss.hp), int(boss.max_hp), int(boss.time_left), attack_text]
 
 func connect_signals():
 	# 버튼 클릭 이벤트 연결
