@@ -4,9 +4,12 @@ class_name GameField
 var grid_renderer: GridRenderer
 
 const MAX_PLAYERS = 8
+const BOSS_LANE_ID = 8  # grid_systems[8] = 보스 레인 (미니맵의 B)
 var grid_systems: Array[GridSystem] = []
 var lanes: Dictionary = {}  # player_id -> LaneController (참여한 플레이어만)
-var current_player_id: int = 0
+var current_player_id: int = 0  # 지금 화면에 보고 있는 레인
+var local_player_id: int = 0    # 내 플레이어 (타워 건설/몬스터 생산은 내 레인에서만)
+var boss: BossController
 
 var current_tool: PlacementTool = PlacementTool.NONE
 
@@ -31,10 +34,11 @@ func setup_game_field():
 	add_child(grid_renderer)
 
 	# 8명의 플레이어를 위한 그리드 시스템 생성
-	for i in range(MAX_PLAYERS):
+	for i in range(MAX_PLAYERS + 1):
 		var grid_system = GridSystem.new()
 		grid_system.name = "GridSystem_" + str(i)
 		grid_system.player_id = i
+		grid_system.is_boss_lane = (i == BOSS_LANE_ID)
 		add_child(grid_system)
 		grid_systems.append(grid_system)
 
@@ -54,6 +58,7 @@ func setup_game_field():
 
 	# PvE 임시: 1번 플레이어만 참여 (나머지 레인은 비어 있음)
 	start_lane(0)
+	start_boss()
 
 func start_lane(player_id: int):
 	var lane := LaneController.new()
@@ -62,6 +67,13 @@ func start_lane(player_id: int):
 	lane.setup(player_id, grid_systems[player_id], grid_renderer)
 	lane.set_lane_visible(player_id == current_player_id)
 	lanes[player_id] = lane
+
+func start_boss():
+	boss = BossController.new()
+	boss.name = "Boss"
+	add_child(boss)
+	boss.setup(grid_systems[BOSS_LANE_ID], grid_renderer, lanes)
+	boss.set_lane_visible(current_player_id == BOSS_LANE_ID)
 
 func setup_scroll_container():
 	# 가로 스크롤 비활성화 (세로 드래그 스크롤만 사용)
@@ -133,7 +145,7 @@ func get_current_grid_system() -> GridSystem:
 	return grid_systems[current_player_id]
 
 func switch_player(player_id: int):
-	if player_id < 0 or player_id >= MAX_PLAYERS:
+	if player_id < 0 or player_id > BOSS_LANE_ID:
 		Log.warn(Log.Category.UI, "잘못된 플레이어 전환 요청: %d" % player_id)
 		return
 
@@ -149,22 +161,51 @@ func switch_player(player_id: int):
 	# 보고 있는 레인의 몬스터만 표시
 	for id in lanes:
 		lanes[id].set_lane_visible(id == player_id)
+	if boss:
+		boss.set_lane_visible(player_id == BOSS_LANE_ID)
 
-	Log.info(Log.Category.UI, "플레이어 맵 전환 -> P%d" % (player_id + 1))
+	Log.info(Log.Category.UI, "레인 전환 -> %s" % get_current_grid_system().lane_tag())
 
 func place_tower(grid_position: Vector2i) -> bool:
-	var grid_system = get_current_grid_system()
-	var lane: LaneController = lanes.get(current_player_id)
-	if lane and lane.is_cell_occupied(grid_position):
-		Log.debug(Log.Category.TOWER, "[P%d] 타워 건설 실패 %s: 몬스터가 있는 칸" % [current_player_id + 1, grid_position])
+	if current_player_id != local_player_id:
+		Log.debug(Log.Category.TOWER, "내 레인이 아니라서 건설 불가 (보는 레인=%s)" % get_current_grid_system().lane_tag())
 		return false
-	if grid_system.is_cell_empty(grid_position):
-		grid_system.set_cell_state(grid_position, GridSystem.CellState.TOWER)
-		Log.info(Log.Category.TOWER, "[P%d] 타워 건설 %s" % [current_player_id + 1, grid_position])
-		return true
-	Log.debug(Log.Category.TOWER, "[P%d] 타워 건설 실패 %s: 빈 칸 아님(%s)" % [
-		current_player_id + 1, grid_position, grid_system.get_state_name(grid_system.get_cell_state(grid_position))])
-	return false
+
+	var lane: LaneController = lanes.get(local_player_id)
+	if lane == null:
+		return false
+	var grid_system := get_current_grid_system()
+	var tag := grid_system.lane_tag()
+
+	if lane.is_cell_occupied(grid_position):
+		Log.debug(Log.Category.TOWER, "[%s] 타워 건설 실패 %s: 몬스터가 있는 칸" % [tag, grid_position])
+		return false
+	if not grid_system.is_cell_empty(grid_position):
+		Log.debug(Log.Category.TOWER, "[%s] 타워 건설 실패 %s: 빈 칸 아님(%s)" % [
+			tag, grid_position, grid_system.get_state_name(grid_system.get_cell_state(grid_position))])
+		return false
+	if not lane.try_spend(Balance.TOWER_COST, "타워 건설 %s" % grid_position):
+		return false
+
+	grid_system.set_cell_state(grid_position, GridSystem.CellState.TOWER)
+	Log.info(Log.Category.TOWER, "[%s] 타워 건설 %s" % [tag, grid_position])
+	return true
+
+## 몬스터를 생산해 보스 레인으로 보낸다 (수입 영구 증가)
+func send_monster(kind_id: String) -> bool:
+	var lane: LaneController = lanes.get(local_player_id)
+	if lane == null or boss == null or boss.state != BossController.State.RUNNING:
+		return false
+	var kind: Dictionary = Balance.SENT_MONSTERS.get(kind_id, {})
+	if kind.is_empty():
+		Log.warn(Log.Category.GAME, "알 수 없는 몬스터 종류: %s" % kind_id)
+		return false
+	if not lane.try_spend(kind.cost, "%s 생산" % kind.name):
+		return false
+
+	lane.add_income(kind.income)
+	boss.spawn_player_monster(local_player_id, kind_id)
+	return true
 
 func get_current_tool() -> PlacementTool:
 	return current_tool

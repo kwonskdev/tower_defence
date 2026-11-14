@@ -18,6 +18,7 @@ const GRID_HEIGHT = 50
 var grid_data: Array[Array] = []
 var grid_renderer: GridRenderer
 var player_id: int = 0  # 로그 식별용 (0-based)
+var is_boss_lane: bool = false
 
 # 초기 배치처럼 한꺼번에 바꿀 때 셀 단위 로그가 쏟아지는 것을 막기 위한 플래그
 var _suppress_cell_log: bool = false
@@ -35,7 +36,10 @@ func initialize_grid():
 		for x in range(GRID_WIDTH):
 			grid_data[y][x] = CellState.EMPTY
 
-	Log.info(Log.Category.GRID, "[P%d] 그리드 초기화 %dx%d" % [player_id + 1, GRID_WIDTH, GRID_HEIGHT])
+	Log.info(Log.Category.GRID, "[%s] 그리드 초기화 %dx%d" % [lane_tag(), GRID_WIDTH, GRID_HEIGHT])
+
+func lane_tag() -> String:
+	return "BOSS" if is_boss_lane else "P%d" % (player_id + 1)
 
 func connect_renderer(renderer: GridRenderer):
 	grid_renderer = renderer
@@ -53,7 +57,7 @@ func get_cell_state(position: Vector2i) -> CellState:
 
 func set_cell_state(position: Vector2i, new_state: CellState) -> bool:
 	if not is_valid_position(position):
-		Log.warn(Log.Category.GRID, "[P%d] 범위 밖 셀 변경 시도: %s" % [player_id + 1, position])
+		Log.warn(Log.Category.GRID, "[%s] 범위 밖 셀 변경 시도: %s" % [lane_tag(), position])
 		return false
 
 	var old_state = grid_data[position.y][position.x]
@@ -62,8 +66,8 @@ func set_cell_state(position: Vector2i, new_state: CellState) -> bool:
 
 	grid_data[position.y][position.x] = new_state
 	if not _suppress_cell_log:
-		Log.debug(Log.Category.GRID, "[P%d] 셀 %s: %s -> %s" % [
-			player_id + 1, position, get_state_name(old_state), get_state_name(new_state)])
+		Log.debug(Log.Category.GRID, "[%s] 셀 %s: %s -> %s" % [
+			lane_tag(), position, get_state_name(old_state), get_state_name(new_state)])
 	cell_state_changed.emit(position, old_state, new_state)
 	update_cell_visual(position, new_state)
 
@@ -134,7 +138,7 @@ func setup_game_path():
 	_suppress_cell_log = false
 
 	# 나머지는 모두 EMPTY로 유지 (몬스터가 자유롭게 이동 가능)
-	Log.info(Log.Category.GRID, "[P%d] 스폰(y=0)/도착(y=%d) 라인 설정 완료" % [player_id + 1, GRID_HEIGHT - 1])
+	Log.info(Log.Category.GRID, "[%s] 스폰(y=0)/도착(y=%d) 라인 설정 완료" % [lane_tag(), GRID_HEIGHT - 1])
 
 func get_state_name(state: CellState) -> String:
 	match state:

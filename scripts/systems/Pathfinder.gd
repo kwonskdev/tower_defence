@@ -61,7 +61,7 @@ func _rebuild() -> void:
 			_breach.set_point_solid(cell, is_wall)
 			_breach.set_point_weight_scale(cell, BREACH_COST if is_tower else 1.0)
 	_dirty = false
-	Log.debug(Log.Category.MONSTER_AI, "[P%d] 길찾기 그리드 재구성" % (_grid.player_id + 1))
+	Log.debug(Log.Category.MONSTER_AI, "[%s] 길찾기 그리드 재구성" % _grid.lane_tag())
 
 
 func _best_path(astar: AStarGrid2D, start: Vector2i) -> Array[Vector2i]:

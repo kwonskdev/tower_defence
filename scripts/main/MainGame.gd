@@ -8,7 +8,13 @@ class_name MainGame
 @onready var tower_button: Button = $VBoxContainer/TopUI/HBoxContainer/LeftPanel/MainView/TowerButton
 @onready var monster_button: Button = $VBoxContainer/TopUI/HBoxContainer/LeftPanel/MainView/MonsterButton
 @onready var empty2_button: Button = $VBoxContainer/TopUI/HBoxContainer/LeftPanel/MainView/Empty2Button
-@onready var bonus_button: Button = $VBoxContainer/TopUI/HBoxContainer/RightPanel/BonusButton
+@onready var boss_button: Button = $VBoxContainer/TopUI/HBoxContainer/RightPanel/BonusButton
+
+# 몬스터 버튼 인덱스(monster_buttons 기준) -> 생산할 몬스터 종류. 0번은 뒤로 가기.
+const MONSTER_KIND_BY_INDEX := {1: "income", 2: "balanced", 3: "power"}
+
+var hud_label: Label
+var _hud_timer := 0.0
 
 # 플레이어 버튼들
 @onready var player_buttons: Array[Button] = []
@@ -33,6 +39,51 @@ func setup_ui():
 		if button:
 			monster_buttons.append(button)
 
+	# 몬스터 버튼에 종류 이름 표시
+	for idx in MONSTER_KIND_BY_INDEX:
+		if idx < monster_buttons.size():
+			var kind: Dictionary = Balance.SENT_MONSTERS[MONSTER_KIND_BY_INDEX[idx]]
+			monster_buttons[idx].text = kind.short
+			monster_buttons[idx].tooltip_text = "%s  비용 %d / 수입 +%d / 보스 DPS %.1f" % [
+				kind.name, kind.cost, kind.income, kind.dps]
+
+	_create_hud()
+
+func _create_hud():
+	# 하단 상태 표시줄 (골드/생명/보스). 입력은 통과시킨다.
+	var panel := PanelContainer.new()
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
+	panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	hud_label = Label.new()
+	hud_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hud_label.add_theme_font_size_override("font_size", 12)
+	panel.add_child(hud_label)
+	add_child(panel)
+
+func _process(delta):
+	_hud_timer -= delta
+	if _hud_timer > 0.0:
+		return
+	_hud_timer = 0.1
+	_update_hud()
+
+func _update_hud():
+	if not hud_label or not game_field:
+		return
+	var lane: LaneController = game_field.lanes.get(game_field.local_player_id)
+	var boss: BossController = game_field.boss
+	if lane == null or boss == null:
+		return
+
+	var state_text := ""
+	match boss.state:
+		BossController.State.VICTORY: state_text = "  [승리]"
+		BossController.State.DEFEAT: state_text = "  [패배]"
+	hud_label.text = "골드 %d (+%d/%.0fs)  생명 %d  타워 %d개%s\n보스 %d/%d  남은 %ds  보스DPS %.1f" % [
+		lane.gold, lane.income, Balance.INCOME_INTERVAL, lane.lives, lane.towers.size(), state_text,
+		int(boss.hp), int(boss.max_hp), int(boss.time_left), boss.total_dps]
+
 func connect_signals():
 	# 버튼 클릭 이벤트 연결
 	if tower_button:
@@ -41,8 +92,8 @@ func connect_signals():
 		monster_button.pressed.connect(_on_monster_button_pressed)
 	if empty2_button:
 		empty2_button.pressed.connect(_on_empty2_button_pressed)
-	if bonus_button:
-		bonus_button.pressed.connect(_on_bonus_button_pressed)
+	if boss_button:
+		boss_button.pressed.connect(_on_boss_button_pressed)
 
 	# 플레이어 버튼 클릭 이벤트 연결
 	for i in range(player_buttons.size()):
@@ -93,8 +144,9 @@ func _on_player_button_pressed(player_id: int):
 		game_field.switch_player(player_id)
 
 # 보너스 맵 버튼 핸들러
-func _on_bonus_button_pressed():
-	Log.info(Log.Category.UI, "보너스 맵 버튼 (미구현)")
+func _on_boss_button_pressed():
+	if game_field:
+		game_field.switch_player(GameField.BOSS_LANE_ID)
 
 # 뒤로 가기 버튼 핸들러
 func _on_back_button_pressed():
@@ -104,5 +156,10 @@ func _on_back_button_pressed():
 	main_view.visible = true
 
 # 몬스터 선택 핸들러
-func _on_monster_selected(monster_id: int):
-	Log.info(Log.Category.UI, "몬스터 M%d 선택 (미구현)" % (monster_id + 1))
+func _on_monster_selected(button_index: int):
+	var kind_id: String = MONSTER_KIND_BY_INDEX.get(button_index, "")
+	if kind_id.is_empty():
+		Log.info(Log.Category.UI, "몬스터 M%d 선택 (미구현)" % (button_index + 1))
+		return
+	Log.info(Log.Category.UI, "몬스터 생산 요청: %s" % kind_id)
+	game_field.send_monster(kind_id)
