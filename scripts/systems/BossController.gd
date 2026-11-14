@@ -112,13 +112,27 @@ func _show_damage_text() -> void:
 	_dmg_timer = 0.0
 
 
-## 보스 체력이 낮을수록 강한 몬스터를 모든 참여 레인에 파견
+## 모든 참여 레인에 몬스터를 파견한다.
+## 종류는 경과 시간에 따라 하나씩 해금되고, 체력은 보스가 약해질수록 + 시간이 지날수록 커진다.
 func _dispatch_wave() -> void:
+	var elapsed := Balance.BOSS_TIME_LIMIT - time_left
+	var type_id := Balance.pick_wave_type(elapsed)
+	var wave_type: Dictionary = Balance.WAVE_TYPES[type_id]
+
 	var ratio := hp / max_hp
-	var monster_hp := Balance.WAVE_MONSTER_HP * (1.0 + Balance.WAVE_HP_BONUS_AT_LOW_BOSS * (1.0 - ratio))
-	Log.debug(Log.Category.GAME, "보스 파견: 보스hp=%.0f%% 몬스터hp=%.1f" % [ratio * 100.0, monster_hp])
-	for lane in _lanes.values():
-		lane.spawn_wave_monster(monster_hp)
+	var hp_value: float = Balance.WAVE_MONSTER_HP * wave_type.hp \
+		* (1.0 + Balance.WAVE_HP_BONUS_AT_LOW_BOSS * (1.0 - ratio)) \
+		* (1.0 + Balance.WAVE_HP_GROWTH_PER_MIN * elapsed / 60.0)
+	Log.debug(Log.Category.GAME, "보스 파견: %s x%d (보스hp=%.0f%% 몬스터hp=%.1f)" % [
+		wave_type.name, wave_type.count, ratio * 100.0, hp_value])
+
+	for i in range(int(wave_type.count)):
+		if i > 0:
+			await get_tree().create_timer(0.3).timeout  # 무리는 조금씩 시차를 두고 나온다
+			if state != State.RUNNING:
+				return
+		for lane in _lanes.values():
+			lane.spawn_wave_monster(hp_value, type_id)
 
 
 ## 플레이어가 생산한 몬스터를 보스 레인으로 보낸다

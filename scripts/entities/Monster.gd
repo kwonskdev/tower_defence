@@ -18,6 +18,9 @@ var owner_id: int = -1           # 보스 레인으로 보낸 플레이어 (보�
 var kind_id: String = "wave"
 var shape: String = "horn"       # 외형: horn(일반형) / coin / shield / spike
 var speed: float = Balance.MONSTER_SPEED
+var size_scale: float = 1.0
+var life_damage: int = 1       # 기지에 닿았을 때 줄이는 생명
+var reward: int = Balance.KILL_REWARD  # 처치 시 골드
 var max_hp: float = 1.0
 var hp: float = 1.0
 var dps: float = 0.0             # 보스에게 주는 초당 피해
@@ -171,7 +174,7 @@ func _update_position() -> void:
 
 func _draw() -> void:
 	var cell: float = _renderer.CELL_SIZE
-	var r: float = cell * 0.32
+	var r: float = cell * 0.32 * size_scale
 	var moving := not stopped and not waypoints.is_empty()
 
 	# 걷는 동안 통통 튀고, 멈추면 숨쉬듯 흔들림. 보스 앞에서는 보스 쪽으로 달려들었다 물러남.
@@ -228,6 +231,13 @@ func _draw_decor_back(c: Vector2, r: float, color: Color) -> void:
 					c + Vector2(side * r * 0.35, -r * 1.2),
 					c + Vector2(side * r * 0.1, -r * 0.8),
 				]), color.darkened(0.3))
+		"runner":
+			# 속도선 (뒤쪽으로 흩날림)
+			var back := -facing if facing.length() > 0.01 else Vector2.UP
+			var side_v := Vector2(-back.y, back.x)
+			for i in range(3):
+				var off := side_v * (i - 1) * r * 0.55
+				draw_line(c + back * r * 1.1 + off, c + back * r * (1.9 + i * 0.25) + off, Color(color, 0.55), 2.0)
 		"spike":
 			for i in range(8):
 				var a := i * TAU / 8.0 + _anim * 0.6
@@ -248,6 +258,12 @@ func _draw_decor_front(c: Vector2, r: float) -> void:
 			draw_circle(p, r * 0.42, Color(1.0, 0.85, 0.2))
 			draw_arc(p, r * 0.42, 0.0, TAU, 16, Color(0.7, 0.5, 0.0), 2.0)
 			draw_line(p + Vector2(0, -r * 0.2), p + Vector2(0, r * 0.2), Color(0.7, 0.5, 0.0), 2.0)
+		"armor":
+			# 두꺼운 장갑판 + 리벳
+			draw_arc(c, r * 0.9, PI * 1.05, PI * 1.95, 14, Color(0.8, 0.85, 0.95), 5.0)
+			draw_arc(c, r * 0.9, PI * 0.05, PI * 0.95, 14, Color(0.55, 0.6, 0.7), 5.0)
+			for i in range(4):
+				draw_circle(c + Vector2.from_angle(i * TAU / 4.0 + PI * 0.25) * r * 0.9, r * 0.1, Color(0.95, 0.95, 1.0))
 		"shield":
 			draw_arc(c, r * 1.18, -PI * 0.15, PI * 1.15, 20, Color(0.85, 0.9, 1.0), 3.0)
 			draw_arc(c, r * 1.18, PI * 1.15, PI * 1.85, 10, Color(0.85, 0.9, 1.0, 0.35), 3.0)

@@ -88,6 +88,11 @@ func _on_cell_changed(position: Vector2i, _old_state, new_state) -> void:
 
 # --- 경제 ---
 
+## 다음 수입 지급까지 남은 시간(초)
+func income_time_left() -> float:
+	return _income_timer.time_left
+
+
 func try_spend(amount: int, reason: String) -> bool:
 	if not active:
 		return false
@@ -114,7 +119,7 @@ func _on_income_tick() -> void:
 # --- 몬스터 ---
 
 ## 보스의 자동 파견: 이 레인에 몬스터를 보낸다
-func spawn_wave_monster(hp_value: float) -> void:
+func spawn_wave_monster(hp_value: float, type_id: String = "grunt") -> void:
 	if not active:
 		return
 	var spawn_cells := _grid.get_spawn_cells()
@@ -122,8 +127,16 @@ func spawn_wave_monster(hp_value: float) -> void:
 		Log.error(Log.Category.GAME, "[P%d] 스폰 셀이 없음" % (player_id + 1))
 		return
 
+	var wave_type: Dictionary = Balance.WAVE_TYPES[type_id]
 	var monster := Monster.new()
+	monster.kind_id = type_id
 	monster.max_hp = hp_value
+	monster.speed = wave_type.speed
+	monster.size_scale = wave_type.size
+	monster.life_damage = wave_type.life
+	monster.reward = wave_type.reward
+	monster.shape = wave_type.shape
+	monster.body_color = wave_type.color
 	monster.visible = lane_visible
 	monster.z_index = 2
 	monster.setup(_next_monster_id, _grid, _renderer, _pathfinder, spawn_cells.pick_random())
@@ -131,26 +144,27 @@ func spawn_wave_monster(hp_value: float) -> void:
 	monster.died.connect(_on_monster_died)
 	_renderer.add_child(monster)
 	monsters.append(monster)
-	Log.debug(Log.Category.GAME, "[P%d] 몬스터#%d 스폰 hp=%.1f (필드 위 %d마리)" % [
-		player_id + 1, _next_monster_id, hp_value, monsters.size()])
+	Log.debug(Log.Category.GAME, "[P%d] 몬스터#%d(%s) 스폰 hp=%.1f (필드 위 %d마리)" % [
+		player_id + 1, _next_monster_id, wave_type.name, hp_value, monsters.size()])
 	_next_monster_id += 1
 
 
 func _on_monster_died(monster: Monster) -> void:
 	monsters.erase(monster)
-	gold += Balance.KILL_REWARD
-	Effects.float_text(_renderer, monster.cell_pos, "+%d" % Balance.KILL_REWARD, Color(1.0, 0.9, 0.3), lane_visible)
+	gold += monster.reward
+	Effects.float_text(_renderer, monster.cell_pos, "+%d" % monster.reward, Color(1.0, 0.9, 0.3), lane_visible)
 	Effects.ring(_renderer, monster.cell_pos, 0.6, monster.body_color, lane_visible)
 	monster.queue_free()
 	Log.debug(Log.Category.ECONOMY, "[P%d] 몬스터#%d 처치 +%d골드 잔액=%d" % [
-		player_id + 1, monster.monster_id, Balance.KILL_REWARD, gold])
+		player_id + 1, monster.monster_id, monster.reward, gold])
 
 
 func _on_monster_reached_exit(monster: Monster) -> void:
 	monsters.erase(monster)
 	monster.queue_free()
-	lives -= 1
-	Log.info(Log.Category.GAME, "[P%d] 몬스터#%d 기지 도달! 생명 %d" % [player_id + 1, monster.monster_id, lives])
+	lives -= monster.life_damage
+	Log.info(Log.Category.GAME, "[P%d] 몬스터#%d(%s) 기지 도달! 생명 -%d -> %d" % [
+		player_id + 1, monster.monster_id, monster.kind_id, monster.life_damage, lives])
 	lives_changed.emit(lives)
 
 	if lives <= 0 and active:

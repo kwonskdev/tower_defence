@@ -115,8 +115,8 @@ func _update_hud():
 		BossController.State.VICTORY: state_text = "  [승리]"
 		BossController.State.DEFEAT: state_text = "  [패배]"
 	var selected := Balance.tower_kind(game_field.selected_tower_kind)
-	hud_label.text = "골드 %d (+%d/%.0fs)  생명 %d  타워 %d개%s\n선택 타워: %s (%d골드)\n보스 %d/%d  남은 %ds  보스DPS %.1f" % [
-		lane.gold, lane.income, Balance.INCOME_INTERVAL, lane.lives, lane.towers.size(), state_text,
+	hud_label.text = "골드 %d (+%d/%.0fs, 다음 수입 %d초)  생명 %d  타워 %d개%s\n선택 타워: %s (%d골드)\n보스 %d/%d  남은 %ds  보스DPS %.1f" % [
+		lane.gold, lane.income, Balance.INCOME_INTERVAL, ceili(lane.income_time_left()), lane.lives, lane.towers.size(), state_text,
 		selected.name, selected.cost, int(boss.hp), int(boss.max_hp), int(boss.time_left), boss.total_dps]
 
 func connect_signals():
