@@ -11,15 +11,15 @@ const START_LIVES := 10
 # --- 타워 ---
 # 기본 능력치에 속성 2개를 조합해서 종류가 만들어진다 (tower_kind 참고).
 # 대공 속성은 공중 몬스터가 생길 때 추가한다.
-const TOWER_BASE_COST := 8
-const TOWER_BASE_RANGE := 2.5      # 칸
-const TOWER_BASE_DAMAGE := 0.6
+const TOWER_BASE_COST := 4
+const TOWER_BASE_RANGE := 3.0      # 칸
+const TOWER_BASE_DAMAGE := 0.4
 const TOWER_BASE_COOLDOWN := 0.7   # 초
 
 const TOWER_ATTRS := {
-	"long": {"name": "장거리", "short": "장", "cost": 3, "color": Color(0.35, 0.75, 1.0)},
-	"power": {"name": "고화력", "short": "고", "cost": 5, "color": Color(1.0, 0.45, 0.2)},
-	"splash": {"name": "범위", "short": "범", "cost": 5, "color": Color(0.45, 0.9, 0.45)},
+	"long": {"name": "장거리", "short": "장", "cost": 2, "color": Color(0.35, 0.75, 1.0)},
+	"power": {"name": "고화력", "short": "고", "cost": 3, "color": Color(1.0, 0.45, 0.2)},
+	"splash": {"name": "범위", "short": "범", "cost": 3, "color": Color(0.45, 0.9, 0.45)},
 	"trap": {"name": "트랩", "short": "트", "cost": 0, "color": Color(0.9, 0.85, 0.3)},
 }
 
@@ -49,6 +49,7 @@ static func tower_kind(kind_id: String) -> Dictionary:
 	var cooldown := TOWER_BASE_COOLDOWN
 	var splash := 0.0
 	var cost := TOWER_BASE_COST
+	var range_mult := 1.0
 	var blocks := true  # 트랩 속성은 길을 막을 수 없다 (몬스터가 위로 지나감)
 	var names: Array[String] = []
 
@@ -58,7 +59,7 @@ static func tower_kind(kind_id: String) -> Dictionary:
 		names.append(attr.name)
 		match a:
 			"long":
-				range_v += 2.0
+				range_v += 2.5
 			"power":
 				damage *= 2.5
 				cooldown *= 1.6
@@ -66,8 +67,9 @@ static func tower_kind(kind_id: String) -> Dictionary:
 				damage *= 0.7
 				splash = 1.2
 			"trap":
-				damage *= 0.45
-				cooldown *= 0.4
+				range_mult = 0.6   # 사거리는 짧지만
+				damage *= 0.8      # 한 발이 강하고
+				cooldown *= 0.4    # 공격 속도가 빠르다
 				blocks = false
 
 	return {
@@ -75,7 +77,7 @@ static func tower_kind(kind_id: String) -> Dictionary:
 		"attrs": parts,
 		"name": "+".join(names),
 		"cost": cost,
-		"range": range_v,
+		"range": range_v * range_mult,
 		"damage": damage,
 		"cooldown": cooldown,
 		"splash": splash,
