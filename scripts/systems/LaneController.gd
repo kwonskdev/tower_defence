@@ -16,7 +16,9 @@ var lives: int = Balance.START_LIVES
 var active := true
 var lane_visible := true
 var monsters: Array[Monster] = []
-var towers: Dictionary = {}  # Vector2i(셀) -> Tower
+var towers: Array[Tower] = []  # 트랩은 한 칸에 여러 개 겹칠 수 있어서 칸 단위가 아니라 목록으로 관리
+
+var _trap_counts: Dictionary = {}  # Vector2i(셀) -> 그 칸의 트랩 수
 
 var _grid: GridSystem
 var _renderer: GridRenderer
@@ -52,11 +54,15 @@ func build_tower(cell: Vector2i, kind_id: String) -> Tower:
 	_grid.set_cell_state(cell, state)
 
 	var tower := Tower.new()
+	if not kind.blocks:
+		# 트랩은 길을 막지 않으므로 같은 칸에 겹쳐 지을 수 있다
+		tower.stack_index = _trap_counts.get(cell, 0)
+		_trap_counts[cell] = tower.stack_index + 1
 	tower.setup(cell, kind, color_info, self, _renderer)
 	tower.visible = lane_visible
 	tower.z_index = 1
 	_renderer.add_child(tower)
-	towers[cell] = tower
+	towers.append(tower)
 
 	Log.info(Log.Category.COLOR, "[P%d] 타워 %s 색깔 할당: %s" % [player_id + 1, cell, color_info.name])
 	return tower
@@ -77,13 +83,21 @@ func find_target(from_cell_pos: Vector2, range_cells: float) -> Monster:
 
 
 func _on_cell_changed(position: Vector2i, _old_state, new_state) -> void:
-	# 몬스터가 타워를 부수면 칸이 EMPTY가 된다
-	if new_state == GridSystem.CellState.EMPTY and towers.has(position):
-		var tower: Tower = towers[position]
-		Effects.ring(_renderer, tower.center_cell_pos(), 0.8, Color(1.0, 0.5, 0.2), lane_visible)
-		Effects.float_text(_renderer, tower.center_cell_pos(), "파괴!", Color(1.0, 0.4, 0.3), lane_visible)
-		tower.queue_free()
-		towers.erase(position)
+	# 몬스터가 타워를 부수면 칸이 EMPTY가 된다 (부술 수 있는 건 길을 막는 타워뿐)
+	if new_state != GridSystem.CellState.EMPTY:
+		return
+	for tower in towers:
+		if tower.cell == position:
+			Effects.ring(_renderer, tower.center_cell_pos(), 0.8, Color(1.0, 0.5, 0.2), lane_visible)
+			Effects.float_text(_renderer, tower.center_cell_pos(), "파괴!", Color(1.0, 0.4, 0.3), lane_visible)
+			tower.queue_free()
+			towers.erase(tower)
+			break
+
+
+## 이 칸에 겹쳐 있는 트랩 수
+func trap_count(cell: Vector2i) -> int:
+	return _trap_counts.get(cell, 0)
 
 
 # --- 경제 ---
@@ -195,5 +209,5 @@ func set_lane_visible(is_shown: bool) -> void:
 	lane_visible = is_shown
 	for m in monsters:
 		m.visible = is_shown
-	for t in towers.values():
+	for t in towers:
 		t.visible = is_shown

@@ -179,9 +179,13 @@ func place_tower(grid_position: Vector2i) -> bool:
 	var tag := grid_system.lane_tag()
 	var kind := Balance.tower_kind(selected_tower_kind)
 
-	if not grid_system.is_cell_empty(grid_position):
+	var cell_state := grid_system.get_cell_state(grid_position)
+	# 트랩은 길을 막지 않으므로 이미 트랩이 있는 칸에도 겹쳐 지을 수 있다
+	var can_build: bool = cell_state == GridSystem.CellState.EMPTY \
+		or (not kind.blocks and cell_state == GridSystem.CellState.TRAP_TOWER)
+	if not can_build:
 		Log.debug(Log.Category.TOWER, "[%s] 타워 건설 실패 %s: 빈 칸 아님(%s)" % [
-			tag, grid_position, grid_system.get_state_name(grid_system.get_cell_state(grid_position))])
+			tag, grid_position, grid_system.get_state_name(cell_state)])
 		return false
 	# 길을 막는 타워는 몬스터와 몸이 겹친 칸에 지을 수 없다 (트랩은 위로 지나가므로 가능)
 	if kind.blocks and lane.is_cell_occupied(grid_position):

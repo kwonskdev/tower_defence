@@ -42,7 +42,7 @@ func _draw() -> void:
 				for m in game_field.boss.get_sent_monsters():
 					_dot(area, m.cell_pos, sx, sy, m.body_color)
 		else:
-			for t in lane.towers.values():
+			for t in lane.towers:
 				var cell: Vector2i = t.cell
 				var p := area.position + Vector2(cell.x * sx, cell.y * sy)
 				draw_rect(Rect2(p, Vector2(maxf(sx, 2.0), maxf(sy, 2.0))), t.color_info.color)

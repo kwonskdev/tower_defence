@@ -7,6 +7,12 @@ var cell: Vector2i
 var kind: Dictionary      # Balance.tower_kind() 결과
 var color_info: Dictionary  # Balance.TOWER_COLORS 항목
 var lane: LaneController
+var stack_index: int = 0  # 같은 칸에 겹친 트랩 중 몇 번째인지
+
+# 한 칸에 트랩이 여러 개일 때 칸 안에서의 위치 (셀 단위)
+const STACK_OFFSETS := [
+	Vector2(-0.22, -0.22), Vector2(0.22, -0.22), Vector2(-0.22, 0.22), Vector2(0.22, 0.22), Vector2(0.0, 0.0),
+]
 
 var _renderer: GridRenderer
 var _cooldown := 0.0
@@ -21,7 +27,17 @@ func setup(p_cell: Vector2i, p_kind: Dictionary, p_color_info: Dictionary, p_lan
 	color_info = p_color_info
 	lane = p_lane
 	_renderer = renderer
-	position = center_cell_pos() * _renderer.CELL_SIZE
+	position = _visual_cell_pos() * _renderer.CELL_SIZE
+
+
+func _is_stacked() -> bool:
+	return not kind.blocks and lane.trap_count(cell) > 1
+
+
+func _visual_cell_pos() -> Vector2:
+	if _is_stacked():
+		return center_cell_pos() + STACK_OFFSETS[stack_index % STACK_OFFSETS.size()]
+	return center_cell_pos()
 
 
 func center_cell_pos() -> Vector2:
@@ -31,7 +47,7 @@ func center_cell_pos() -> Vector2:
 func _process(delta: float) -> void:
 	_t += delta
 	_recoil = maxf(0.0, _recoil - delta * 5.0)
-	position = center_cell_pos() * _renderer.CELL_SIZE
+	position = _visual_cell_pos() * _renderer.CELL_SIZE
 
 	if lane.active:
 		_cooldown -= delta
@@ -57,7 +73,7 @@ func _attr_color(i: int) -> Color:
 
 func _draw() -> void:
 	var cell_px: float = _renderer.CELL_SIZE
-	var s := cell_px * 0.88
+	var s := cell_px * (0.55 if _is_stacked() else 0.88)
 	var c: Color = color_info.color
 	var attrs: PackedStringArray = kind.attrs
 

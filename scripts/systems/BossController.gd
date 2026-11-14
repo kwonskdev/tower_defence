@@ -33,6 +33,7 @@ var _sent_monsters: Array[Monster] = []
 var _slots_taken: Dictionary = {}  # "고리:번호" -> true
 var _next_monster_id := 1
 var _view: BossView
+var _bar: BossBar
 var _lane_visible := false
 var _dmg_accum := 0.0
 var _dmg_timer := 0.0
@@ -54,6 +55,13 @@ func setup(boss_grid: GridSystem, renderer: GridRenderer, lanes: Dictionary) -> 
 	_view.visible = _lane_visible
 	_view.z_index = 0
 	renderer.add_child(_view)
+
+	_bar = BossBar.new()
+	_bar.boss = self
+	_bar.renderer = renderer
+	_bar.visible = _lane_visible
+	_bar.z_index = 5
+	renderer.add_child(_bar)
 
 	_dispatch_timer = Timer.new()
 	_dispatch_timer.wait_time = Balance.DISPATCH_INTERVAL
@@ -106,8 +114,9 @@ func _process(delta: float) -> void:
 
 
 func _show_damage_text() -> void:
-	var at := Balance.BOSS_CENTER + Vector2(randf_range(-1.2, 1.2), -Balance.BOSS_RADIUS - 0.3)
-	Effects.float_text(_renderer, at, "-%d" % int(_dmg_accum), Color(1.0, 0.35, 0.35), _lane_visible)
+	# 체력바(보스 머리 위)와 겹치지 않도록 몸통 위에서 떠오르게 한다
+	var at := Balance.BOSS_CENTER + Vector2(randf_range(-1.3, 1.0), randf_range(0.0, 0.9))
+	Effects.float_text(_renderer, at, "-%d" % int(_dmg_accum), Color(1.0, 0.9, 0.45), _lane_visible)
 	_dmg_accum = 0.0
 	_dmg_timer = 0.0
 
@@ -265,6 +274,8 @@ func set_lane_visible(is_shown: bool) -> void:
 	_lane_visible = is_shown
 	if _view:
 		_view.visible = is_shown
+	if _bar:
+		_bar.visible = is_shown
 	for m in _sent_monsters:
 		m.visible = is_shown
 
@@ -325,11 +336,24 @@ class BossView extends Node2D:
 				mouth + Vector2(tx, R * 0.33),
 			]), Color(0.95, 0.95, 0.9))
 
-		# 체력바 + 이름
+
+## 보스 체력바 + 이름. 몬스터들이 보스 위쪽에 몰려 서도 가려지지 않게 몬스터(z_index 2)보다 위에 그린다.
+class BossBar extends Node2D:
+	var boss: BossController
+	var renderer: GridRenderer
+
+	func _process(_delta: float) -> void:
+		queue_redraw()
+
+	func _draw() -> void:
+		var cell: float = renderer.CELL_SIZE
+		var R: float = Balance.BOSS_RADIUS * cell
+		var c: Vector2 = Balance.BOSS_CENTER * cell
 		var bar_w := R * 2.2
 		var bar_y := c.y - R * 1.7
 		var ratio := clampf(boss.hp / boss.max_hp, 0.0, 1.0)
-		draw_rect(Rect2(c.x - bar_w * 0.5 - 2, bar_y - 2, bar_w + 4, 14), Color(0, 0, 0, 0.75))
+		draw_rect(Rect2(c.x - bar_w * 0.5 - 3, bar_y - 20, bar_w + 6, 36), Color(0, 0, 0, 0.8))
+		draw_rect(Rect2(c.x - bar_w * 0.5, bar_y, bar_w, 10), Color(0.25, 0.05, 0.05))
 		draw_rect(Rect2(c.x - bar_w * 0.5, bar_y, bar_w * ratio, 10), Color(0.9, 0.15, 0.15))
 		var font := ThemeDB.fallback_font
 		draw_string(font, Vector2(c.x - bar_w * 0.5, bar_y - 6), "BOSS Lv.1   %d / %d" % [int(boss.hp), int(boss.max_hp)],

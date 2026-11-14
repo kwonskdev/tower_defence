@@ -259,11 +259,25 @@ func _draw_decor_front(c: Vector2, r: float) -> void:
 			draw_arc(p, r * 0.42, 0.0, TAU, 16, Color(0.7, 0.5, 0.0), 2.0)
 			draw_line(p + Vector2(0, -r * 0.2), p + Vector2(0, r * 0.2), Color(0.7, 0.5, 0.0), 2.0)
 		"armor":
-			# 두꺼운 장갑판 + 리벳
-			draw_arc(c, r * 0.9, PI * 1.05, PI * 1.95, 14, Color(0.8, 0.85, 0.95), 5.0)
-			draw_arc(c, r * 0.9, PI * 0.05, PI * 0.95, 14, Color(0.55, 0.6, 0.7), 5.0)
-			for i in range(4):
-				draw_circle(c + Vector2.from_angle(i * TAU / 4.0 + PI * 0.25) * r * 0.9, r * 0.1, Color(0.95, 0.95, 1.0))
+			var steel := Color(0.82, 0.87, 0.95)
+			var dark := Color(0.2, 0.24, 0.32)
+			# 어깨 보호대
+			for side in [-1.0, 1.0]:
+				var sp: Vector2 = c + Vector2(side * r * 0.98, r * 0.15)
+				draw_circle(sp, r * 0.38, steel)
+				draw_arc(sp, r * 0.38, 0.0, TAU, 14, dark, 2.5)
+			# 투구형 윗판 (눈 위를 가리는 사다리꼴)
+			var plate := PackedVector2Array([
+				c + Vector2(-r * 0.95, -r * 0.1), c + Vector2(r * 0.95, -r * 0.1),
+				c + Vector2(r * 0.6, -r * 1.0), c + Vector2(-r * 0.6, -r * 1.0),
+			])
+			draw_colored_polygon(plate, steel)
+			draw_polyline(PackedVector2Array([plate[0], plate[3], plate[2], plate[1]]), dark, 3.0)
+			draw_line(c + Vector2(0, -r * 1.0), c + Vector2(0, -r * 0.1), dark, 2.5)  # 중앙 이음선
+			for rx in [-0.5, 0.5]:
+				draw_circle(c + Vector2(r * rx, -r * 0.6), r * 0.09, dark)  # 리벳
+			# 몸통을 감싸는 두꺼운 테두리
+			draw_arc(c, r * 1.02, 0.0, TAU, 28, steel, 4.0)
 		"shield":
 			draw_arc(c, r * 1.18, -PI * 0.15, PI * 1.15, 20, Color(0.85, 0.9, 1.0), 3.0)
 			draw_arc(c, r * 1.18, PI * 1.15, PI * 1.85, 10, Color(0.85, 0.9, 1.0, 0.35), 3.0)
