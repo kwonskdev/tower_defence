@@ -191,7 +191,11 @@ func place_tower(grid_position: Vector2i) -> bool:
 	if kind.blocks and lane.is_cell_occupied(grid_position):
 		Log.debug(Log.Category.TOWER, "[%s] 타워 건설 실패 %s: 몬스터가 있는 칸" % [tag, grid_position])
 		return false
-	if not lane.try_spend(kind.cost, "타워 건설 %s(%s)" % [grid_position, kind.name]):
+	var cost: int = kind.cost
+	if not kind.blocks:
+		# 이미 있는 트랩 1개당 비용이 비싸진다
+		cost = roundi(kind.cost * (1.0 + Balance.TRAP_STACK_COST_STEP * lane.trap_count(grid_position)))
+	if not lane.try_spend(cost, "타워 건설 %s(%s)" % [grid_position, kind.name]):
 		return false
 
 	lane.build_tower(grid_position, selected_tower_kind)
@@ -207,7 +211,7 @@ func send_monster(kind_id: String) -> bool:
 	var lane: LaneController = lanes.get(local_player_id)
 	if lane == null or boss == null or boss.state != BossController.State.RUNNING:
 		return false
-	var kind: Dictionary = Balance.SENT_MONSTERS.get(kind_id, {})
+	var kind: Dictionary = SentMonsters.DATA.get(kind_id, {})
 	if kind.is_empty():
 		Log.warn(Log.Category.GAME, "알 수 없는 몬스터 종류: %s" % kind_id)
 		return false

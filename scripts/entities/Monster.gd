@@ -2,29 +2,47 @@ extends Node2D
 class_name Monster
 ## 몬스터. 플레이어가 조종하지 않고 자동으로 경로를 따라 이동한다.
 ## - 연속 좌표(cell_pos, 셀 단위)로 움직이며 웨이포인트를 향해 어느 방향으로든 직진한다.
-## - 평소: 타워를 우회해서 목표(EXIT 또는 goal_cell/final_point)로 이동
-## - 길이 완전히 막힘: 앞을 막은 타워를 공격 (일반형 공격력 = 무한대 -> 한 방에 파괴)
-## - 보스 레인의 몬스터는 final_point(보스 주변 자리)에 도착하면 멈추고 보스를 지속 공격한다
-## TODO: 시야(사방 3칸) 제한, 지원형/공중형
+## - 지상: 타워를 우회해서 목표(EXIT 또는 goal_cell/final_point)로 이동.
+##   길이 완전히 막히면 앞을 막은 타워를 공격 (일반형 공격력 = 무한대 -> 한 방에 파괴)
+## - 공중(flying): 미로/타워를 무시하고 맨 아래로 직선 이동. 대공 타워만 공격 가능.
+## - 방어력(armor): 한 발 피해를 평면으로 깎는다. 재생(regen): 초당 최대체력 비율만큼 회복.
+## - 보스 레인의 몬스터는 final_point(보스 주변 자리)에 도착하면 멈추고 보스를 지속 공격한다.
+##   성장(ramp)과 오라(aura)는 BossController가 계산한다.
+## - preview=true이면 아이콘용 미리보기: 길찾기 없이 제자리에서 애니메이션만 한다.
+## TODO: 시야(사방 3칸) 제한
 
 signal reached_exit(monster: Monster)
 signal died(monster: Monster)
 
+const DEFAULT_SPEED := 3.0
 const ARRIVE_DISTANCE := 0.1
 const TOWER_ATTACK_DISTANCE := 0.95   # 웨이포인트 타워 중심까지 이 거리 이하면 타워를 공격
+const FLY_LIFT := 0.42                # 공중 몬스터가 몸을 띄우는 높이(칸)
+const MIN_DAMAGE_RATIO := 0.2         # 방어력이 아무리 높아도 최소한 이 비율만큼은 들어간다
 
 var monster_id: int = 0
 var owner_id: int = -1           # 보스 레인으로 보낸 플레이어 (보스가 보낸 몬스터는 -1)
 var kind_id: String = "wave"
-var shape: String = "horn"       # 외형: horn(일반형) / coin / shield / spike
-var speed: float = Balance.MONSTER_SPEED
+var shape: String = "horn"       # 외형 (decor 이름)
+var speed: float = DEFAULT_SPEED
 var size_scale: float = 1.0
-var life_damage: int = 1       # 기지에 닿았을 때 줄이는 생명
-var reward: int = Balance.KILL_REWARD  # 처치 시 골드
+var life_damage: int = 1         # 기지에 닿았을 때 줄이는 생명
+var reward: int = 2              # 처치 시 골드
 var max_hp: float = 1.0
 var hp: float = 1.0
-var dps: float = 0.0             # 보스에게 주는 초당 피해
+var armor: float = 0.0
+var regen: float = 0.0           # 초당 최대체력 회복 비율
+var flying: bool = false
 var body_color: Color = Color(0.85, 0.2, 0.2)
+
+# 보스 레인에서 쓰는 값 (내가 보낸 몬스터)
+var dps: float = 0.0             # 기본 초당 피해
+var ramp: float = 0.0            # 보스 앞에 선 뒤 초당 dps 증가량
+var ramp_cap: float = 0.0
+var aura_radius: float = 0.0     # 지원형: 주변 아군 dps 증가
+var aura_bonus: float = 0.0
+var time_at_boss: float = 0.0    # 보스 앞에 선 뒤 지난 시간
+var current_dps: float = 0.0     # 성장/오라까지 반영한 실제 dps
 
 # 목표: goal_cell을 주면 그 칸까지 간 뒤 final_point로 이동, 주지 않으면 맨 아래 EXIT 행
 var goal_cell: Vector2i = Pathfinder.NO_GOAL
@@ -38,6 +56,10 @@ var facing: Vector2 = Vector2.DOWN
 var breaching: bool = false
 var stopped: bool = false
 
+# 아이콘 미리보기용
+var preview: bool = false
+var preview_cell: float = 40.0
+
 var _grid: GridSystem
 var _renderer: GridRenderer
 var _pathfinder: Pathfinder
@@ -46,6 +68,14 @@ var _dead := false
 var _arrived := false
 var _hit_flash := 0.0
 var _anim := 0.0
+
+
+## 데이터 딕셔너리(WaveTypes / SentMonsters 항목)의 공통 외형 값을 적용한다
+func apply_look(data: Dictionary) -> void:
+	shape = data.shape
+	body_color = data.color
+	size_scale = data.size
+	speed = data.speed
 
 
 func setup(id: int, grid: GridSystem, renderer: GridRenderer, pathfinder: Pathfinder, spawn_cell: Vector2i) -> void:
@@ -67,11 +97,17 @@ func setup(id: int, grid: GridSystem, renderer: GridRenderer, pathfinder: Pathfi
 func take_damage(amount: float) -> void:
 	if _dead:
 		return
-	hp -= amount
+	# 방어력: 한 발 피해를 평면으로 깎되, 최소 MIN_DAMAGE_RATIO는 들어간다
+	hp -= maxf(amount - armor, amount * MIN_DAMAGE_RATIO)
 	_hit_flash = 0.1
 	if hp <= 0.0:
 		_dead = true
 		died.emit(self)
+
+
+## 공중 몬스터는 몸이 떠 있으므로 투사체/표시는 이만큼 위를 기준으로 한다 (셀 단위)
+func visual_offset() -> Vector2:
+	return Vector2(0.0, -FLY_LIFT) if flying else Vector2.ZERO
 
 
 ## 이동 중단 (보스 앞 자리에 도착했을 때)
@@ -93,11 +129,18 @@ func remaining_distance() -> float:
 
 
 func _on_grid_changed(_position: Vector2i, _old_state, _new_state) -> void:
-	if not stopped:
+	if not stopped and not flying:
 		_repath()
 
 
 func _repath() -> void:
+	if flying:
+		# 공중: 미로를 무시하고 지금 위치에서 맨 아래까지 직선
+		waypoints.clear()
+		waypoints.append(Vector2(cell_pos.x, GridSystem.GRID_HEIGHT - 0.5))
+		breaching = false
+		return
+
 	# 지금 서 있는 위치에서 다시 계산하므로 뒤로 되돌아가는 일이 없다.
 	var result := _pathfinder.find_route(cell_pos, goal_cell)
 	waypoints.assign(result.waypoints)
@@ -118,10 +161,17 @@ func _repath() -> void:
 
 
 func _process(delta: float) -> void:
+	if preview and not is_visible_in_tree():
+		return
 	_anim += delta
 	if _hit_flash > 0.0:
 		_hit_flash -= delta
 	queue_redraw()
+	if preview:
+		return
+
+	if regen > 0.0 and hp < max_hp and not _dead:
+		hp = minf(max_hp, hp + max_hp * regen * delta)
 
 	if stopped:
 		return
@@ -133,7 +183,7 @@ func _process(delta: float) -> void:
 	var target_cell := Vector2i(target.floor())
 
 	# 다음 목적지가 타워 칸이면 가까워졌을 때 공격 (일반형: 공격력 무한대 -> 즉시 파괴, 환급 0원)
-	if _grid.get_cell_state(target_cell) == GridSystem.CellState.TOWER \
+	if not flying and _grid.get_cell_state(target_cell) == GridSystem.CellState.TOWER \
 			and cell_pos.distance_to(target) <= TOWER_ATTACK_DISTANCE:
 		Log.info(Log.Category.TOWER, "[%s] 몬스터#%d가 타워 파괴 %s" % [_grid.lane_tag(), monster_id, target_cell])
 		_grid.set_cell_state(target_cell, GridSystem.CellState.EMPTY)  # 경로 재계산은 신호로 처리됨
@@ -168,21 +218,26 @@ func _check_arrival() -> void:
 		reached_exit.emit(self)
 
 
+func _cell_px() -> float:
+	return preview_cell if _renderer == null else float(_renderer.CELL_SIZE)
+
+
 func _update_position() -> void:
-	position = cell_pos * _renderer.CELL_SIZE
+	position = cell_pos * _cell_px()
 
 
 func _draw() -> void:
-	var cell: float = _renderer.CELL_SIZE
+	var cell := _cell_px()
 	var r: float = cell * 0.32 * size_scale
-	var moving := not stopped and not waypoints.is_empty()
+	var moving := preview or (not stopped and not waypoints.is_empty())
 
 	# 걷는 동안 통통 튀고, 멈추면 숨쉬듯 흔들림. 보스 앞에서는 보스 쪽으로 달려들었다 물러남.
 	var bob := absf(sin(_anim * speed * 3.0)) * cell * 0.09 if moving else sin(_anim * 3.0) * cell * 0.015
 	var lunge := Vector2.ZERO
 	if stopped:
 		lunge = attack_dir * maxf(0.0, sin(_anim * 9.0)) * cell * 0.14
-	var c := Vector2(0, -bob) + lunge
+	var lift := Vector2(0.0, -cell * FLY_LIFT) if flying else Vector2.ZERO
+	var c := Vector2(0, -bob) + lunge + lift
 
 	var color := body_color
 	if breaching:
@@ -190,9 +245,15 @@ func _draw() -> void:
 	if _hit_flash > 0.0:
 		color = Color.WHITE
 
-	# 그림자
+	# 지원형: 오라 범위 표시
+	if aura_radius > 0.0 and stopped and not preview:
+		var ar := aura_radius * cell
+		draw_circle(Vector2.ZERO, ar, Color(body_color, 0.07))
+		draw_arc(Vector2.ZERO, ar, 0.0, TAU, 40, Color(body_color, 0.35), 2.0)
+
+	# 그림자 (공중 몬스터는 바닥에 작고 흐리게)
 	draw_set_transform(Vector2(0, r * 0.95), 0.0, Vector2(1.0, 0.35))
-	draw_circle(Vector2.ZERO, r, Color(0, 0, 0, 0.3))
+	draw_circle(Vector2.ZERO, r * (0.7 if flying else 1.0), Color(0, 0, 0, 0.18 if flying else 0.3))
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 	_draw_decor_back(c, r, color)
@@ -202,7 +263,7 @@ func _draw() -> void:
 	draw_arc(c, r, 0.0, TAU, 24, color.darkened(0.45), 2.0)
 	draw_circle(c + Vector2(-r * 0.3, -r * 0.35), r * 0.28, color.lightened(0.35))  # 하이라이트
 
-	_draw_decor_front(c, r)
+	_draw_decor_front(c, r, color)
 
 	# 눈 (이동 방향을 쳐다봄)
 	var dir := facing if facing.length() > 0.01 else Vector2.DOWN
@@ -214,14 +275,14 @@ func _draw() -> void:
 		draw_circle(e + dir * r * 0.09, r * 0.12, Color(0.05, 0.05, 0.1))
 
 	# 체력이 깎인 몬스터만 체력바 표시
-	if hp < max_hp and max_hp > 0.0:
+	if not preview and hp < max_hp and max_hp > 0.0:
 		var w := cell * 0.62
-		var y := -r - cell * 0.22
+		var y := -r - cell * 0.22 + lift.y
 		draw_rect(Rect2(-w * 0.5, y, w, 4.0), Color(0, 0, 0, 0.65))
 		draw_rect(Rect2(-w * 0.5, y, w * clampf(hp / max_hp, 0.0, 1.0), 4.0), Color(0.3, 0.95, 0.3))
 
 
-## 몸통 뒤에 그려지는 장식 (뿔, 가시)
+## 몸통 뒤에 그려지는 장식 (뿔, 가시, 날개, 속도선)
 func _draw_decor_back(c: Vector2, r: float, color: Color) -> void:
 	match shape:
 		"horn":
@@ -248,10 +309,19 @@ func _draw_decor_back(c: Vector2, r: float, color: Color) -> void:
 					c + base * r * 1.45,
 					c + base * r * 0.8 - side * r * 0.22,
 				]), color.darkened(0.2))
+		"bird":
+			# 펄럭이는 날개
+			var flap := sin(_anim * 16.0)
+			for side in [-1.0, 1.0]:
+				draw_colored_polygon(PackedVector2Array([
+					c + Vector2(side * r * 0.5, -r * 0.1),
+					c + Vector2(side * r * 1.9, -r * (0.9 + 0.6 * flap)),
+					c + Vector2(side * r * 1.5, r * 0.35),
+				]), color.lightened(0.25))
 
 
-## 몸통 위에 그려지는 장식 (동전, 방패)
-func _draw_decor_front(c: Vector2, r: float) -> void:
+## 몸통 위에 그려지는 장식 (동전, 방패, 갑옷, 모자, 곡괭이, 금고, 불꽃, 깃발, 새싹, 십자)
+func _draw_decor_front(c: Vector2, r: float, color: Color) -> void:
 	match shape:
 		"coin":
 			var p := c + Vector2(0, -r * 1.25)
@@ -261,23 +331,82 @@ func _draw_decor_front(c: Vector2, r: float) -> void:
 		"armor":
 			var steel := Color(0.82, 0.87, 0.95)
 			var dark := Color(0.2, 0.24, 0.32)
-			# 어깨 보호대
-			for side in [-1.0, 1.0]:
+			for side in [-1.0, 1.0]:  # 어깨 보호대
 				var sp: Vector2 = c + Vector2(side * r * 0.98, r * 0.15)
 				draw_circle(sp, r * 0.38, steel)
 				draw_arc(sp, r * 0.38, 0.0, TAU, 14, dark, 2.5)
-			# 투구형 윗판 (눈 위를 가리는 사다리꼴)
-			var plate := PackedVector2Array([
+			var plate := PackedVector2Array([  # 투구형 윗판
 				c + Vector2(-r * 0.95, -r * 0.1), c + Vector2(r * 0.95, -r * 0.1),
 				c + Vector2(r * 0.6, -r * 1.0), c + Vector2(-r * 0.6, -r * 1.0),
 			])
 			draw_colored_polygon(plate, steel)
 			draw_polyline(PackedVector2Array([plate[0], plate[3], plate[2], plate[1]]), dark, 3.0)
-			draw_line(c + Vector2(0, -r * 1.0), c + Vector2(0, -r * 0.1), dark, 2.5)  # 중앙 이음선
+			draw_line(c + Vector2(0, -r * 1.0), c + Vector2(0, -r * 0.1), dark, 2.5)
 			for rx in [-0.5, 0.5]:
-				draw_circle(c + Vector2(r * rx, -r * 0.6), r * 0.09, dark)  # 리벳
-			# 몸통을 감싸는 두꺼운 테두리
+				draw_circle(c + Vector2(r * rx, -r * 0.6), r * 0.09, dark)
 			draw_arc(c, r * 1.02, 0.0, TAU, 28, steel, 4.0)
 		"shield":
 			draw_arc(c, r * 1.18, -PI * 0.15, PI * 1.15, 20, Color(0.85, 0.9, 1.0), 3.0)
 			draw_arc(c, r * 1.18, PI * 1.15, PI * 1.85, 10, Color(0.85, 0.9, 1.0, 0.35), 3.0)
+		"hat":
+			var pts := PackedVector2Array()
+			for i in range(9):
+				var a := PI + i * PI / 8.0
+				pts.append(c + Vector2(cos(a) * r * 0.95, sin(a) * r * 0.8 - r * 0.2))
+			draw_colored_polygon(pts, Color(1.0, 0.85, 0.2))
+			draw_line(c + Vector2(-r * 1.1, -r * 0.2), c + Vector2(r * 1.1, -r * 0.2), Color(0.8, 0.6, 0.1), 3.0)
+		"pick":
+			var hand := c + Vector2(r * 0.95, r * 0.5)
+			var tip := c + Vector2(r * 1.55, -r * 0.95)
+			draw_line(hand, tip, Color(0.5, 0.35, 0.2), 3.0)
+			draw_line(tip + Vector2(-r * 0.45, r * 0.1), tip + Vector2(r * 0.4, -r * 0.2), Color(0.8, 0.82, 0.88), 4.0)
+		"vault":
+			var box := Rect2(c + Vector2(-r * 0.5, r * 0.05), Vector2(r * 1.0, r * 0.75))
+			draw_rect(box, Color(0.75, 0.78, 0.85))
+			draw_rect(box, Color(0.25, 0.28, 0.35), false, 2.5)
+			draw_circle(box.get_center(), r * 0.2, Color(1.0, 0.85, 0.2))
+			draw_arc(box.get_center(), r * 0.2, 0.0, TAU, 12, Color(0.4, 0.3, 0.0), 2.0)
+		"tophat":
+			draw_rect(Rect2(c.x - r * 0.5, c.y - r * 1.7, r * 1.0, r * 1.0), Color(0.1, 0.1, 0.12))
+			draw_rect(Rect2(c.x - r * 0.5, c.y - r * 0.95, r * 1.0, r * 0.18), Color(1.0, 0.85, 0.2))
+			draw_line(c + Vector2(-r * 0.9, -r * 0.7), c + Vector2(r * 0.9, -r * 0.7), Color(0.1, 0.1, 0.12), 4.0)
+		"flame":
+			for i in range(3):
+				var x := (i - 1) * r * 0.5
+				var h := r * (0.9 + 0.4 * sin(_anim * 9.0 + i * 2.0))
+				var col := Color(1.0, 0.8, 0.2) if i == 1 else Color(1.0, 0.45, 0.1)
+				draw_colored_polygon(PackedVector2Array([
+					c + Vector2(x - r * 0.25, -r * 0.7),
+					c + Vector2(x, -r * 0.7 - h),
+					c + Vector2(x + r * 0.25, -r * 0.7),
+				]), col)
+		"flag":
+			var base := c + Vector2(0, -r * 0.9)
+			var wave := sin(_anim * 6.0) * r * 0.15
+			draw_line(base, base + Vector2(0, -r * 1.2), Color(0.8, 0.8, 0.8), 2.5)
+			draw_colored_polygon(PackedVector2Array([
+				base + Vector2(0, -r * 1.2), base + Vector2(r * 0.9, -r * 1.0 + wave), base + Vector2(0, -r * 0.7),
+			]), Color(1.0, 0.5, 0.7))
+		"banner":
+			var base := c + Vector2(0, -r * 0.9)
+			var wave := sin(_anim * 5.0) * r * 0.15
+			draw_line(base, base + Vector2(0, -r * 1.7), Color(0.6, 0.5, 0.3), 3.0)
+			draw_colored_polygon(PackedVector2Array([
+				base + Vector2(0, -r * 1.7), base + Vector2(r * 1.1, -r * 1.6 + wave),
+				base + Vector2(r * 1.1, -r * 0.95 + wave), base + Vector2(0, -r * 1.0),
+			]), Color(0.9, 0.75, 0.25))
+			draw_circle(base + Vector2(r * 0.55, -r * 1.3 + wave * 0.5), r * 0.18, Color(0.6, 0.1, 0.1))
+		"sprout":
+			var g := 1.0 if preview else 0.6 + 0.4 * clampf(time_at_boss / 40.0, 0.0, 1.0)  # 서 있을수록 자란다
+			var base := c + Vector2(0, -r * 0.85)
+			draw_line(base, base + Vector2(0, -r * 0.5 * g), Color(0.3, 0.6, 0.2), 3.0)
+			for side in [-1.0, 1.0]:
+				draw_colored_polygon(PackedVector2Array([
+					base + Vector2(0, -r * 0.5 * g),
+					base + Vector2(side * r * 0.9 * g, -r * 0.9 * g),
+					base + Vector2(side * r * 0.5 * g, -r * 0.2 * g),
+				]), Color(0.45, 0.85, 0.3))
+		"cross":
+			var p := c + Vector2(0, r * 0.45)
+			draw_rect(Rect2(p.x - r * 0.12, p.y - r * 0.38, r * 0.24, r * 0.76), Color(0.95, 1.0, 0.95))
+			draw_rect(Rect2(p.x - r * 0.38, p.y - r * 0.12, r * 0.76, r * 0.24), Color(0.95, 1.0, 0.95))

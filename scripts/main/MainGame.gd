@@ -10,8 +10,7 @@ class_name MainGame
 @onready var empty2_button: Button = $VBoxContainer/TopUI/HBoxContainer/LeftPanel/MainView/Empty2Button
 @onready var boss_button: Button = $VBoxContainer/TopUI/HBoxContainer/RightPanel/BonusButton
 
-# 몬스터 버튼 인덱스(monster_buttons 기준) -> 생산할 몬스터 종류. 0번은 뒤로 가기.
-const MONSTER_KIND_BY_INDEX := {1: "income", 2: "balanced", 3: "power"}
+# 몬스터 버튼은 monster_buttons[0]이 뒤로 가기, [1]부터 SentMonsters.ORDER 순서대로 몬스터 종류.
 
 var hud_label: Label
 var tower_view: GridContainer
@@ -40,23 +39,49 @@ func setup_ui():
 		if button:
 			monster_buttons.append(button)
 
-	# 몬스터 버튼에 종류 이름 표시
-	for idx in MONSTER_KIND_BY_INDEX:
-		if idx < monster_buttons.size():
-			var kind: Dictionary = Balance.SENT_MONSTERS[MONSTER_KIND_BY_INDEX[idx]]
-			monster_buttons[idx].text = kind.short
-			monster_buttons[idx].tooltip_text = "%s  비용 %d / 수입 +%d / 보스 DPS %.1f" % [
-				kind.name, kind.cost, kind.income, kind.dps]
-
+	_setup_monster_buttons()
 	_create_tower_view()
 	_create_minimaps()
 	_create_hud()
+
+## 버튼을 "실제 모습 아이콘 + 비용 + 마우스 올리면 상세 설명" 형태로 꾸민다
+func _decorate_unit_button(b: Button, icon: UnitIcon, cost: int, tooltip: String):
+	b.text = ""
+	b.tooltip_text = tooltip
+	b.clip_contents = true
+	b.add_child(icon)
+	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	var cost_label := Label.new()
+	cost_label.text = str(cost)
+	cost_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cost_label.add_theme_font_size_override("font_size", 11)
+	cost_label.add_theme_color_override("font_color", Color(1.0, 0.92, 0.4))
+	cost_label.add_theme_color_override("font_outline_color", Color(0, 0, 0))
+	cost_label.add_theme_constant_override("outline_size", 4)
+	cost_label.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	cost_label.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	b.add_child(cost_label)
+	cost_label.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
+
+func _setup_monster_buttons():
+	for i in range(1, monster_buttons.size()):
+		var b := monster_buttons[i]
+		var order_idx := i - 1
+		if order_idx >= SentMonsters.ORDER.size():
+			b.text = ""
+			b.disabled = true  # 아직 비어 있는 칸
+			continue
+		var kind_id: String = SentMonsters.ORDER[order_idx]
+		var icon := UnitIcon.new()
+		icon.show_monster(kind_id)
+		_decorate_unit_button(b, icon, SentMonsters.DATA[kind_id].cost, SentMonsters.tooltip(kind_id))
 
 func _create_tower_view():
 	# 타워 배럭: 속성 2개 조합 타워 선택 (코드로 생성, 몬스터 뷰와 같은 자리를 쓴다)
 	var left_panel: Control = main_view.get_parent()
 	tower_view = GridContainer.new()
-	tower_view.columns = Balance.TOWER_COMBOS.size() + 1
+	tower_view.columns = 6  # 뒤로 가기 + 10종 = 2줄
 	tower_view.visible = false
 	left_panel.add_child(tower_view)
 	tower_view.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -71,18 +96,13 @@ func _create_tower_view():
 	for kind_id in Balance.TOWER_COMBOS:
 		var kind := Balance.tower_kind(kind_id)
 		var b := Button.new()
-		var short := ""
-		for a in kind.attrs:
-			short += Balance.TOWER_ATTRS[a].short
-		b.text = short + "\n" + str(kind.cost)
-		b.tooltip_text = "%s  비용 %d / 사거리 %.1f / 공격력 %.1f / 쿨다운 %.2fs%s%s" % [
-			kind.name, kind.cost, kind.range, kind.damage, kind.cooldown,
-			" / 범위 %.1f" % kind.splash if kind.splash > 0.0 else "",
-			"" if kind.blocks else " / 길을 막지 못함"]
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		b.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		b.pressed.connect(_on_tower_kind_selected.bind(kind_id))
 		tower_view.add_child(b)
+		var icon := UnitIcon.new()
+		icon.show_tower(kind)
+		_decorate_unit_button(b, icon, kind.cost, Balance.tower_tooltip(kind))
 
 func _create_minimaps():
 	# 오른쪽 3x3 버튼 위에 축소 레인 화면을 겹쳐 그린다 (눌러서 레인 전환하는 기능은 그대로)
@@ -129,18 +149,19 @@ func _update_hud():
 
 	var state_text := ""
 	match boss.state:
-		BossController.State.VICTORY: state_text = "  [승리]"
+		BossController.State.VICTORY: state_text = "  [전체 승리!]"
 		BossController.State.DEFEAT: state_text = "  [패배]"
 	var selected := Balance.tower_kind(game_field.selected_tower_kind)
 	# 보스 공격 현황: 보스 앞에 서 있는 몬스터들이 1초에 주는 피해의 합
 	var attack_text := "보스를 공격 중인 몬스터 없음"
 	if boss.total_dps > 0.0:
 		var eta := boss.hp / boss.total_dps
-		attack_text = "보스에게 초당 %.1f 피해 -> 이 속도면 %d초 뒤 처치%s" % [
-			boss.total_dps, ceili(eta), " (시간 부족!)" if eta > boss.time_left else ""]
-	hud_label.text = "골드 %d (+%d/%.0fs, 다음 수입 %d초)  생명 %d  타워 %d개%s\n선택 타워: %s (%d골드)\n보스 %d/%d  남은 %d초\n%s" % [
+		attack_text = "보스에게 초당 %.1f 피해 (%d마리) -> %d초 뒤 처치%s" % [
+			boss.total_dps, boss.get_attacker_count(), ceili(eta), " (시간 부족!)" if eta > boss.time_left else ""]
+	hud_label.text = "골드 %d (+%d/%.0fs, 다음 수입 %d초)  생명 %d  타워 %d개%s\n선택 타워: %s (%d골드)\nBOSS Lv.%d/%d %s  %d/%d  남은 %d초\n%s\n지금 오는 몬스터: %s" % [
 		lane.gold, lane.income, Balance.INCOME_INTERVAL, ceili(lane.income_time_left()), lane.lives, lane.towers.size(), state_text,
-		selected.name, selected.cost, int(boss.hp), int(boss.max_hp), int(boss.time_left), attack_text]
+		selected.name, selected.cost, boss.level, BossLevels.COUNT, boss.level_data.name,
+		int(boss.hp), int(boss.max_hp), int(boss.time_left), attack_text, boss.current_wave_text]
 
 func connect_signals():
 	# 버튼 클릭 이벤트 연결
@@ -228,9 +249,10 @@ func _on_back_button_pressed():
 
 # 몬스터 선택 핸들러
 func _on_monster_selected(button_index: int):
-	var kind_id: String = MONSTER_KIND_BY_INDEX.get(button_index, "")
-	if kind_id.is_empty():
+	var order_idx := button_index - 1
+	if order_idx < 0 or order_idx >= SentMonsters.ORDER.size():
 		Log.info(Log.Category.UI, "몬스터 M%d 선택 (미구현)" % (button_index + 1))
 		return
+	var kind_id: String = SentMonsters.ORDER[order_idx]
 	Log.info(Log.Category.UI, "몬스터 생산 요청: %s" % kind_id)
 	game_field.send_monster(kind_id)

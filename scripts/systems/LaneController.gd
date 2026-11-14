@@ -69,10 +69,13 @@ func build_tower(cell: Vector2i, kind_id: String) -> Tower:
 
 
 ## 사거리 안의 몬스터 중 기지에 가장 가까운(남은 이동거리가 짧은) 몬스터
-func find_target(from_cell_pos: Vector2, range_cells: float) -> Monster:
+## 대공 타워(anti_air)는 공중 몬스터만, 그 외 타워는 지상 몬스터만 노린다.
+func find_target(from_cell_pos: Vector2, range_cells: float, anti_air: bool = false) -> Monster:
 	var best: Monster = null
 	var best_dist := INF
 	for m in monsters:
+		if m.flying != anti_air:
+			continue
 		if m.cell_pos.distance_to(from_cell_pos) > range_cells:
 			continue
 		var d := m.remaining_distance()
@@ -132,8 +135,8 @@ func _on_income_tick() -> void:
 
 # --- 몬스터 ---
 
-## 보스의 자동 파견: 이 레인에 몬스터를 보낸다
-func spawn_wave_monster(hp_value: float, type_id: String = "grunt") -> void:
+## 보스의 자동 파견: 이 레인에 몬스터를 보낸다 (level: 보스 라운드. 보상/방어력이 라운드에 따라 오른다)
+func spawn_wave_monster(hp_value: float, type_id: String = "grunt", level: int = 1) -> void:
 	if not active:
 		return
 	var spawn_cells := _grid.get_spawn_cells()
@@ -141,16 +144,16 @@ func spawn_wave_monster(hp_value: float, type_id: String = "grunt") -> void:
 		Log.error(Log.Category.GAME, "[P%d] 스폰 셀이 없음" % (player_id + 1))
 		return
 
-	var wave_type: Dictionary = Balance.WAVE_TYPES[type_id]
+	var wave_type: Dictionary = WaveTypes.TYPES[type_id]
 	var monster := Monster.new()
+	monster.apply_look(wave_type)
 	monster.kind_id = type_id
 	monster.max_hp = hp_value
-	monster.speed = wave_type.speed
-	monster.size_scale = wave_type.size
 	monster.life_damage = wave_type.life
-	monster.reward = wave_type.reward
-	monster.shape = wave_type.shape
-	monster.body_color = wave_type.color
+	monster.armor = wave_type.armor
+	monster.regen = wave_type.regen
+	monster.flying = wave_type.flying
+	monster.reward = roundi(wave_type.reward * (1.0 + 0.15 * (level - 1)))
 	monster.visible = lane_visible
 	monster.z_index = 2
 	monster.setup(_next_monster_id, _grid, _renderer, _pathfinder, spawn_cells.pick_random())
@@ -158,8 +161,8 @@ func spawn_wave_monster(hp_value: float, type_id: String = "grunt") -> void:
 	monster.died.connect(_on_monster_died)
 	_renderer.add_child(monster)
 	monsters.append(monster)
-	Log.debug(Log.Category.GAME, "[P%d] 몬스터#%d(%s) 스폰 hp=%.1f (필드 위 %d마리)" % [
-		player_id + 1, _next_monster_id, wave_type.name, hp_value, monsters.size()])
+	Log.debug(Log.Category.GAME, "[P%d] 몬스터#%d(%s) 스폰 hp=%.1f 방어=%.2f (필드 위 %d마리)" % [
+		player_id + 1, _next_monster_id, wave_type.name, hp_value, monster.armor, monsters.size()])
 	_next_monster_id += 1
 
 
@@ -199,6 +202,8 @@ func shutdown() -> void:
 func is_cell_occupied(cell: Vector2i) -> bool:
 	var center := Vector2(cell) + Vector2(0.5, 0.5)
 	for m in monsters:
+		if m.flying:
+			continue  # 공중 몬스터는 땅의 건설을 막지 않는다
 		if absf(m.cell_pos.x - center.x) < 0.85 and absf(m.cell_pos.y - center.y) < 0.85:
 			return true
 	return false

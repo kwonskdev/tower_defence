@@ -15,6 +15,7 @@ static func spawn_projectile(renderer: GridRenderer, lane: LaneController, from_
 	p.pos_c = from_cell_pos
 	p.damage = kind.damage
 	p.splash = kind.splash
+	p.anti_air = kind.anti_air
 	p.color = color
 	# 속성 조합에 따라 투사체 모양/속도 결정
 	if "splash" in attrs:
@@ -66,20 +67,21 @@ class Projectile extends Node2D:
 	var speed := 14.0
 	var damage := 1.0
 	var splash := 0.0
+	var anti_air := false
 	var color := Color.WHITE
 	var style := "bolt"
 	var dir := Vector2.DOWN
 	var _total := 1.0
 
 	func launch() -> void:
-		dest = target.cell_pos if is_instance_valid(target) else pos_c
+		dest = (target.cell_pos + target.visual_offset()) if is_instance_valid(target) else pos_c
 		_total = maxf(0.1, pos_c.distance_to(dest))
 		dir = (dest - pos_c).normalized()
 		position = pos_c * renderer.CELL_SIZE
 
 	func _process(delta: float) -> void:
 		if is_instance_valid(target):
-			dest = target.cell_pos  # 유도: 살아있는 동안 계속 따라간다
+			dest = target.cell_pos + target.visual_offset()  # 유도: 살아있는 동안 계속 따라간다
 		var to := dest - pos_c
 		var step := speed * delta
 		if to.length() <= step:
@@ -98,7 +100,9 @@ class Projectile extends Node2D:
 	func _impact() -> void:
 		if splash > 0.0:
 			for m in lane.monsters.duplicate():
-				if is_instance_valid(m) and m.cell_pos.distance_to(dest) <= splash:
+				# 범위 공격도 타워의 대공/지상 구분을 따른다
+				if is_instance_valid(m) and m.flying == anti_air \
+						and (m.cell_pos + m.visual_offset()).distance_to(dest) <= splash:
 					m.take_damage(damage)
 			Effects.ring(renderer, dest, splash, color, visible)
 		else:

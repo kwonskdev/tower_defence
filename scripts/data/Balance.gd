@@ -1,6 +1,10 @@
 extends RefCounted
 class_name Balance
-## 밸런스 수치 모음. 전부 임시값이며, 밸런스 패치는 이 파일만 고치면 된다.
+## 밸런스 수치 모음. 전부 임시값이며, 밸런스 패치는 data 폴더의 파일들만 고치면 된다.
+## - Balance.gd     : 경제, 타워(속성 5개 -> 조합 10종), 보스 레인 크기
+## - BossLevels.gd  : 보스 10라운드
+## - WaveTypes.gd   : 보스가 내 레인으로 보내는 몬스터 종류(상성)
+## - SentMonsters.gd: 내가 보스 레인으로 보내는 몬스터 종류
 
 # --- 경제 ---
 const START_GOLD := 150
@@ -10,7 +14,6 @@ const START_LIVES := 10
 
 # --- 타워 ---
 # 기본 능력치에 속성 2개를 조합해서 종류가 만들어진다 (tower_kind 참고).
-# 대공 속성은 공중 몬스터가 생길 때 추가한다.
 const TOWER_BASE_COST := 4
 const TOWER_BASE_RANGE := 3.0      # 칸
 const TOWER_BASE_DAMAGE := 0.4
@@ -20,14 +23,18 @@ const TOWER_ATTRS := {
 	"long": {"name": "장거리", "short": "장", "cost": 2, "color": Color(0.35, 0.75, 1.0)},
 	"power": {"name": "고화력", "short": "고", "cost": 3, "color": Color(1.0, 0.45, 0.2)},
 	"splash": {"name": "범위", "short": "범", "cost": 3, "color": Color(0.45, 0.9, 0.45)},
-	"trap": {"name": "트랩", "short": "트", "cost": 0, "color": Color(0.9, 0.85, 0.3)},
+	"trap": {"name": "트랩", "short": "트", "cost": 1, "color": Color(0.9, 0.85, 0.3)},
+	"air": {"name": "대공", "short": "공", "cost": 3, "color": Color(1.0, 0.55, 0.85)},
 }
 
-# 속성 2개 조합 (대공 제외 6가지)
+# 속성 2개 조합 = 5C2 = 10가지
 const TOWER_COMBOS := [
-	"long+power", "long+splash", "long+trap",
-	"power+splash", "power+trap", "splash+trap",
+	"long+power", "long+splash", "long+trap", "long+air", "power+splash",
+	"power+trap", "power+air", "splash+trap", "splash+air", "trap+air",
 ]
+
+# 트랩을 같은 칸에 겹쳐 지을 때, 이미 있는 트랩 1개당 건설비가 이만큼 비싸진다 (한 칸에 몰빵 방지)
+const TRAP_STACK_COST_STEP := 0.25
 
 # 타워 건설 시 완전 랜덤으로 배정되는 7색 (보너스 효과는 추후 구현)
 const TOWER_COLORS := [
@@ -50,7 +57,8 @@ static func tower_kind(kind_id: String) -> Dictionary:
 	var splash := 0.0
 	var cost := TOWER_BASE_COST
 	var range_mult := 1.0
-	var blocks := true  # 트랩 속성은 길을 막을 수 없다 (몬스터가 위로 지나감)
+	var blocks := true      # 트랩 속성은 길을 막을 수 없다 (몬스터가 위로 지나감)
+	var anti_air := false   # 대공 속성은 공중 몬스터만 공격한다 (지상 몬스터는 공격 불가)
 	var names: Array[String] = []
 
 	for a in parts:
@@ -59,18 +67,21 @@ static func tower_kind(kind_id: String) -> Dictionary:
 		names.append(attr.name)
 		match a:
 			"long":
-				range_v += 2.5
+				range_v += 2.0
 			"power":
-				damage *= 2.5
-				cooldown *= 1.6
+				damage *= 4.0
+				cooldown *= 2.2
 			"splash":
-				damage *= 0.7
-				splash = 1.2
+				damage *= 0.8
+				splash = 1.5
 			"trap":
 				range_mult = 0.6   # 사거리는 짧지만
-				damage *= 0.8      # 한 발이 강하고
-				cooldown *= 0.4    # 공격 속도가 빠르다
+				damage *= 0.7      # 한 발이 강하고
+				cooldown *= 0.5    # 공격 속도가 빠르다
 				blocks = false
+			"air":
+				damage *= 1.6      # 공중만 때릴 수 있는 대신 한 발이 강하다
+				anti_air = true
 
 	return {
 		"id": kind_id,
@@ -82,58 +93,45 @@ static func tower_kind(kind_id: String) -> Dictionary:
 		"cooldown": cooldown,
 		"splash": splash,
 		"blocks": blocks,
+		"anti_air": anti_air,
 	}
 
 
-# --- 보스가 내 레인으로 보내는 몬스터 (일반형) ---
-const MONSTER_SPEED := 3.0         # 초당 이동 칸
-const WAVE_MONSTER_HP := 10.0      # 일반 몬스터 기준 체력 (종류별 배율은 WAVE_TYPES)
-const WAVE_HP_BONUS_AT_LOW_BOSS := 3.0   # 보스 체력이 0에 가까울수록 몬스터 체력이 (1 + 이 값)배
-const WAVE_HP_GROWTH_PER_MIN := 0.15     # 시간이 지날수록 몬스터 체력이 분당 이만큼 증가
-const KILL_REWARD := 2
-const DISPATCH_INTERVAL := 2.5     # 보스의 자동 파견 주기(초)
+## 마우스를 올렸을 때 보여줄 타워 상세 설명
+static func tower_tooltip(kind: Dictionary) -> String:
+	var lines: Array[String] = []
+	lines.append("%s 타워   [%d골드]" % [kind.name, kind.cost])
+	lines.append("사거리 %.1f칸 / 한 발 %.2f / %.2f초마다 발사 (초당 %.2f)" % [
+		kind.range, kind.damage, kind.cooldown, kind.damage / kind.cooldown])
+	var notes: Array[String] = []
+	if kind.splash > 0.0:
+		notes.append("폭발 범위 %.1f칸 안의 적을 모두 공격" % kind.splash)
+	if not kind.blocks:
+		notes.append("길을 막지 못함 (몬스터가 위로 지나감). 한 칸에 겹쳐 지을 수 있지만 겹칠수록 비용 +%d%%씩" % int(TRAP_STACK_COST_STEP * 100.0))
+	if kind.anti_air:
+		notes.append("공중 몬스터만 공격 (지상 몬스터는 공격 불가)")
+	else:
+		notes.append("지상 몬스터만 공격 (공중 몬스터는 공격 불가)")
+	for n in notes:
+		lines.append("- " + n)
+	for a in kind.attrs:
+		lines.append("%s: %s" % [TOWER_ATTRS[a].name, _attr_desc(a)])
+	return "\n".join(lines)
 
-# 보스가 보내는 몬스터 종류. unlock: 이 시간(초)이 지나야 등장 / weight: 등장 확률 가중치
-# hp: 기준 체력 배율 / life: 기지에 닿았을 때 줄이는 생명 / count: 한 번에 보내는 마릿수
-const WAVE_TYPES := {
-	"grunt": {"name": "일반", "hp": 1.0, "speed": 3.0, "life": 1, "reward": 2, "size": 1.0,
-		"shape": "horn", "color": Color(0.85, 0.2, 0.2), "weight": 5.0, "unlock": 0.0, "count": 1},
-	"runner": {"name": "질주", "hp": 0.5, "speed": 5.5, "life": 1, "reward": 2, "size": 0.85,
-		"shape": "runner", "color": Color(0.95, 0.55, 0.15), "weight": 3.0, "unlock": 25.0, "count": 1},
-	"swarm": {"name": "무리", "hp": 0.3, "speed": 3.8, "life": 1, "reward": 1, "size": 0.65,
-		"shape": "horn", "color": Color(0.75, 0.4, 0.6), "weight": 2.0, "unlock": 50.0, "count": 4},
-	"tank": {"name": "중장갑", "hp": 4.5, "speed": 1.8, "life": 2, "reward": 6, "size": 1.4,
-		"shape": "armor", "color": Color(0.4, 0.5, 0.65), "weight": 2.0, "unlock": 80.0, "count": 1},
-}
+
+static func _attr_desc(attr_id: String) -> String:
+	match attr_id:
+		"long": return "사거리가 길다. 미로 안을 오래 계속 때릴 수 있다"
+		"power": return "한 발이 강하다. 갑옷 입은 적에게 필수"
+		"splash": return "범위 공격. 떼로 몰려오는 적에게 좋다"
+		"trap": return "길을 못 막는 대신 사거리가 짧고 강하고 빠르다"
+		"air": return "공중 몬스터 전용. 한 발이 강하다"
+	return ""
 
 
-## 경과 시간(초)에 맞는 파견 몬스터 종류를 가중치로 뽑는다
-static func pick_wave_type(elapsed: float) -> String:
-	var total := 0.0
-	for id in WAVE_TYPES:
-		if elapsed >= WAVE_TYPES[id].unlock:
-			total += WAVE_TYPES[id].weight
-	var roll := randf() * total
-	for id in WAVE_TYPES:
-		var t: Dictionary = WAVE_TYPES[id]
-		if elapsed < t.unlock:
-			continue
-		roll -= t.weight
-		if roll <= 0.0:
-			return id
-	return "grunt"
-
-# --- 보스 ---
-const BOSS_BASE_HP := 8000.0
-const BOSS_HP_PER_EXTRA_PLAYER := 5000.0
-const BOSS_TIME_LIMIT := 600.0     # 초
-const BOSS_CENTER := Vector2(6.0, 25.0)   # 보스 레인 한가운데 (셀 좌표)
-const BOSS_RADIUS := 2.0                  # 칸
-
-# --- 플레이어가 보스 레인으로 보내는 몬스터 (공격형) ---
-# cost: 생산 비용 / income: 수입 틱 골드 영구 증가량 / dps: 보스에게 주는 초당 피해(지속)
-const SENT_MONSTERS := {
-	"income": {"name": "수입형", "short": "수입", "cost": 30, "income": 4, "dps": 0.5, "shape": "coin", "color": Color(0.3, 0.8, 0.3)},
-	"balanced": {"name": "균형형", "short": "균형", "cost": 40, "income": 2, "dps": 2.0, "shape": "shield", "color": Color(0.95, 0.7, 0.2)},
-	"power": {"name": "화력형", "short": "화력", "cost": 60, "income": 1, "dps": 6.0, "shape": "spike", "color": Color(0.7, 0.3, 0.9)},
-}
+# --- 보스 레인 ---
+const WAVE_MONSTER_HP := 10.0      # 일반 몬스터 기준 체력 (종류/라운드별 배율은 WaveTypes, BossLevels)
+const WAVE_HP_BONUS_AT_LOW_BOSS := 1.5   # 보스 체력이 0에 가까울수록 몬스터 체력이 (1 + 이 값)배
+const BOSS_HP_PER_EXTRA_PLAYER := 0.8    # 참여 인원이 1명 늘 때마다 보스 체력 +80%
+const BOSS_CENTER := Vector2(6.0, 25.0)  # 보스 레인 한가운데 (셀 좌표)
+const BOSS_RADIUS := 2.0                 # 칸
