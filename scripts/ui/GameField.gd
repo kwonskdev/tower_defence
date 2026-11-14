@@ -5,6 +5,7 @@ var grid_renderer: GridRenderer
 
 const MAX_PLAYERS = 8
 var grid_systems: Array[GridSystem] = []
+var lanes: Dictionary = {}  # player_id -> LaneController (참여한 플레이어만)
 var current_player_id: int = 0
 
 var current_tool: PlacementTool = PlacementTool.NONE
@@ -50,6 +51,17 @@ func setup_game_field():
 	if grid_renderer:
 		var container_width = get_size().x
 		grid_renderer.set_container_width(container_width)
+
+	# PvE 임시: 1번 플레이어만 참여 (나머지 레인은 비어 있음)
+	start_lane(0)
+
+func start_lane(player_id: int):
+	var lane := LaneController.new()
+	lane.name = "Lane_" + str(player_id)
+	add_child(lane)
+	lane.setup(player_id, grid_systems[player_id], grid_renderer)
+	lane.set_lane_visible(player_id == current_player_id)
+	lanes[player_id] = lane
 
 func setup_scroll_container():
 	# 가로 스크롤 비활성화 (세로 드래그 스크롤만 사용)
@@ -134,10 +146,18 @@ func switch_player(player_id: int):
 	# 새 플레이어의 렌더러 연결
 	get_current_grid_system().connect_renderer(grid_renderer)
 
+	# 보고 있는 레인의 몬스터만 표시
+	for id in lanes:
+		lanes[id].set_lane_visible(id == player_id)
+
 	Log.info(Log.Category.UI, "플레이어 맵 전환 -> P%d" % (player_id + 1))
 
 func place_tower(grid_position: Vector2i) -> bool:
 	var grid_system = get_current_grid_system()
+	var lane: LaneController = lanes.get(current_player_id)
+	if lane and lane.is_cell_occupied(grid_position):
+		Log.debug(Log.Category.TOWER, "[P%d] 타워 건설 실패 %s: 몬스터가 있는 칸" % [current_player_id + 1, grid_position])
+		return false
 	if grid_system.is_cell_empty(grid_position):
 		grid_system.set_cell_state(grid_position, GridSystem.CellState.TOWER)
 		Log.info(Log.Category.TOWER, "[P%d] 타워 건설 %s" % [current_player_id + 1, grid_position])

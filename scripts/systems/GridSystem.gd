@@ -115,6 +115,13 @@ func is_valid_position(position: Vector2i) -> bool:
 func is_cell_empty(position: Vector2i) -> bool:
 	return get_cell_state(position) == CellState.EMPTY
 
+func get_spawn_cells() -> Array[Vector2i]:
+	var cells: Array[Vector2i] = []
+	for x in range(GRID_WIDTH):
+		if get_cell_state(Vector2i(x, 0)) == CellState.SPAWN:
+			cells.append(Vector2i(x, 0))
+	return cells
+
 func setup_game_path():
 	_suppress_cell_log = true
 	# 맨 위 행 전체를 시작점(SPAWN)으로 설정
