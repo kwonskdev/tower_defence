@@ -21,8 +21,8 @@ Log="*res://scripts/systems/GameLog.gd"
 
 [display]
 
-window/size/viewport_width=480
-window/size/viewport_height=600
+window/size/viewport_width=600
+window/size/viewport_height=800
 window/stretch/mode="canvas_items"
 
 [rendering]

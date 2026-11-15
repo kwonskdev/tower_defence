@@ -13,6 +13,7 @@ var color_info: Dictionary  # Balance.TOWER_COLORS 항목
 var lane: LaneController
 
 var evolution: String = ""     # 진화 계열 ID ("" = 아직 진화 안 함)
+var b_learned: bool = false    # B 스킬을 배웠는가 (진화처럼 타워마다 돈을 내고 따로 배운다. 항목 업그레이드만 계열 공통)
 
 # 전적
 var total_damage: float = 0.0  # 누적 피해 (맞은 시점에 오른다. 독/표식 피해도 건 타워 몫)
@@ -55,6 +56,7 @@ func center_cell_pos() -> Vector2:
 ## 진화 계열을 정한다 (골드 처리는 LaneController.evolve_tower가 한다)
 func set_evolution(evo: String) -> void:
 	evolution = evo
+	b_learned = false
 	charge = 0.0
 	haste_stacks = 0
 	_shot_count = 0
@@ -77,12 +79,14 @@ func record_kill() -> void:
 
 # --- 스킬 수치 ---
 
-## 이 타워가 그 스킬을 쓸 수 있는가 (A는 진화하면 바로, B는 업그레이드 탭에서 배워야 한다)
+## 이 타워가 그 스킬을 쓸 수 있는가 (A는 진화하면 바로, B는 이 타워가 돈을 내고 배워야 한다)
 func has_skill(skill: String) -> bool:
-	return evolution != "" and lane != null and lane.has_skill(evolution, skill)
+	if evolution == "":
+		return false
+	return skill == "A" or b_learned
 
 
-## 스킬 수치 하나. 업그레이드 탭에서 올린 항목 레벨이 반영된다 (레인 전체 공유).
+## 스킬 수치 하나. 업그레이드 탭에서 올린 항목 레벨(계열 공통)이 반영된다.
 func _p(skill: String, key: String) -> float:
 	return Evolutions.p(evolution, skill, key, lane.stat_level(evolution, skill, key))
 

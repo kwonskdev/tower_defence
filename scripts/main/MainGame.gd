@@ -30,15 +30,18 @@ var status_wave_rows: Array = []         # [{dot: StatusIcon, label: Label}]
 var family_frames: Control               # 몬스터 배럭의 계열 묶음 외곽선
 var tower_info_label: Label
 var evolve_buttons: Array[Button] = []   # 선택한 타워가 아직 진화 전이면 계열 2개 중 고르는 버튼
+var learn_button: Button                 # 선택한 타워가 진화했고 B 스킬을 아직 안 배웠으면 나오는 "B 스킬 배우기" 버튼
 var evolve_ids: Array[String] = ["", ""]
 var skill_hint_label: Label              # 업그레이드 탭에서 마우스를 올린 항목의 설명
 var upgrade_menu: HBoxContainer          # 업그레이드 탭: [←] [타워] [색깔]
-var evo_view: GridContainer              # 타워 업그레이드 1단계: 진화 계열 8개 중 고르기
+var evo_view: HBoxContainer              # 타워 업그레이드 1단계: [←] + 4x2 격자 (진화 계열 8개 중 고르기)
 var evo_buttons: Dictionary = {}         # 계열 -> Button
-var detail_view: GridContainer           # 타워 업그레이드 2단계: 고른 계열의 업그레이드 항목들
+var evo_frames: Control                  # 계열 선택 화면에서 같은 기본 타워의 두 계열을 묶는 외곽선
+var detail_view: HBoxContainer           # 타워 업그레이드 2단계: [←] + 4x2 격자 (고른 계열의 업그레이드 항목들)
+var detail_grid: GridContainer
 var _detail_evo := ""                    # 지금 보고 있는 계열
-var _detail_items: Array = []            # [{btn, kind: "stat"/"learn", stat: Dictionary}]
-var _hover: Array = []                   # 마우스가 올라간 항목: [계열, 종류("evo"/"stat"/"learn"), 스킬, 키]
+var _detail_items: Array = []            # [{btn, stat: Dictionary}]
+var _hover: Array = []                   # 마우스가 올라간 항목: [계열, 종류("evo"/"stat"), 스킬, 키]
 var tower_view: GridContainer
 var _hud_timer := 0.0
 
@@ -215,7 +218,9 @@ func _create_tower_view():
 
 ## 업그레이드 탭 (타워 / 색깔).
 ## 타워 탭: 진화 계열 8개 중 하나를 고르면 그 계열의 업그레이드 항목(관통 수, 독 피해 ...)이 나오고,
-## 항목을 올리면 그 계열로 진화한 모든 타워가 강해진다. 색깔 탭은 아직 기획이 없어서 자리만 만들어 두었다.
+## 항목을 올리면 그 계열로 진화한 모든 타워가 강해진다 (계열 공통). 색깔 탭은 아직 기획이 없어서 자리만 만들어 두었다.
+## (진화와 B 스킬 배우기는 타워마다 개별: 타워를 선택하면 나오는 버튼으로 한다.)
+## 타워 탭의 두 화면은 모두 [←] 한 칸 + 4x2 격자로 보여준다.
 func _create_upgrade_views():
 	var left_panel: Control = main_view.get_parent()
 
@@ -234,30 +239,53 @@ func _create_upgrade_views():
 	color_tab.tooltip_text = "색깔별 업그레이드 (준비 중)"
 	upgrade_menu.add_child(color_tab)
 
-	# 1단계: [←] + 진화 계열 8개 = 9칸 한 줄
-	evo_view = GridContainer.new()
-	evo_view.columns = 9
+	# 1단계: 진화 계열 8개 (4x2). 윗줄 = 장거리 2 + 범위 2, 아랫줄 = 대공 2 + 트랩 2
+	evo_view = HBoxContainer.new()
 	evo_view.visible = false
 	left_panel.add_child(evo_view)
 	evo_view.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	var evo_back := _make_view_button("←", 12)
+	var evo_back := _make_back_column("evos_back")
 	evo_back.pressed.connect(_show_view.bind("upgrade"))
 	evo_view.add_child(evo_back)
+	var evo_grid := GridContainer.new()
+	evo_grid.columns = 4
+	evo_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	evo_grid.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	evo_view.add_child(evo_grid)
 	for evo in Evolutions.ORDER:
 		var eb := _make_view_button("", 10)
 		eb.add_theme_color_override("font_color", Evolutions.DATA[evo].color)
 		eb.pressed.connect(_open_evo_detail.bind(evo))
 		eb.mouse_entered.connect(func(): _hover = [evo, "evo", "", ""])
 		eb.mouse_exited.connect(func(): _hover = [])
-		evo_view.add_child(eb)
+		evo_grid.add_child(eb)
 		evo_buttons[evo] = eb
 
-	# 2단계: 항목 버튼 (계열마다 항목이 달라서 열 때마다 새로 만든다)
-	detail_view = GridContainer.new()
-	detail_view.columns = 4
+	# 같은 기본 타워의 두 계열(장거리 2개, 범위 2개 ...)을 그 타워 색 외곽선으로 묶는다
+	var frames := FamilyFrames.new()
+	evo_frames = frames
+	frames.visible = false
+	left_panel.add_child(frames)
+	frames.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	for tower_id in Evolutions.TREE:
+		var pair: Array[Button] = []
+		for evo in Evolutions.TREE[tower_id]:
+			pair.append(evo_buttons[evo])
+		frames.groups.append({"buttons": pair, "color": Balance.TOWER_DEFS[tower_id].color})
+
+	# 2단계: 항목 버튼 (계열마다 항목이 달라서 열 때마다 새로 만든다. 4x2 격자)
+	detail_view = HBoxContainer.new()
 	detail_view.visible = false
 	left_panel.add_child(detail_view)
 	detail_view.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var detail_back := _make_back_column("detail_back")
+	detail_back.pressed.connect(_show_view.bind("evos"))
+	detail_view.add_child(detail_back)
+	detail_grid = GridContainer.new()
+	detail_grid.columns = 4
+	detail_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	detail_grid.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	detail_view.add_child(detail_grid)
 
 
 func _make_view_button(text: String, font_size: int = 14) -> Button:
@@ -265,7 +293,16 @@ func _make_view_button(text: String, font_size: int = 14) -> Button:
 	b.text = text
 	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	b.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	b.clip_text = true  # 글자가 길어도 칸 폭을 넘겨서 옆 칸/미니맵을 밀어내지 않게 한다
 	b.add_theme_font_size_override("font_size", font_size)
+	return b
+
+
+## 4x2 격자 왼쪽에 붙는 좁은 [←] 버튼 (격자 칸을 차지하지 않게 따로 둔다)
+func _make_back_column(_id: String) -> Button:
+	var b := _make_view_button("←", 14)
+	b.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	b.custom_minimum_size = Vector2(44, 0)
 	return b
 
 
@@ -277,55 +314,39 @@ func _show_view(view: String) -> void:
 	family_frames.visible = view == "monster"
 	upgrade_menu.visible = view == "upgrade"
 	evo_view.visible = view == "evos"
+	evo_frames.visible = view == "evos"
 	detail_view.visible = view == "detail"
 	skill_hint_label.visible = view == "evos" or view == "detail"
 	_hover = []
 
 
-## 고른 계열의 업그레이드 항목 화면을 만든다: [←] + A 항목들 + [B 배우기] + B 항목들
+## 고른 계열의 업그레이드 항목 화면을 만든다 (A 항목들, 이어서 B 항목들)
 func _open_evo_detail(evo: String) -> void:
 	_detail_evo = evo
 	_detail_items.clear()
-	for c in detail_view.get_children():
-		detail_view.remove_child(c)
+	for c in detail_grid.get_children():
+		detail_grid.remove_child(c)
 		c.queue_free()
 	var color: Color = Evolutions.DATA[evo].color
-
-	var back := _make_view_button("←", 12)
-	back.pressed.connect(_show_view.bind("evos"))
-	detail_view.add_child(back)
-
-	var learn_added := false
 	for stat in Evolutions.STATS[evo]:
-		if stat.s == "B" and not learn_added:
-			learn_added = true
-			_add_detail_button(evo, "learn", {"s": "B", "k": ""}, color)
-		_add_detail_button(evo, "stat", stat, color)
+		_add_detail_button(evo, stat, color)
 	_show_view("detail")
 	_refresh_now()
 
 
-func _add_detail_button(evo: String, kind: String, stat: Dictionary, color: Color) -> void:
-	var b := _make_view_button("", 10)
+func _add_detail_button(evo: String, stat: Dictionary, color: Color) -> void:
+	var b := _make_view_button("", 9)
 	b.add_theme_color_override("font_color", color)
 	b.add_theme_color_override("font_disabled_color", Color(color, 0.55))
-	if kind == "learn":
-		b.pressed.connect(_on_learn_pressed.bind(evo))
-	else:
-		b.pressed.connect(_on_stat_pressed.bind(evo, stat.s, stat.k))
-	b.mouse_entered.connect(func(): _hover = [evo, kind, stat.s, stat.k])
+	b.pressed.connect(_on_stat_pressed.bind(evo, stat.s, stat.k))
+	b.mouse_entered.connect(func(): _hover = [evo, "stat", stat.s, stat.k])
 	b.mouse_exited.connect(func(): _hover = [])
-	detail_view.add_child(b)
-	_detail_items.append({"btn": b, "kind": kind, "stat": stat})
+	detail_grid.add_child(b)
+	_detail_items.append({"btn": b, "stat": stat})
 
 
 func _on_stat_pressed(evo: String, skill: String, key: String) -> void:
 	game_field.upgrade_stat(evo, skill, key)
-	_refresh_now()
-
-
-func _on_learn_pressed(evo: String) -> void:
-	game_field.learn_skill(evo)
 	_refresh_now()
 
 
@@ -340,32 +361,16 @@ func _refresh_upgrade_views(lane: LaneController) -> void:
 	if evo_view.visible:
 		for evo in Evolutions.ORDER:
 			var d: Dictionary = Evolutions.DATA[evo]
-			var learned := "  B✔" if lane.has_skill(evo, "B") else ""
-			evo_buttons[evo].text = "%s\n%s%s" % [d.short, Balance.TOWER_DEFS[d.tower].name, learned]
+			evo_buttons[evo].text = "%s\n(%s)\nA %s\nB %s" % [d.name, Balance.TOWER_DEFS[d.tower].name, d.a_name, d.b_name]
 	if detail_view.visible and _detail_evo != "":
 		var evo := _detail_evo
 		for item in _detail_items:
 			var b: Button = item.btn
 			var stat: Dictionary = item.stat
-			if item.kind == "learn":
-				var lc := lane.learn_cost(evo)
-				if lc < 0:
-					b.text = "B %s\n배움 ✔" % Evolutions.skill_name(evo, "B")
-					b.disabled = true
-				else:
-					b.text = "B %s\n배우기 %d골드" % [Evolutions.skill_name(evo, "B"), lc]
-					b.disabled = lane.gold < lc
-				continue
 			var lv := lane.stat_level(evo, stat.s, stat.k)
 			var cost := lane.stat_upgrade_cost(evo, stat.s, stat.k)
-			var third := ""
-			if lv >= Evolutions.MAX_LEVEL:
-				third = "최대"
-			elif stat.s == "B" and not lane.has_skill(evo, "B"):
-				third = "B를 먼저 배우기"
-			else:
-				third = "→ %s  %d골드" % [Evolutions.stat_value_text(evo, stat, lv + 1), cost]
-			b.text = "%s %s\nLv%d  %s\n%s" % [stat.s, stat.name, lv, Evolutions.stat_value_text(evo, stat, lv), third]
+			var nxt := "최대" if lv >= Evolutions.MAX_LEVEL else "→ %s\n%d골드" % [Evolutions.stat_value_text(evo, stat, lv + 1), cost]
+			b.text = "%s %s\nLv%d  %s\n%s" % [stat.s, stat.name, lv, Evolutions.stat_value_text(evo, stat, lv), nxt]
 			b.disabled = cost < 0 or lane.gold < cost
 	skill_hint_label.text = _hover_text(lane)
 
@@ -376,13 +381,13 @@ func _hover_text(lane: LaneController) -> String:
 		match _hover[1]:
 			"evo":
 				return Evolutions.tooltip(evo)
-			"learn":
-				return "B %s 배우기 (%d골드): %s" % [Evolutions.skill_name(evo, "B"),
-					maxi(lane.learn_cost(evo), 0), Evolutions.skill_text(evo, "B", lane.levels_of(evo))]
 			"stat":
-				return "%s - %s: %s" % [Evolutions.evo_name(evo), _hover[2], Evolutions.skill_text(evo, _hover[2], lane.levels_of(evo))]
+				var text := "%s - %s: %s" % [Evolutions.evo_name(evo), _hover[2], Evolutions.skill_text(evo, _hover[2], lane.levels_of(evo))]
+				if _hover[2] == "B":
+					text += "\n(B 스킬을 배운 타워에만 효과가 있다)"
+				return text
 	if detail_view.visible:
-		return "항목을 누르면 %s로 진화한 모든 타워가 강해집니다. 마우스를 올리면 설명." % Evolutions.evo_name(_detail_evo)
+		return "항목을 누르면 %s로 진화한 모든 타워가 강해집니다 (계열 공통). 마우스를 올리면 설명." % Evolutions.evo_name(_detail_evo)
 	return "계열을 고르면 그 계열의 업그레이드 항목이 나옵니다. 마우스를 올리면 설명."
 
 
@@ -462,6 +467,13 @@ func _create_hud():
 		eb.pressed.connect(_on_evolve_pressed.bind(i))
 		evolve_row.add_child(eb)
 		evolve_buttons.append(eb)
+	learn_button = Button.new()
+	learn_button.add_theme_font_size_override("font_size", 12)
+	learn_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	learn_button.clip_text = true
+	learn_button.visible = false
+	learn_button.pressed.connect(_on_learn_selected_pressed)
+	evolve_row.add_child(learn_button)
 	game_field.ui_blockers.append(tower_info_row)  # 버튼을 눌렀을 때 뒤의 맵이 클릭되지 않도록
 
 	skill_hint_label = Label.new()
@@ -711,11 +723,25 @@ func _update_tower_info(lane: LaneController):
 			text += "\n치명타 %.1f%%  광란 x%d" % [t.crit_chance() * 100.0, t.haste_stacks]
 		"charge":
 			text += "\n충전 %.1f / %.0f초 (%.0f초 이상이면 발동)" % [t.charge, t.charge_max(), Evolutions.CHARGE_MIN]
+	# 스킬 현황: 진화하면 A 스킬이 붙고, B 스킬은 돈을 내고 배워야 한다 (계열 전체 타워에 적용)
+	var b_known := t.evolution != "" and t.b_learned
+	if t.evolution != "":
+		var evo_data: Dictionary = Evolutions.DATA[t.evolution]
+		text += "\nA %s ✔   B %s %s" % [evo_data.a_name, evo_data.b_name, "✔" if b_known else "(아직 안 배움)"]
 	tower_info_label.text = text
 
 	# 아직 진화 전이면 계열 2개 중 하나를 고른다 (골드). 진화하면 그 계열의 A 스킬이 붙는다.
 	var can_pick := t.can_evolve()
-	evolve_row.visible = can_pick
+	# 진화했는데 B 스킬을 안 배웠으면 여기서 바로 배울 수 있다 (업그레이드 탭에서도 가능)
+	var can_learn := t.evolution != "" and not b_known
+	learn_button.visible = can_learn
+	if can_learn:
+		var lc := lane.learn_cost(t)
+		learn_button.text = "B %s 배우기 (%d골드)" % [Evolutions.skill_name(t.evolution, "B"), lc]
+		learn_button.tooltip_text = "B %s: %s\n이 타워만 배웁니다 (타워마다 따로). 항목 업그레이드는 계열 공통." % [
+			Evolutions.skill_name(t.evolution, "B"), Evolutions.skill_text(t.evolution, "B", lane.levels_of(t.evolution))]
+		learn_button.disabled = t.lane != lane or lane.gold < lc
+	evolve_row.visible = can_pick or can_learn
 	var choices: Array = Evolutions.TREE[t.kind.id]
 	for i in range(evolve_buttons.size()):
 		var eb := evolve_buttons[i]
@@ -727,6 +753,11 @@ func _update_tower_info(lane: LaneController):
 		eb.text = "%s 진화 (%d골드)" % [Evolutions.evo_name(evo), Balance.EVOLVE_COST]
 		eb.tooltip_text = Evolutions.tooltip(evo)
 		eb.disabled = t.lane != lane or lane.gold < Balance.EVOLVE_COST
+
+
+## 선택한 타워의 "B 스킬 배우기" (진화처럼 타워마다 개별, 골드)
+func _on_learn_selected_pressed():
+	game_field.learn_selected_tower_skill()
 
 
 func _on_evolve_pressed(index: int):

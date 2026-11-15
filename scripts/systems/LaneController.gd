@@ -19,8 +19,7 @@ var monsters: Array[Monster] = []
 var towers: Array[Tower] = []  # 한 칸에 타워 1개
 
 # 진화 업그레이드 (레인 전체 공유, 같은 계열의 모든 타워에 적용)
-var b_learned: Dictionary = {}   # 계열 -> B 스킬을 배웠는가
-var stat_levels: Dictionary = {} # "계열.스킬.키" -> 레벨 1~3 (없으면 1)
+var stat_levels: Dictionary = {} # "계열.스킬.키" -> 레벨 1~3 (없으면 1). B 스킬은 타워마다 배우지만 항목 레벨은 계열 공통
 
 var _grid: GridSystem
 var _renderer: GridRenderer
@@ -73,11 +72,6 @@ func build_tower(cell: Vector2i, kind_id: String) -> Tower:
 
 # --- 진화 / 업그레이드 ---
 
-## B 스킬을 배웠는가 (A 스킬은 진화한 타워에 처음부터 붙어 있다)
-func has_skill(evo: String, skill: String) -> bool:
-	return skill == "A" or bool(b_learned.get(evo, false))
-
-
 ## 업그레이드 항목 하나의 현재 레벨 (1~3). 안 올렸으면 1.
 func stat_level(evo: String, skill: String, key: String) -> int:
 	return int(stat_levels.get("%s.%s.%s" % [evo, skill, key], 1))
@@ -106,27 +100,33 @@ func evolve_tower(tower: Tower, evo: String) -> bool:
 	return true
 
 
-## B 스킬을 배우는 비용. 이미 배웠으면 -1.
-func learn_cost(evo: String) -> int:
-	return -1 if has_skill(evo, "B") else Balance.SKILL_LEARN_COST
+## 타워 1기가 B 스킬을 배우는 비용. 진화 전이거나 이미 배웠으면 -1.
+func learn_cost(tower: Tower) -> int:
+	if tower == null or tower.evolution == "" or tower.b_learned:
+		return -1
+	return Balance.SKILL_LEARN_COST
 
 
-## 업그레이드 탭: 이 계열의 B 스킬을 배운다 (계열의 모든 타워에 붙는다)
-func learn_skill(evo: String) -> bool:
-	var cost := learn_cost(evo)
+## 타워 1기의 B 스킬을 배운다 (진화처럼 타워마다 따로, 골드).
+func learn_tower_skill(tower: Tower) -> bool:
+	if tower == null or tower.lane != self:
+		return false
+	var cost := learn_cost(tower)
 	if cost < 0:
 		return false
-	if not try_spend(cost, "%s %s 배우기" % [Evolutions.evo_name(evo), Evolutions.skill_name(evo, "B")]):
+	var evo := tower.evolution
+	if not try_spend(cost, "타워 %s(%s) B 스킬 배우기: %s" % [tower.cell, Evolutions.evo_name(evo), Evolutions.skill_name(evo, "B")]):
 		return false
-	b_learned[evo] = true
-	Log.info(Log.Category.TOWER, "[P%d] B 스킬 습득: %s %s" % [player_id + 1, Evolutions.evo_name(evo), Evolutions.skill_name(evo, "B")])
+	tower.b_learned = true
+	Effects.ring(_renderer, tower.center_cell_pos(), 0.8, Evolutions.DATA[evo].color, lane_visible)
+	Log.info(Log.Category.TOWER, "[P%d] B 스킬 습득 %s: %s %s" % [player_id + 1, tower.cell, Evolutions.evo_name(evo), Evolutions.skill_name(evo, "B")])
 	return true
 
 
-## 항목 레벨을 한 단계 올리는 비용. 올릴 수 없으면 -1 (최대 레벨이거나, 아직 안 배운 B 스킬의 항목)
+## 항목 레벨을 한 단계 올리는 비용. 올릴 수 없으면 -1 (최대 레벨). 계열의 모든 타워에 적용되고, B 항목은 B를 배운 타워에만 효과가 있다.
 func stat_upgrade_cost(evo: String, skill: String, key: String) -> int:
 	var lv := stat_level(evo, skill, key)
-	if lv >= Evolutions.MAX_LEVEL or not has_skill(evo, skill):
+	if lv >= Evolutions.MAX_LEVEL:
 		return -1
 	return int(Balance.STAT_UPGRADE_COSTS[lv - 1])
 
@@ -264,7 +264,12 @@ func spawn_wave_monster(hp_value: float, type_id: String = "grunt", level: int =
 
 ## 지원형 B: 표식이 걸린 적이 죽으면 근처 표식 없는 적에게 표식을 옮긴다
 func _spread_marks(monster: Monster) -> void:
-	if not has_skill("support", "B") or monster.death_marks.is_empty():
+	# B(표식 전파)를 배운 지원형 타워가 남긴 표식만 퍼진다
+	var spreadable: Array = []
+	for mk in monster.death_marks:
+		if is_instance_valid(mk.src) and mk.src.has_skill("B"):
+			spreadable.append(mk)
+	if spreadable.is_empty():
 		return
 	var radius := Evolutions.p("support", "B", "radius", stat_level("support", "B", "radius"))
 	var count := int(Evolutions.p("support", "B", "count", stat_level("support", "B", "count")))
@@ -275,7 +280,7 @@ func _spread_marks(monster: Monster) -> void:
 			near.append(m)
 	near.sort_custom(func(a: Monster, b: Monster): return a.cell_pos.distance_to(monster.cell_pos) < b.cell_pos.distance_to(monster.cell_pos))
 	for m in near.slice(0, count):
-		var mk: Dictionary = monster.death_marks.pick_random()
+		var mk: Dictionary = spreadable.pick_random()
 		m.add_mark(mk.src, float(mk.dmg))
 		Effects.ring(_renderer, m.cell_pos, 0.5, Color(0.8, 0.5, 1.0), lane_visible)
 

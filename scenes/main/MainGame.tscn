@@ -23,7 +23,7 @@ grow_vertical = 2
 [node name="TopUI" type="Panel" parent="VBoxContainer"]
 layout_mode = 2
 size_flags_vertical = 3
-size_flags_stretch_ratio = 0.2
+size_flags_stretch_ratio = 0.25
 
 [node name="HBoxContainer" type="HBoxContainer" parent="VBoxContainer/TopUI"]
 layout_mode = 1
@@ -354,4 +354,4 @@ text = "5"
 [node name="GameField" parent="VBoxContainer" instance=ExtResource("2_y7n5k")]
 layout_mode = 2
 size_flags_vertical = 3
-size_flags_stretch_ratio = 0.8
+size_flags_stretch_ratio = 0.75

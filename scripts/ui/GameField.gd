@@ -205,10 +205,10 @@ func upgrade_stat(evo: String, skill: String, key: String) -> bool:
 	return lane != null and lane.upgrade_stat(evo, skill, key)
 
 
-## 업그레이드 탭: B 스킬 배우기
-func learn_skill(evo: String) -> bool:
+## 선택한 타워 1기의 B 스킬을 배운다 (골드, 타워마다 따로)
+func learn_selected_tower_skill() -> bool:
 	var lane: LaneController = lanes.get(local_player_id)
-	return lane != null and lane.learn_skill(evo)
+	return lane != null and lane.learn_tower_skill(get_selected_tower())
 
 func get_current_grid_system() -> GridSystem:
 	return grid_systems[current_player_id]
