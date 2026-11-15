@@ -28,6 +28,10 @@ var _grid: GridSystem
 var _strict := AStarGrid2D.new()
 var _breach := AStarGrid2D.new()
 var _dirty := true
+var _tower_cells: Array[Vector2i] = []   # 지금 격자에 있는 (길을 막는) 타워 칸 목록
+# 시야 제한 길찾기 중에만 쓰는 값: 몬스터가 "본 적 있는" 타워만 벽으로 안다
+var _use_vision := false
+var _vision_known: Dictionary = {}
 
 
 func _init(grid: GridSystem) -> void:
@@ -49,10 +53,11 @@ func _on_cell_state_changed(_position: Vector2i, _old_state, _new_state) -> void
 ## 현재 위치(연속 좌표, 셀 중심 = +0.5)에서 목표까지의 이동 경로.
 ## 반환: { "waypoints": Array[Vector2], "breach": bool, "ok": bool }
 ## breach가 true이면 마지막 웨이포인트 근처에 부숴야 할 타워가 있다.
-func find_route(from_pos: Vector2, goal: Vector2i = NO_GOAL) -> Dictionary:
+## known: 몬스터가 본 적 있는 타워 칸 {Vector2i: true}. 주면 시야 제한 길찾기 (못 본 타워는 없는 것으로 친다). null이면 전부 안다.
+func find_route(from_pos: Vector2, goal: Vector2i = NO_GOAL, known = null) -> Dictionary:
 	var waypoints: Array[Vector2] = []
 	var start := Vector2i(from_pos.floor())
-	var result := find_path(start, goal)
+	var result := find_path(start, goal, known)
 	var cells: Array[Vector2i] = result.path
 	if cells.is_empty():
 		return {"waypoints": waypoints, "breach": false, "ok": false}
@@ -63,10 +68,33 @@ func find_route(from_pos: Vector2, goal: Vector2i = NO_GOAL) -> Dictionary:
 
 ## 칸 단위 경로. start에서 가장 비용이 낮은 EXIT(또는 goal)까지.
 ## 반환: { "path": Array[Vector2i] (start 포함, 없으면 빈 배열), "breach": bool }
-func find_path(start: Vector2i, goal: Vector2i = NO_GOAL) -> Dictionary:
+func find_path(start: Vector2i, goal: Vector2i = NO_GOAL, known = null) -> Dictionary:
 	if _dirty:
 		_rebuild()
 
+	# 시야 제한: 못 본 타워 칸은 잠깐 지나갈 수 있는 칸으로 바꿔 놓고 길을 찾은 뒤 되돌린다
+	var unseen: Array[Vector2i] = []
+	_use_vision = known != null
+	_vision_known = known if known != null else {}
+	if _use_vision:
+		for c in _tower_cells:
+			if not _vision_known.has(c):
+				unseen.append(c)
+		for c in unseen:
+			_strict.set_point_solid(c, false)
+			_breach.set_point_weight_scale(c, 1.0)
+
+	var result := _find_path_inner(start, goal)
+
+	for c in unseen:
+		_strict.set_point_solid(c, true)
+		_breach.set_point_weight_scale(c, BREACH_COST)
+	_use_vision = false
+	_vision_known = {}
+	return result
+
+
+func _find_path_inner(start: Vector2i, goal: Vector2i) -> Dictionary:
 	var path := _best_path(_strict, start, goal)
 	if not path.is_empty():
 		return {"path": path, "breach": false}
@@ -79,6 +107,7 @@ func find_path(start: Vector2i, goal: Vector2i = NO_GOAL) -> Dictionary:
 
 
 func _rebuild() -> void:
+	_tower_cells.clear()
 	for y in range(GridSystem.GRID_HEIGHT):
 		for x in range(GridSystem.GRID_WIDTH):
 			var cell := Vector2i(x, y)
@@ -86,6 +115,8 @@ func _rebuild() -> void:
 			var is_tower := state == GridSystem.CellState.TOWER
 			var is_wall := state == GridSystem.CellState.OBSTACLE
 
+			if is_tower:
+				_tower_cells.append(cell)
 			_strict.set_point_solid(cell, is_tower or is_wall)
 			_breach.set_point_solid(cell, is_wall)
 			_breach.set_point_weight_scale(cell, BREACH_COST if is_tower else 1.0)
@@ -120,9 +151,16 @@ func _best_path(astar: AStarGrid2D, start: Vector2i, goal: Vector2i) -> Array[Ve
 func _count_towers(path: Array[Vector2i]) -> int:
 	var count := 0
 	for cell in path:
-		if _grid.get_cell_state(cell) == GridSystem.CellState.TOWER:
+		if _is_known_tower(cell):
 			count += 1
 	return count
+
+
+## 이 칸이 (이 길찾기에서 아는) 타워인가. 시야 제한 중이면 본 적 없는 타워는 없는 것과 같다.
+func _is_known_tower(cell: Vector2i) -> bool:
+	if _grid.get_cell_state(cell) != GridSystem.CellState.TOWER:
+		return false
+	return not _use_vision or _vision_known.has(cell)
 
 
 ## 칸 경로를 직선으로 갈 수 있는 구간끼리 이어서 웨이포인트로 만든다 (string pulling).
@@ -168,7 +206,9 @@ func _line_clear(a: Vector2, b: Vector2) -> bool:
 
 func _is_wall(cell: Vector2i) -> bool:
 	var state := _grid.get_cell_state(cell)  # 격자 밖은 OBSTACLE로 돌아온다
-	return state == GridSystem.CellState.TOWER or state == GridSystem.CellState.OBSTACLE
+	if state == GridSystem.CellState.TOWER:
+		return not _use_vision or _vision_known.has(cell)
+	return state == GridSystem.CellState.OBSTACLE
 
 
 func _center(cell: Vector2i) -> Vector2:

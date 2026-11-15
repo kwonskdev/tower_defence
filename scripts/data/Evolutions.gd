@@ -73,6 +73,9 @@ const PARAMS := {
 	},
 }
 
+# 진화하면 한 발 피해가 이만큼 배로 늘어난다 (장거리는 진화 전에는 벽 용도라 아주 약하다)
+const DAMAGE_MULT := {"pierce": 4.5, "boss": 4.5}
+
 # 계열별 공격 간격 (없으면 기본 타워 값). 지원형은 구름이 겹쳐 쌓이지 않도록 느리게, 스킬형은 스킬 굴림 횟수를 위해 약간 느리게.
 const COOLDOWN := {"support": 2.5, "skill": 1.0}
 
@@ -154,6 +157,8 @@ static func skill_text(evo: String, skill: String, lv: int) -> String:
 ## 업그레이드 탭 / 진화 버튼에 붙이는 설명
 static func tooltip(evo: String) -> String:
 	var d: Dictionary = DATA[evo]
-	return "%s (%s 타워)\nA %s: %s\nB %s: %s" % [
-		d.name, Balance.TOWER_DEFS[d.tower].name,
-		d.a_name, skill_text(evo, "A", 1), d.b_name, skill_text(evo, "B", 1)]
+	var head := "%s (%s 타워)" % [d.name, Balance.TOWER_DEFS[d.tower].name]
+	if DAMAGE_MULT.has(evo):
+		head += "  - 진화하면 한 발 피해 x%.1f" % DAMAGE_MULT[evo]
+	return "%s\nA %s: %s\nB %s: %s" % [
+		head, d.a_name, skill_text(evo, "A", 1), d.b_name, skill_text(evo, "B", 1)]

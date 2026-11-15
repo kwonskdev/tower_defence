@@ -9,7 +9,8 @@ class_name Monster
 ## - 보스 레인의 몬스터는 final_point(보스 주변 자리)에 도착하면 멈추고 보스를 지속 공격한다.
 ##   성장(ramp)과 오라(aura)는 BossController가 계산한다.
 ## - preview=true이면 아이콘용 미리보기: 길찾기 없이 제자리에서 애니메이션만 한다.
-## TODO: 시야(사방 3칸) 제한
+## - 시야: 사방 VISION_RANGE(3)칸 안의 타워만 본다. 본 타워는 기억하고, 못 본 타워는 없는 것으로 알고 길을 짠다.
+##   (맵 지형은 안다.) 타워가 시야에 새로 들어오거나 사라지면 그때 길을 다시 계산한다.
 
 signal reached_exit(monster: Monster)
 signal died(monster: Monster)
@@ -19,6 +20,8 @@ const ARRIVE_DISTANCE := 0.1
 const TOWER_ATTACK_DISTANCE := 0.95   # 웨이포인트 타워 중심까지 이 거리 이하면 타워를 공격
 const FLY_LIFT := 0.42                # 공중 몬스터가 몸을 띄우는 높이(칸)
 const MIN_DAMAGE_RATIO := 0.2         # 방어력이 아무리 높아도 최소한 이 비율만큼은 들어간다
+const VISION_RANGE := 3               # 사방 이 칸 수 안의 타워만 본다
+const VISION_INTERVAL := 0.1          # 시야를 확인하는 주기(초)
 
 var monster_id: int = 0
 var owner_id: int = -1           # 보스 레인으로 보낸 플레이어 (보스가 보낸 몬스터는 -1)
@@ -69,6 +72,10 @@ var slow_mult: float = 1.0
 var stun_time: float = 0.0
 var captured_time: float = 0.0   # 공중 몬스터를 지상에 붙잡아 둔 남은 시간
 
+var known_towers: Dictionary = {}  # 시야에 들어온 적 있는 타워 칸 {Vector2i: true}
+var _vision_dirty := true
+var _vision_timer := 0.0
+
 var _poisons: Array = []         # [{src, stacks, dps, time}] 독 (타워별로 따로 집계)
 var _consumed_marks: Array = []  # 이번 타격에 터진 표식
 var _captured := false
@@ -104,6 +111,7 @@ func setup(id: int, grid: GridSystem, renderer: GridRenderer, pathfinder: Pathfi
 
 	# pathfinder가 먼저 연결되어 있으므로 dirty 처리 후 이 핸들러가 호출된다.
 	_grid.cell_state_changed.connect(_on_grid_changed)
+	_scan_vision()
 	_repath()
 
 
@@ -250,8 +258,33 @@ func remaining_distance() -> float:
 
 
 func _on_grid_changed(_position: Vector2i, _old_state, _new_state) -> void:
-	if not stopped and not flying and not _captured:
+	if stopped or flying or _captured:
+		return
+	if _uses_vision():
+		_vision_dirty = true  # 멀리서 바뀐 건 모른다. 시야 안이면 곧 알아채고 그때 길을 다시 짠다
+	else:
 		_repath()
+
+
+## 시야 제한을 받는가 (일반 웨이브 지상 몬스터. 보스 레인 몬스터는 목표가 정해져 있어 전부 안다)
+func _uses_vision() -> bool:
+	return goal_cell == Pathfinder.NO_GOAL and not flying and not _captured
+
+
+## 사방 VISION_RANGE칸을 훑어서 본 타워를 기억하고, 사라진 타워는 잊는다. 바뀐 게 있으면 true.
+func _scan_vision() -> bool:
+	var changed := false
+	for dy in range(-VISION_RANGE, VISION_RANGE + 1):
+		for dx in range(-VISION_RANGE, VISION_RANGE + 1):
+			var c := grid_pos + Vector2i(dx, dy)
+			var is_tower := _grid.get_cell_state(c) == GridSystem.CellState.TOWER
+			if is_tower and not known_towers.has(c):
+				known_towers[c] = true
+				changed = true
+			elif not is_tower and known_towers.has(c):
+				known_towers.erase(c)
+				changed = true
+	return changed
 
 
 func _repath() -> void:
@@ -263,7 +296,7 @@ func _repath() -> void:
 		return
 
 	# 지금 서 있는 위치에서 다시 계산하므로 뒤로 되돌아가는 일이 없다.
-	var result := _pathfinder.find_route(cell_pos, goal_cell)
+	var result := _pathfinder.find_route(cell_pos, goal_cell, known_towers if _uses_vision() else null)
 	waypoints.assign(result.waypoints)
 	breaching = result.breach
 
@@ -299,6 +332,15 @@ func _process(delta: float) -> void:
 		return
 	if stun_time > 0.0 or captured_time > 0.0:
 		return  # 기절/포획 중에는 제자리에 멈춘다
+
+	# 시야: 주기적으로(또는 격자가 바뀌었을 때) 주변을 훑고, 새로 보이거나 사라진 타워가 있을 때만 길을 다시 계산
+	if not stopped and _uses_vision():
+		_vision_timer -= delta
+		if _vision_dirty or _vision_timer <= 0.0:
+			_vision_dirty = false
+			_vision_timer = VISION_INTERVAL
+			if _scan_vision():
+				_repath()
 
 	if stopped:
 		return

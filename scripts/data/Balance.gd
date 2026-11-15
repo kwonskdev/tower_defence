@@ -19,9 +19,9 @@ const TOWER_KINDS := ["long", "splash", "air", "trap"]
 
 const TOWER_DEFS := {
 	"long": {
-		"name": "장거리", "cost": 6, "range": 5.5, "damage": 0.9, "cooldown": 1.4, "splash": 0.0,
+		"name": "장거리", "cost": 4, "range": 5.5, "damage": 0.2, "cooldown": 1.4, "splash": 0.0,
 		"blocks": true, "anti_air": false, "color": Color(0.35, 0.75, 1.0),
-		"desc": "사정거리가 길지만 공격속도가 느리다. 한 발은 묵직하다.",
+		"desc": "사정거리가 길지만 공격속도가 느리다. 진화 전에는 거의 못 잡는다: 미로를 만드는 벽 용도. 적을 잡는 건 범위/트랩 몫이고, 진화하면 한 발이 훨씬 강해진다.",
 	},
 	"splash": {
 		"name": "범위", "cost": 7, "range": 3.0, "damage": 0.4, "cooldown": 0.7, "splash": 1.5,
@@ -95,6 +95,12 @@ static func tower_tooltip(kind: Dictionary) -> String:
 		Evolutions.TREE[kind.id].map(func(e): return Evolutions.DATA[e].name)))
 	return "\n".join(lines)
 
+
+# --- 웨이브 ---
+# 몬스터는 한 번에 크게 뭉쳐서 한 칸에서 촘촘히 쏟아져 나온다 (그래야 범위 타워가 값어치를 한다).
+# 한 번에 보내는 마릿수가 WAVE_CLUMP배가 되는 대신 파견 주기도 WAVE_CLUMP배가 되어서 전체 물량은 그대로다.
+const WAVE_CLUMP := 4
+const WAVE_SPAWN_GAP := 0.18       # 같은 웨이브 몬스터가 한 마리씩 나오는 간격(초). 지상 기본 속도면 몸 하나 정도 간격
 
 # --- 보스 레인 ---
 const WAVE_MONSTER_HP := 10.0      # 일반 몬스터 기준 체력 (종류/라운드별 배율은 WaveTypes, BossLevels)

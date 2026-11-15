@@ -88,6 +88,11 @@ func evo_color() -> Color:
 	return Evolutions.DATA[evolution].color if evolution != "" else Color(0.9, 0.9, 1.0)
 
 
+## 한 발 피해 (진화하면 계열에 따라 배율이 붙는다)
+func cur_damage() -> float:
+	return kind.damage * Evolutions.DAMAGE_MULT.get(evolution, 1.0)
+
+
 ## 다음 공격까지의 시간 (광란 중첩만큼 빨라진다)
 func cur_cooldown() -> float:
 	var cd: float = Evolutions.COOLDOWN.get(evolution, kind.cooldown)
@@ -153,7 +158,7 @@ func _fire(target: Monster) -> void:
 
 ## 투사체 1발 (진화 계열에 따라 피해/효과가 붙는다)
 func _shoot(target: Monster) -> void:
-	var dmg: float = kind.damage
+	var dmg: float = cur_damage()
 	var fx := {}
 	match evolution:
 		"pierce":

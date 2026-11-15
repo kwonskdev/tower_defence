@@ -89,6 +89,7 @@ func begin() -> void:
 	state = State.RUNNING
 	level_flash = 1.0
 	_dispatch_timer.start()
+	_dispatch_wave()  # 첫 웨이브는 바로 출발
 	Log.info(Log.Category.GAME, "게임 시작: 보스 Lv.%d '%s'" % [level, level_data.name])
 
 
@@ -112,7 +113,7 @@ func _start_level(new_level: int) -> void:
 	level_flash = 1.0
 	_streak_left = 0
 	current_wave_text = "-"
-	_dispatch_timer.wait_time = level_data.interval
+	_dispatch_timer.wait_time = float(level_data.interval) * Balance.WAVE_CLUMP  # 대신 한 번에 보내는 마릿수가 WAVE_CLUMP배
 	if state == State.RUNNING:
 		_dispatch_timer.start()
 
@@ -214,12 +215,12 @@ func _dispatch_wave() -> void:
 		return
 	if _streak_left <= 0:
 		_streak_type = WaveTypes.pick(level)
-		_streak_left = randi_range(2, 4)
+		_streak_left = randi_range(1, 2)  # 웨이브가 커졌으니 같은 종류가 이어지는 횟수는 줄인다
 	_streak_left -= 1
 
 	var type_id := _streak_type
 	var wave_type: Dictionary = WaveTypes.TYPES[type_id]
-	var count := maxi(1, roundi(float(wave_type.count) * float(level_data.count_mult)))
+	var count := maxi(1, roundi(float(wave_type.count) * float(level_data.count_mult))) * Balance.WAVE_CLUMP
 	var ratio := hp / max_hp
 	var hp_value: float = Balance.WAVE_MONSTER_HP * float(wave_type.hp) * float(level_data.wave_hp) \
 		* (1.0 + Balance.WAVE_HP_BONUS_AT_LOW_BOSS * (1.0 - ratio))
@@ -227,13 +228,17 @@ func _dispatch_wave() -> void:
 	Log.debug(Log.Category.GAME, "보스 파견: %s (Lv.%d, 보스hp=%.0f%% 몬스터hp=%.1f)" % [current_wave_text, level, ratio * 100.0, hp_value])
 
 	var dispatch_level := level
+	# 레인마다 이번 웨이브가 나오는 칸을 하나 정해서 한 덩어리로 내보낸다
+	var spawn_cells := {}
+	for lane in _lanes.values():
+		spawn_cells[lane] = lane.pick_spawn_cell()
 	for i in range(count):
 		if i > 0:
-			await get_tree().create_timer(0.25).timeout  # 떼는 조금씩 시차를 두고 나온다
+			await get_tree().create_timer(Balance.WAVE_SPAWN_GAP).timeout  # 촘촘하게 연달아 나온다
 			if state != State.RUNNING or level != dispatch_level:
 				return
 		for lane in _lanes.values():
-			lane.spawn_wave_monster(hp_value, type_id, dispatch_level)
+			lane.spawn_wave_monster(hp_value, type_id, dispatch_level, spawn_cells[lane])
 
 
 ## 플레이어가 생산한 몬스터를 보스 레인으로 보낸다

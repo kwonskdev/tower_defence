@@ -190,12 +190,19 @@ func _on_income_tick() -> void:
 
 # --- 몬스터 ---
 
+## 몬스터가 나오는 칸 하나 (없으면 NO_GOAL). 한 웨이브는 같은 칸에서 뭉쳐서 나온다.
+func pick_spawn_cell() -> Vector2i:
+	var cells := _grid.get_spawn_cells()
+	return cells.pick_random() if not cells.is_empty() else Pathfinder.NO_GOAL
+
+
 ## 보스의 자동 파견: 이 레인에 몬스터를 보낸다 (level: 보스 라운드. 보상/방어력이 라운드에 따라 오른다)
-func spawn_wave_monster(hp_value: float, type_id: String = "grunt", level: int = 1) -> void:
+func spawn_wave_monster(hp_value: float, type_id: String = "grunt", level: int = 1, spawn_cell: Vector2i = Pathfinder.NO_GOAL) -> void:
 	if not active:
 		return
-	var spawn_cells := _grid.get_spawn_cells()
-	if spawn_cells.is_empty():
+	if spawn_cell == Pathfinder.NO_GOAL:
+		spawn_cell = pick_spawn_cell()
+	if spawn_cell == Pathfinder.NO_GOAL:
 		Log.error(Log.Category.GAME, "[P%d] 스폰 셀이 없음" % (player_id + 1))
 		return
 
@@ -211,7 +218,7 @@ func spawn_wave_monster(hp_value: float, type_id: String = "grunt", level: int =
 	monster.reward = roundi(wave_type.reward * (1.0 + 0.15 * (level - 1)))
 	monster.visible = lane_visible
 	monster.z_index = 2
-	monster.setup(_next_monster_id, _grid, _renderer, _pathfinder, spawn_cells.pick_random())
+	monster.setup(_next_monster_id, _grid, _renderer, _pathfinder, spawn_cell)
 	monster.reached_exit.connect(_on_monster_reached_exit)
 	monster.died.connect(_on_monster_died)
 	_renderer.add_child(monster)
