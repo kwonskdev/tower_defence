@@ -12,9 +12,21 @@ class_name MainGame
 
 # 몬스터 버튼은 monster_buttons[0]이 뒤로 가기, [1]부터 SentMonsters.SLOTS 순서대로 몬스터 종류 (계열별로 묶고 사이에 빈칸).
 
+var hud_panel: PanelContainer            # 하단 메시지 영역 (할 말이 있을 때만 보인다)
 var hud_label: Label
-var tower_info_row: HBoxContainer
+var tower_info_row: VBoxContainer        # 선택한 타워 정보 + (진화 전이면) 진화 버튼 줄
+var evolve_row: HBoxContainer
 var start_button: Button
+var confirm_dialog: ConfirmationDialog   # 타워를 지으면 길이 막힐 때 확인창
+var _pending_cell := Vector2i.ZERO
+var tower_buttons: Dictionary = {}       # 기본 타워 종류 -> 타워 배럭 버튼
+var _highlighted_kind := ""              # 지금 강조 표시 중인 건설 타워 종류
+# 왼쪽 위 상태 패널 (위에서 아래로: 생명 / 골드·수입 / 다음 웨이브)
+var status_lives_label: Label
+var status_gold_label: Label
+var status_income_label: Label
+var status_wave_title: Label
+var status_wave_rows: Array = []         # [{dot: StatusIcon, label: Label}]
 var family_frames: Control               # 몬스터 배럭의 계열 묶음 외곽선
 var tower_info_label: Label
 var evolve_buttons: Array[Button] = []   # 선택한 타워가 아직 진화 전이면 계열 2개 중 고르는 버튼
@@ -60,6 +72,8 @@ func setup_ui():
 	_create_upgrade_views()
 	_create_minimaps()
 	_create_hud()
+	_create_status_panel()
+	_create_confirm_dialog()
 
 ## 버튼을 "실제 모습 아이콘 + 비용 + 마우스 올리면 상세 설명" 형태로 꾸민다
 func _decorate_unit_button(b: Button, icon: UnitIcon, cost: int, tooltip: String, tag: String = "", tag_color: Color = Color.WHITE):
@@ -194,6 +208,7 @@ func _create_tower_view():
 		b.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		b.pressed.connect(_on_tower_kind_selected.bind(kind_id))
 		tower_view.add_child(b)
+		tower_buttons[kind_id] = b
 		var icon := UnitIcon.new()
 		icon.show_tower(kind)
 		_decorate_unit_button(b, icon, kind.cost, Balance.tower_tooltip(kind))
@@ -423,8 +438,9 @@ func _create_hud():
 	panel.add_child(box)
 	box.add_child(hud_label)
 
-	# 선택한 타워 정보 + 업그레이드 버튼 (타워를 선택했을 때만 보인다)
-	tower_info_row = HBoxContainer.new()
+	# 선택한 타워 정보 (타워를 선택했을 때만 보인다). 진화 버튼 2개는 정보 아래 별도 줄에 반반씩 놓는다
+	# (같은 줄에 두면 이름이 긴 계열에서 두 번째 버튼이 화면 밖으로 밀려난다)
+	tower_info_row = VBoxContainer.new()
 	tower_info_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	tower_info_row.visible = false
 	box.add_child(tower_info_row)
@@ -433,14 +449,18 @@ func _create_hud():
 	tower_info_label.add_theme_font_size_override("font_size", 12)
 	tower_info_label.add_theme_color_override("font_color", Color(1.0, 1.0, 0.6))
 	tower_info_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	tower_info_label.custom_minimum_size = Vector2(230, 0)
-	tower_info_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tower_info_label.custom_minimum_size = Vector2(300, 0)
 	tower_info_row.add_child(tower_info_label)
+	evolve_row = HBoxContainer.new()
+	evolve_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	tower_info_row.add_child(evolve_row)
 	for i in range(2):
 		var eb := Button.new()
 		eb.add_theme_font_size_override("font_size", 12)
+		eb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		eb.clip_text = true
 		eb.pressed.connect(_on_evolve_pressed.bind(i))
-		tower_info_row.add_child(eb)
+		evolve_row.add_child(eb)
 		evolve_buttons.append(eb)
 	game_field.ui_blockers.append(tower_info_row)  # 버튼을 눌렀을 때 뒤의 맵이 클릭되지 않도록
 
@@ -453,6 +473,7 @@ func _create_hud():
 	skill_hint_label.custom_minimum_size = Vector2(400, 0)
 	box.add_child(skill_hint_label)
 
+	hud_panel = panel
 	add_child(panel)
 
 	# 시작 버튼: 누르기 전에는 시간도 수입도 몬스터도 멈춰 있어서 미리 타워를 지어 둘 수 있다
@@ -465,6 +486,165 @@ func _create_hud():
 	start_button.pressed.connect(_on_start_pressed)
 	add_child(start_button)
 	game_field.ui_blockers.append(start_button)
+
+## 지금 건설하려고 고른 타워를 타워 배럭에서 굵은 노란 테두리로 강조한다 (건설 도구가 꺼지면 해제).
+## 메인 화면의 "타워" 버튼에도 고른 타워 이름을 보여준다.
+func _refresh_tower_highlight() -> void:
+	if game_field == null or tower_buttons.is_empty():
+		return
+	var kind := ""
+	if game_field.current_tool == GameField.PlacementTool.TOWER:
+		kind = game_field.selected_tower_kind
+	if kind == _highlighted_kind:
+		return
+	_highlighted_kind = kind
+	for k in tower_buttons:
+		var b: Button = tower_buttons[k]
+		for state in ["normal", "hover", "pressed"]:
+			if k == kind:
+				var sb := StyleBoxFlat.new()
+				sb.bg_color = Color(0.32, 0.27, 0.05)
+				sb.border_color = Color(1.0, 0.9, 0.2)
+				sb.set_border_width_all(4)
+				sb.set_corner_radius_all(4)
+				b.add_theme_stylebox_override(state, sb)
+			else:
+				b.remove_theme_stylebox_override(state)
+	tower_button.text = "타워" if kind == "" else "타워\n(%s)" % Balance.TOWER_DEFS[kind].name
+
+
+## 왼쪽 위 상태 패널: 위에서 아래로 생명(하트) / 골드와 수입 / 다음 웨이브
+func _create_status_panel() -> void:
+	var top_row: HBoxContainer = $VBoxContainer/TopUI/HBoxContainer
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size = Vector2(112, 0)
+	panel.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	var panel_style := StyleBoxFlat.new()  # 글자가 가장자리에 붙지 않도록 안쪽 여백
+	panel_style.bg_color = Color(0.1, 0.1, 0.14)
+	panel_style.content_margin_left = 6
+	panel_style.content_margin_right = 4
+	panel_style.content_margin_top = 4
+	panel_style.content_margin_bottom = 4
+	panel.add_theme_stylebox_override("panel", panel_style)
+	top_row.add_child(panel)
+	top_row.move_child(panel, 0)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 1)
+	panel.add_child(box)
+
+	var heart_row := HBoxContainer.new()
+	box.add_child(heart_row)
+	heart_row.add_child(_status_icon("heart", Color(0.95, 0.2, 0.3)))
+	status_lives_label = _status_label(15)
+	status_lives_label.add_theme_color_override("font_color", Color(1.0, 0.55, 0.6))
+	heart_row.add_child(status_lives_label)
+
+	var gold_row := HBoxContainer.new()
+	box.add_child(gold_row)
+	gold_row.add_child(_status_icon("coin", Color(1.0, 0.85, 0.2)))
+	status_gold_label = _status_label(15)
+	status_gold_label.add_theme_color_override("font_color", Color(1.0, 0.9, 0.35))
+	gold_row.add_child(status_gold_label)
+	status_income_label = _status_label(10)
+	status_income_label.add_theme_color_override("font_color", Color(0.9, 0.85, 0.5))
+	box.add_child(status_income_label)
+
+	status_wave_title = _status_label(10)
+	status_wave_title.add_theme_color_override("font_color", Color(0.75, 0.9, 1.0))
+	box.add_child(status_wave_title)
+	for i in range(Balance.WAVE_GROUPS):
+		var row := HBoxContainer.new()
+		box.add_child(row)
+		var dot := _status_icon("dot", Color.WHITE, 10)
+		row.add_child(dot)
+		var label := _status_label(11)
+		row.add_child(label)
+		status_wave_rows.append({"row": row, "dot": dot, "label": label})
+
+
+func _status_label(size: int) -> Label:
+	var l := Label.new()
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	l.add_theme_font_size_override("font_size", size)
+	return l
+
+
+func _status_icon(kind: String, color: Color, px: int = 16) -> StatusIcon:
+	var icon := StatusIcon.new()
+	icon.kind = kind
+	icon.color = color
+	icon.custom_minimum_size = Vector2(px, px)
+	icon.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	return icon
+
+
+func _update_status_panel(lane: LaneController, boss: BossController) -> void:
+	status_lives_label.text = "%d" % lane.lives
+	status_gold_label.text = "%d" % lane.gold
+	var left := lane.income_time_left() if boss.state == BossController.State.RUNNING else -1.0
+	status_income_label.text = "수입 +%d  %s" % [lane.income, "(%d초 후)" % ceili(left) if left >= 0.0 else "(시작 전)"]
+
+	var preview := boss.get_next_wave_preview()
+	var wave_left := boss.time_to_next_wave()
+	status_wave_title.text = "다음 웨이브 %s" % ("%d초" % ceili(wave_left) if wave_left >= 0.0 else "(시작 전)")
+	for i in range(status_wave_rows.size()):
+		var r: Dictionary = status_wave_rows[i]
+		r.row.visible = i < preview.size()
+		if i < preview.size():
+			var e: Dictionary = preview[i]
+			r.dot.color = e.color
+			r.dot.queue_redraw()
+			r.label.text = "%s x%d%s" % [e.name, e.count, " 공중" if e.flying else ""]
+
+
+## 타워를 지으면 길이 완전히 막힐 때 한 번 확인하는 창
+func _create_confirm_dialog() -> void:
+	confirm_dialog = ConfirmationDialog.new()
+	confirm_dialog.title = "길이 막힙니다"
+	confirm_dialog.dialog_text = "이 타워를 지으면 몬스터가 지나갈 길이 완전히 막힙니다.\n막히면 몬스터가 타워를 부수면서 뚫고 옵니다.\n그래도 지을까요?"
+	confirm_dialog.dialog_autowrap = true
+	confirm_dialog.ok_button_text = "지을래요"
+	confirm_dialog.cancel_button_text = "취소"
+	confirm_dialog.min_size = Vector2i(380, 0)
+	confirm_dialog.confirmed.connect(_on_path_block_confirmed)
+	add_child(confirm_dialog)
+	game_field.path_block_confirm.connect(_on_path_block_confirm)
+
+
+func _on_path_block_confirm(cell: Vector2i) -> void:
+	_pending_cell = cell
+	confirm_dialog.popup_centered()
+
+
+func _on_path_block_confirmed() -> void:
+	game_field.place_tower(_pending_cell, true)
+
+
+## 상태 패널용 작은 아이콘 (하트 / 금화 / 점). 글꼴에 이모지가 없어도 보이도록 직접 그린다.
+class StatusIcon extends Control:
+	var kind := "dot"
+	var color := Color.WHITE
+
+	func _init() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	func _draw() -> void:
+		var c := size * 0.5
+		var r := minf(size.x, size.y) * 0.5
+		match kind:
+			"heart":
+				draw_circle(c + Vector2(-r * 0.42, -r * 0.25), r * 0.5, color)
+				draw_circle(c + Vector2(r * 0.42, -r * 0.25), r * 0.5, color)
+				draw_colored_polygon(PackedVector2Array([
+					c + Vector2(-r * 0.88, -r * 0.05), c + Vector2(r * 0.88, -r * 0.05), c + Vector2(0, r * 0.9)]), color)
+			"coin":
+				draw_circle(c, r * 0.9, color)
+				draw_arc(c, r * 0.9, 0.0, TAU, 20, Color(0.55, 0.4, 0.0), 1.5)
+				draw_arc(c, r * 0.5, 0.0, TAU, 16, Color(0.75, 0.55, 0.05), 1.5)
+			_:
+				draw_circle(c, r * 0.8, color)
+				draw_arc(c, r * 0.8, 0.0, TAU, 12, Color(0, 0, 0, 0.5), 1.0)
+
 
 func _on_start_pressed():
 	game_field.start_game()
@@ -488,22 +668,28 @@ func _update_hud():
 	if evo_view.visible or detail_view.visible:
 		_refresh_upgrade_views(lane)
 
-	var state_text := ""
+	_update_status_panel(lane, boss)
+	_refresh_tower_highlight()
+
+	# 하단 메시지: 상태, 그리고 보스 정보는 보스 레인을 보고 있을 때만 (다른 건 왼쪽 위 상태 패널로 옮겼다)
+	var lines: Array[String] = []
 	match boss.state:
-		BossController.State.WAITING: state_text = "  [시작 대기]"
-		BossController.State.VICTORY: state_text = "  [전체 승리!]"
-		BossController.State.DEFEAT: state_text = "  [패배]"
-	var selected := Balance.tower_kind(game_field.selected_tower_kind)
-	# 보스 공격 현황: 보스 앞에 서 있는 몬스터들이 1초에 주는 피해의 합
-	var attack_text := "보스를 공격 중인 몬스터 없음"
-	if boss.total_dps > 0.0:
-		var eta := boss.hp / boss.total_dps
-		attack_text = "보스에게 초당 %.1f 피해 (%d마리) -> %d초 뒤 처치%s" % [
-			boss.total_dps, boss.get_attacker_count(), ceili(eta), " (시간 부족!)" if eta > boss.time_left else ""]
-	hud_label.text = "골드 %d (+%d/%.0fs, 다음 수입 %d초)  생명 %d  타워 %d개%s\n선택 타워: %s (%d골드)\nBOSS Lv.%d/%d %s  %d/%d  남은 %d초\n%s\n지금 오는 몬스터: %s" % [
-		lane.gold, lane.income, Balance.INCOME_INTERVAL, ceili(lane.income_time_left()), lane.lives, lane.towers.size(), state_text,
-		selected.name, selected.cost, boss.level, BossLevels.COUNT, boss.level_data.name,
-		int(boss.hp), int(boss.max_hp), int(boss.time_left), attack_text, boss.current_wave_text]
+		BossController.State.WAITING: lines.append("[시작 대기]")
+		BossController.State.VICTORY: lines.append("[전체 승리!]")
+		BossController.State.DEFEAT: lines.append("[패배]")
+	if game_field.current_player_id == GameField.BOSS_LANE_ID:
+		lines.append("BOSS Lv.%d/%d %s  %d/%d  남은 %d초" % [
+			boss.level, BossLevels.COUNT, boss.level_data.name, int(boss.hp), int(boss.max_hp), int(boss.time_left)])
+		# 보스 공격 현황: 보스 앞에 서 있는 몬스터들이 1초에 주는 피해의 합
+		if boss.total_dps > 0.0:
+			var eta := boss.hp / boss.total_dps
+			lines.append("보스에게 초당 %.1f 피해 (%d마리) -> %d초 뒤 처치%s" % [
+				boss.total_dps, boss.get_attacker_count(), ceili(eta), " (시간 부족!)" if eta > boss.time_left else ""])
+		else:
+			lines.append("보스를 공격 중인 몬스터 없음")
+	hud_label.text = "\n".join(lines)
+	hud_label.visible = not lines.is_empty()
+	hud_panel.visible = hud_label.visible or tower_info_row.visible or skill_hint_label.visible
 
 func _update_tower_info(lane: LaneController):
 	var t := game_field.get_selected_tower()
@@ -527,8 +713,9 @@ func _update_tower_info(lane: LaneController):
 			text += "\n충전 %.1f / %.0f초 (%.0f초 이상이면 발동)" % [t.charge, t.charge_max(), Evolutions.CHARGE_MIN]
 	tower_info_label.text = text
 
-	# 아직 진화 전이면 계열 2개 중 하나를 고른다 (골드). 고르는 순간 A 스킬을 배운다.
+	# 아직 진화 전이면 계열 2개 중 하나를 고른다 (골드). 진화하면 그 계열의 A 스킬이 붙는다.
 	var can_pick := t.can_evolve()
+	evolve_row.visible = can_pick
 	var choices: Array = Evolutions.TREE[t.kind.id]
 	for i in range(evolve_buttons.size()):
 		var eb := evolve_buttons[i]
@@ -594,11 +781,12 @@ func _on_tower_button_pressed():
 func _on_tower_back_pressed():
 	_show_view("main")
 
+## 건설할 타워를 고른다. 화면은 그대로 두고 고른 타워를 강조해서 보여준다 (← 로 돌아간다).
 func _on_tower_kind_selected(kind_id: String):
 	if game_field:
 		game_field.set_tower_kind(kind_id)
 		game_field.set_current_tool(GameField.PlacementTool.TOWER)
-	_show_view("main")
+	_refresh_tower_highlight()
 
 func _on_monster_button_pressed():
 	# 몬스터 뷰로 전환

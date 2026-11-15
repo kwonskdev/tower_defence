@@ -14,6 +14,9 @@ var lane_scroll_rows: Dictionary = {}  # 레인별로 마지막에 보던 위치
 var selected_tower_kind: String = Balance.TOWER_KINDS[0]
 
 var current_tool: PlacementTool = PlacementTool.NONE
+signal path_block_confirm(cell: Vector2i)  # 이 타워를 지으면 길이 막힌다: 사용자에게 확인을 받아야 한다
+
+var awaiting_confirm: bool = false  # 길 막힘 확인을 기다리는 중 (이 클릭으로는 타워 선택/해제를 하지 않는다)
 var game_started: bool = false  # 시작 버튼을 눌렀는지
 var selected_tower: Tower = null  # 클릭해서 선택한 타워 (정보/업그레이드 대상)
 var ui_blockers: Array[Control] = []  # 이 영역 위의 클릭은 맵 클릭으로 처리하지 않는다 (필드 위에 겹친 UI)
@@ -152,7 +155,10 @@ func handle_cell_click(event):
 
 func _on_grid_cell_clicked(grid_position: Vector2i):
 	Log.debug(Log.Category.UI, "셀 클릭 %s (도구=%s)" % [grid_position, PlacementTool.keys()[current_tool]])
+	awaiting_confirm = false
 	if current_tool == PlacementTool.TOWER and place_tower(grid_position):
+		return
+	if awaiting_confirm:
 		return
 
 	# 건설 도구가 꺼져 있거나 건설할 수 없는 칸이면: 그 칸의 타워를 선택 (타워가 없으면 선택 해제)
@@ -252,7 +258,8 @@ func scroll_to_row(row: float):
 	var target := row * grid_renderer.CELL_SIZE - size.y * 0.5
 	set_v_scroll(maxi(0, int(target)))
 
-func place_tower(grid_position: Vector2i) -> bool:
+## confirmed: 길이 막히는 걸 알고도 짓겠다고 사용자가 확인한 경우 true
+func place_tower(grid_position: Vector2i, confirmed: bool = false) -> bool:
 	if current_player_id != local_player_id:
 		Log.debug(Log.Category.TOWER, "내 레인이 아니라서 건설 불가 (보는 레인=%s)" % get_current_grid_system().lane_tag())
 		return false
@@ -273,6 +280,11 @@ func place_tower(grid_position: Vector2i) -> bool:
 	# 길을 막는 타워는 몬스터와 몸이 겹친 칸에 지을 수 없다 (트랩은 위로 지나가므로 가능)
 	if kind.blocks and lane.is_cell_occupied(grid_position):
 		Log.debug(Log.Category.TOWER, "[%s] 타워 건설 실패 %s: 몬스터가 있는 칸" % [tag, grid_position])
+		return false
+	# 이 타워 때문에 길이 완전히 막히면 한 번 확인한다 (막히면 몬스터가 타워를 부수며 돌파한다)
+	if kind.blocks and not confirmed and lane.would_block_path(grid_position):
+		awaiting_confirm = true
+		path_block_confirm.emit(grid_position)
 		return false
 	var cost: int = kind.cost
 	if not lane.try_spend(cost, "타워 건설 %s(%s)" % [grid_position, kind.name]):

@@ -4,7 +4,7 @@ class_name BossLevels
 ## 한 판 약 30분을 목표로 제한시간 합계를 약 1800초로 맞췄다. (수치는 전부 첫 시도)
 ##
 ## hp: 보스 체력(1인 기준) / time: 제한시간(초) / reward: 처치 보상 골드(모든 참여자)
-## wave_hp: 파견 몬스터 체력 배율 / count_mult: 한 번에 보내는 마릿수 배율 / interval: 파견 주기(초)
+## wave_hp: 파견 몬스터 체력 배율 / count_mult: 한 번에 보내는 마릿수 배율 / interval: 파견 압박 기준(작을수록 웨이브가 커진다. 웨이브 시점은 수입 주기로 고정)
 
 const LEVELS := [
 	{"name": "슬라임 대장", "hp": 1500.0, "time": 150.0, "reward": 60, "wave_hp": 1.0, "count_mult": 1.0, "interval": 2.5, "color": Color(0.25, 0.6, 0.25)},

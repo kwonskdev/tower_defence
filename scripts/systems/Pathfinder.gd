@@ -106,6 +106,27 @@ func _find_path_inner(start: Vector2i, goal: Vector2i) -> Dictionary:
 	return {"path": path, "breach": not path.is_empty()}
 
 
+## 이 칸에 길을 막는 타워를 지으면, 지금은 열려 있는 길이 완전히 막히는가 (이미 막혀 있었다면 false)
+## sources: 몬스터가 나오는 칸들. 하나라도 도착 행까지 갈 수 있으면 열려 있는 것이다.
+func would_block(cell: Vector2i, sources: Array) -> bool:
+	if _dirty:
+		_rebuild()
+	if not _any_route(sources):
+		return false  # 원래부터 막혀 있었다
+	var was_solid := _strict.is_point_solid(cell)
+	_strict.set_point_solid(cell, true)
+	var blocked := not _any_route(sources)
+	_strict.set_point_solid(cell, was_solid)
+	return blocked
+
+
+func _any_route(sources: Array) -> bool:
+	for src in sources:
+		if not _best_path(_strict, src, NO_GOAL).is_empty():
+			return true
+	return false
+
+
 func _rebuild() -> void:
 	_tower_cells.clear()
 	for y in range(GridSystem.GRID_HEIGHT):

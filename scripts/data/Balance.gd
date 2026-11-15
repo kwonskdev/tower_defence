@@ -100,10 +100,13 @@ static func tower_tooltip(kind: Dictionary) -> String:
 
 
 # --- 웨이브 ---
-# 몬스터는 한 번에 크게 뭉쳐서 한 칸에서 촘촘히 쏟아져 나온다 (그래야 범위 타워가 값어치를 한다).
-# 한 번에 보내는 마릿수가 WAVE_CLUMP배가 되는 대신 파견 주기도 WAVE_CLUMP배가 되어서 전체 물량은 그대로다.
-const WAVE_CLUMP := 4
-const WAVE_SPAWN_GAP := 0.18       # 같은 웨이브 몬스터가 한 마리씩 나오는 간격(초). 지상 기본 속도면 몸 하나 정도 간격
+# PvE: 수입이 들어오는 시점(INCOME_INTERVAL)마다 웨이브가 한꺼번에 온다. 한 웨이브는 종류가 다른 묶음 WAVE_GROUPS개.
+# 묶음은 한 칸에서 촘촘히 쏟아져 나와서 뭉쳐서 온다 (그래야 범위 타워가 값어치를 한다).
+# 마릿수는 BossLevels의 interval(압박 기준)과 count_mult로 정해진다 (BossController._group_count).
+# (PvP는 다른 레인이 보내는 즉시 몬스터가 오는 방식이라 이 웨이브와는 별개다.)
+const WAVE_GROUPS := 3
+const WAVE_SPAWN_GAP := 0.18       # 같은 묶음 몬스터가 한 마리씩 나오는 간격(초). 지상 기본 속도면 몸 하나 정도 간격
+const WAVE_GROUP_GAP := 0.8        # 묶음과 묶음 사이 간격(초)
 
 # --- 보스 레인 ---
 const WAVE_MONSTER_HP := 10.0      # 일반 몬스터 기준 체력 (종류/라운드별 배율은 WaveTypes, BossLevels)

@@ -219,6 +219,11 @@ func _on_income_tick() -> void:
 
 # --- 몬스터 ---
 
+## 이 칸에 길을 막는 타워를 지으면 몬스터가 지나갈 길이 완전히 막히는가
+func would_block_path(cell: Vector2i) -> bool:
+	return _pathfinder.would_block(cell, _grid.get_spawn_cells())
+
+
 ## 몬스터가 나오는 칸 하나 (없으면 NO_GOAL). 한 웨이브는 같은 칸에서 뭉쳐서 나온다.
 func pick_spawn_cell() -> Vector2i:
 	var cells := _grid.get_spawn_cells()
