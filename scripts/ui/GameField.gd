@@ -11,9 +11,11 @@ var current_player_id: int = 0  # 지금 화면에 보고 있는 레인
 var local_player_id: int = 0    # 내 플레이어 (타워 건설/몬스터 생산은 내 레인에서만)
 var boss: BossController
 var lane_scroll_rows: Dictionary = {}  # 레인별로 마지막에 보던 위치 (맨 위 줄 번호). 레인을 바꿔도 각자 위치를 기억한다
-var selected_tower_kind: String = Balance.TOWER_COMBOS[0]
+var selected_tower_kind: String = Balance.TOWER_KINDS[0]
 
 var current_tool: PlacementTool = PlacementTool.NONE
+var selected_tower: Tower = null  # 클릭해서 선택한 타워 (정보/업그레이드 대상)
+var ui_blockers: Array[Control] = []  # 이 영역 위의 클릭은 맵 클릭으로 처리하지 않는다 (필드 위에 겹친 UI)
 
 # 마우스 드래그 스크롤 변수들
 var is_dragging: bool = false
@@ -85,6 +87,9 @@ func setup_scroll_container():
 func _input(event):
 	if not get_global_rect().has_point(get_global_mouse_position()):
 		return
+	for blocker in ui_blockers:
+		if blocker.is_visible_in_tree() and blocker.get_global_rect().has_point(get_global_mouse_position()):
+			return
 
 	handle_mouse_input(event)
 	# 키보드 입력은 모두 제거 (버튼으로만 제어)
@@ -136,12 +141,51 @@ func handle_cell_click(event):
 
 func _on_grid_cell_clicked(grid_position: Vector2i):
 	Log.debug(Log.Category.UI, "셀 클릭 %s (도구=%s)" % [grid_position, PlacementTool.keys()[current_tool]])
-	if current_tool == PlacementTool.NONE:
+	if current_tool == PlacementTool.TOWER and place_tower(grid_position):
 		return
 
-	match current_tool:
-		PlacementTool.TOWER:
-			place_tower(grid_position)
+	# 건설 도구가 꺼져 있거나 건설할 수 없는 칸이면: 그 칸의 타워를 선택 (타워가 없으면 선택 해제)
+	select_tower(_tower_at(grid_position))
+
+
+## 지금 보는 레인의 grid_position 칸에 있는 타워 (없으면 null)
+func _tower_at(grid_position: Vector2i) -> Tower:
+	var lane: LaneController = lanes.get(current_player_id)
+	if lane == null:
+		return null
+	for t in lane.towers:
+		if t.cell == grid_position:
+			return t
+	return null
+
+
+## 선택한 타워. 몬스터가 부수는 등으로 사라졌으면 null (해제된 객체를 타입 변수에 담으면 오류라서 꼭 이 함수로 읽는다)
+func get_selected_tower() -> Tower:
+	if is_instance_valid(selected_tower):
+		return selected_tower
+	selected_tower = null
+	return null
+
+
+func select_tower(tower: Tower) -> void:
+	if is_instance_valid(selected_tower):
+		selected_tower.selected = false
+	selected_tower = tower
+	if tower != null:
+		tower.selected = true
+		Log.info(Log.Category.UI, "타워 선택 %s: %s %s" % [tower.cell, tower.kind.name, Evolutions.evo_name(tower.evolution) if tower.evolution != "" else "(진화 전)"])
+
+
+## 선택한 타워를 진화시킨다 (타워마다 한 번, 처음 계열을 고른다). 내 레인의 타워만 가능.
+func evolve_selected_tower(evo: String) -> bool:
+	var lane: LaneController = lanes.get(local_player_id)
+	return lane != null and lane.evolve_tower(get_selected_tower(), evo)
+
+
+## 업그레이드 탭: 진화 스킬 레벨을 올린다 (같은 계열의 모든 타워에 적용)
+func upgrade_skill(evo: String, skill: String) -> bool:
+	var lane: LaneController = lanes.get(local_player_id)
+	return lane != null and lane.upgrade_skill(evo, skill)
 
 func get_current_grid_system() -> GridSystem:
 	return grid_systems[current_player_id]
@@ -155,6 +199,8 @@ func switch_player(player_id: int):
 
 	# 떠나는 레인의 스크롤 위치를 기억해 둔다 (칸 크기가 바뀌어도 되도록 줄 번호로 저장)
 	lane_scroll_rows[current_player_id] = get_v_scroll() / float(grid_renderer.CELL_SIZE)
+
+	select_tower(null)  # 다른 레인으로 가면 선택 해제
 
 	# 이전 플레이어의 렌더러 연결 해제
 	get_current_grid_system().disconnect_renderer()
@@ -202,10 +248,8 @@ func place_tower(grid_position: Vector2i) -> bool:
 	var kind := Balance.tower_kind(selected_tower_kind)
 
 	var cell_state := grid_system.get_cell_state(grid_position)
-	# 트랩은 길을 막지 않으므로 이미 트랩이 있는 칸에도 겹쳐 지을 수 있다
-	var can_build: bool = cell_state == GridSystem.CellState.EMPTY \
-		or (not kind.blocks and cell_state == GridSystem.CellState.TRAP_TOWER)
-	if not can_build:
+	# 한 칸에는 타워 1개만 (트랩도 겹쳐 지을 수 없다)
+	if cell_state != GridSystem.CellState.EMPTY:
 		Log.debug(Log.Category.TOWER, "[%s] 타워 건설 실패 %s: 빈 칸 아님(%s)" % [
 			tag, grid_position, grid_system.get_state_name(cell_state)])
 		return false
@@ -214,9 +258,6 @@ func place_tower(grid_position: Vector2i) -> bool:
 		Log.debug(Log.Category.TOWER, "[%s] 타워 건설 실패 %s: 몬스터가 있는 칸" % [tag, grid_position])
 		return false
 	var cost: int = kind.cost
-	if not kind.blocks:
-		# 이미 있는 트랩 1개당 비용이 비싸진다
-		cost = roundi(kind.cost * (1.0 + Balance.TRAP_STACK_COST_STEP * lane.trap_count(grid_position)))
 	if not lane.try_spend(cost, "타워 건설 %s(%s)" % [grid_position, kind.name]):
 		return false
 

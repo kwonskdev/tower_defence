@@ -60,6 +60,19 @@ var stopped: bool = false
 var preview: bool = false
 var preview_cell: float = 40.0
 
+# 상태이상 (타워 진화 스킬이 건다)
+var marks: Array = []            # 표식 [{src: 타워, dmg: 추가 피해}] - 중첩되며, 타워에게 맞으면 한 번에 터진다
+var death_marks: Array = []      # 죽는 순간 퍼뜨릴 표식 (표식 전파용)
+var armor_break_time: float = 0.0
+var slow_time: float = 0.0
+var slow_mult: float = 1.0
+var stun_time: float = 0.0
+var captured_time: float = 0.0   # 공중 몬스터를 지상에 붙잡아 둔 남은 시간
+
+var _poisons: Array = []         # [{src, stacks, dps, time}] 독 (타워별로 따로 집계)
+var _consumed_marks: Array = []  # 이번 타격에 터진 표식
+var _captured := false
+
 var _grid: GridSystem
 var _renderer: GridRenderer
 var _pathfinder: Pathfinder
@@ -94,15 +107,123 @@ func setup(id: int, grid: GridSystem, renderer: GridRenderer, pathfinder: Pathfi
 	_repath()
 
 
-func take_damage(amount: float) -> void:
+## 타워의 직접 공격을 받는다. source: 때린 타워 (해제된 객체가 올 수 있어 타입을 안 붙임).
+## - 맞은 순간 실제로 깎인 체력만큼 때린 타워의 누적 피해가 오르고, 마지막 한 방을 때린 타워만 킬이 오른다.
+## - 표식이 있으면 이 타격에 한 번에 터진다. 표식 피해는 표식을 남긴 타워 몫, 킬은 때린 타워 몫.
+func take_damage(amount: float, source = null) -> void:
 	if _dead:
 		return
+	var consumed := marks
+	marks = []
+	_consumed_marks = consumed
+	for mk in consumed:  # 표식을 먼저 터뜨린다 (이 타격이 먼저 죽이면 지원 타워의 추가 피해가 낭비되므로)
+		_lose_hp(float(mk.dmg), mk.src, source)
 	# 방어력: 한 발 피해를 평면으로 깎되, 최소 MIN_DAMAGE_RATIO는 들어간다
-	hp -= maxf(amount - armor, amount * MIN_DAMAGE_RATIO)
+	_lose_hp(maxf(amount - effective_armor(), amount * MIN_DAMAGE_RATIO), source, source)
 	_hit_flash = 0.1
+	if not _dead:
+		_consumed_marks = []
+
+
+## 체력을 실제로 깎는다. damage_source: 누적 피해를 올려 줄 타워, kill_source: 죽였을 때 킬을 올려 줄 타워.
+func _lose_hp(amount: float, damage_source, kill_source) -> void:
+	if _dead:
+		return
+	var applied := minf(amount, maxf(hp, 0.0))  # 남은 체력을 넘는 초과분은 피해로 치지 않는다
+	hp -= amount
+	if is_instance_valid(damage_source):  # 투사체가 날아가는 사이 타워가 부서졌을 수 있다
+		damage_source.record_damage(applied)
 	if hp <= 0.0:
-		_dead = true
-		died.emit(self)
+		if is_instance_valid(kill_source):
+			kill_source.record_kill()
+		_die()
+
+
+func _die() -> void:
+	_dead = true
+	death_marks = _consumed_marks + marks  # 이번 타격에 터진 표식 + 남은 표식 (표식 전파용)
+	died.emit(self)
+
+
+## 처형: 남은 체력만큼의 피해로 즉사시킨다 (피해/킬은 source 몫)
+func execute(source) -> void:
+	if _dead:
+		return
+	_lose_hp(maxf(hp, 0.0) + 0.001, source, source)
+
+
+func is_dead() -> bool:
+	return _dead
+
+
+func effective_armor() -> float:
+	return 0.0 if armor_break_time > 0.0 else armor
+
+
+func speed_mult() -> float:
+	return slow_mult if slow_time > 0.0 else 1.0
+
+
+# --- 상태이상 ---
+
+func add_mark(src, dmg: float) -> void:
+	marks.append({"src": src, "dmg": dmg})
+
+
+## 독: 같은 타워의 독은 중첩되고 (무한), 맞을 때마다 유지 시간이 갱신된다. 방어력 무시.
+func add_poison(src, dps: float, duration: float) -> void:
+	for e in _poisons:
+		if is_same(e.src, src):
+			e.stacks += 1
+			e.dps = dps
+			e.time = duration
+			return
+	_poisons.append({"src": src, "stacks": 1, "dps": dps, "time": duration})
+
+
+func apply_armor_break(duration: float) -> void:
+	armor_break_time = maxf(armor_break_time, duration)
+
+
+## 감속: ratio = 줄어드는 비율 (0.4 = 40% 느려짐). 더 강한 감속이 우선.
+func apply_slow(ratio: float, duration: float) -> void:
+	var mult := 1.0 - ratio
+	slow_mult = mult if slow_time <= 0.0 else minf(slow_mult, mult)
+	slow_time = maxf(slow_time, duration)
+
+
+func apply_stun(duration: float) -> void:
+	stun_time = maxf(stun_time, duration)
+
+
+## 공중 몬스터를 지상에 붙잡는다. 그동안 제자리에 정지하고 지상 몬스터로 취급된다 (끝나면 다시 공중).
+func capture(duration: float) -> void:
+	if captured_time > 0.0:
+		captured_time = maxf(captured_time, duration)
+	elif flying:
+		captured_time = duration
+		flying = false
+		_captured = true
+
+
+func _update_status(delta: float) -> void:
+	armor_break_time = maxf(0.0, armor_break_time - delta)
+	slow_time = maxf(0.0, slow_time - delta)
+	stun_time = maxf(0.0, stun_time - delta)
+	if captured_time > 0.0:
+		captured_time -= delta
+		if captured_time <= 0.0 and _captured:
+			_captured = false
+			flying = true  # 풀려나면 다시 날아간다 (경로는 그대로 직진)
+	for i in range(_poisons.size() - 1, -1, -1):
+		var e: Dictionary = _poisons[i]
+		e.time -= delta
+		if e.time <= 0.0:
+			_poisons.remove_at(i)
+			continue
+		_lose_hp(e.stacks * e.dps * delta, e.src, e.src)  # 독 피해와 킬은 독을 건 타워 몫
+		if _dead:
+			return
 
 
 ## 공중 몬스터는 몸이 떠 있으므로 투사체/표시는 이만큼 위를 기준으로 한다 (셀 단위)
@@ -129,7 +250,7 @@ func remaining_distance() -> float:
 
 
 func _on_grid_changed(_position: Vector2i, _old_state, _new_state) -> void:
-	if not stopped and not flying:
+	if not stopped and not flying and not _captured:
 		_repath()
 
 
@@ -173,6 +294,12 @@ func _process(delta: float) -> void:
 	if regen > 0.0 and hp < max_hp and not _dead:
 		hp = minf(max_hp, hp + max_hp * regen * delta)
 
+	_update_status(delta)
+	if _dead:
+		return
+	if stun_time > 0.0 or captured_time > 0.0:
+		return  # 기절/포획 중에는 제자리에 멈춘다
+
 	if stopped:
 		return
 	if waypoints.is_empty():
@@ -190,7 +317,7 @@ func _process(delta: float) -> void:
 		return
 
 	var to_target := target - cell_pos
-	var step := speed * delta
+	var step := speed * speed_mult() * delta
 	if to_target.length() <= step:
 		cell_pos = target
 		waypoints.pop_front()
@@ -273,6 +400,22 @@ func _draw() -> void:
 		var e: Vector2 = eye_center + perp * r * 0.38 * side
 		draw_circle(e, r * 0.24, Color.WHITE)
 		draw_circle(e + dir * r * 0.09, r * 0.12, Color(0.05, 0.05, 0.1))
+
+	# 상태이상 표시: 독=초록 / 감속=하늘 / 기절·포획=노랑 고리, 방어구 파괴=빨간 조각, 표식=보라 마름모
+	if not preview:
+		var rr := r * 1.3
+		if not _poisons.is_empty():
+			draw_arc(c, rr, 0.0, TAU, 20, Color(0.4, 0.95, 0.3, 0.9), 2.0)
+		if slow_time > 0.0:
+			draw_arc(c, rr + 3.0, 0.0, TAU, 20, Color(0.5, 0.8, 1.0, 0.9), 2.0)
+		if stun_time > 0.0 or captured_time > 0.0:
+			draw_arc(c, rr + 6.0, 0.0, TAU, 20, Color(1.0, 0.9, 0.2, 0.95), 2.5)
+		if armor_break_time > 0.0:
+			draw_arc(c, r * 1.05, PI * 0.1, PI * 0.9, 8, Color(1.0, 0.25, 0.2), 3.0)
+		for i in range(mini(marks.size(), 8)):
+			var mp := c + Vector2((i - minf(marks.size(), 8.0) * 0.5 + 0.5) * 8.0, -r - cell * 0.38)
+			draw_colored_polygon(PackedVector2Array([
+				mp + Vector2(0, -4), mp + Vector2(3.5, 0), mp + Vector2(0, 4), mp + Vector2(-3.5, 0)]), Color(0.8, 0.5, 1.0))
 
 	# 체력이 깎인 몬스터만 체력바 표시
 	if not preview and hp < max_hp and max_hp > 0.0:

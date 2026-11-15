@@ -16,9 +16,10 @@ var lives: int = Balance.START_LIVES
 var active := true
 var lane_visible := true
 var monsters: Array[Monster] = []
-var towers: Array[Tower] = []  # 트랩은 한 칸에 여러 개 겹칠 수 있어서 칸 단위가 아니라 목록으로 관리
+var towers: Array[Tower] = []  # 한 칸에 타워 1개
 
-var _trap_counts: Dictionary = {}  # Vector2i(셀) -> 그 칸의 트랩 수
+# 진화 스킬 레벨 (레인 전체 공유): skill_levels[계열]["A"/"B"] = 0~3. 0이면 아직 못 배움
+var skill_levels: Dictionary = {}
 
 var _grid: GridSystem
 var _renderer: GridRenderer
@@ -29,6 +30,8 @@ var _next_monster_id := 1
 
 func setup(p_player_id: int, grid: GridSystem, renderer: GridRenderer) -> void:
 	player_id = p_player_id
+	for evo in Evolutions.ORDER:
+		skill_levels[evo] = {"A": 0, "B": 0}
 	_grid = grid
 	_renderer = renderer
 	_pathfinder = Pathfinder.new(grid)
@@ -54,10 +57,6 @@ func build_tower(cell: Vector2i, kind_id: String) -> Tower:
 	_grid.set_cell_state(cell, state)
 
 	var tower := Tower.new()
-	if not kind.blocks:
-		# 트랩은 길을 막지 않으므로 같은 칸에 겹쳐 지을 수 있다
-		tower.stack_index = _trap_counts.get(cell, 0)
-		_trap_counts[cell] = tower.stack_index + 1
 	tower.setup(cell, kind, color_info, self, _renderer)
 	tower.visible = lane_visible
 	tower.z_index = 1
@@ -66,6 +65,62 @@ func build_tower(cell: Vector2i, kind_id: String) -> Tower:
 
 	Log.info(Log.Category.COLOR, "[P%d] 타워 %s 색깔 할당: %s" % [player_id + 1, cell, color_info.name])
 	return tower
+
+
+# --- 진화 / 스킬 ---
+
+func skill_level(evo: String, skill: String) -> int:
+	return int(skill_levels.get(evo, {}).get(skill, 0))
+
+
+## 타워 1기를 진화시킨다 (골드). 선택하는 순간 그 계열의 A 스킬을 배운다 (이미 배웠으면 그대로).
+func evolve_tower(tower: Tower, evo: String) -> bool:
+	if tower == null or tower.lane != self or not tower.can_evolve():
+		return false
+	if evo not in Evolutions.TREE[tower.kind.id]:
+		return false
+	if not try_spend(Balance.EVOLVE_COST, "타워 진화 %s(%s) -> %s" % [tower.cell, tower.kind.name, Evolutions.evo_name(evo)]):
+		return false
+	tower.set_evolution(evo)
+	if skill_levels[evo].A == 0:
+		skill_levels[evo].A = 1
+	Effects.ring(_renderer, tower.center_cell_pos(), 0.8, Evolutions.DATA[evo].color, lane_visible)
+	Log.info(Log.Category.TOWER, "[P%d] 타워 진화 %s: %s -> %s" % [player_id + 1, tower.cell, tower.kind.name, Evolutions.evo_name(evo)])
+	return true
+
+
+## 스킬을 한 단계 올리는 비용. 올릴 수 없으면 -1 (B는 0레벨에서 사서 배운다. A는 그 계열 타워를 진화시켜야 열린다)
+func skill_upgrade_cost(evo: String, skill: String) -> int:
+	var lv := skill_level(evo, skill)
+	if lv >= Evolutions.MAX_LEVEL or skill_level(evo, "A") <= 0:
+		return -1
+	return int(Balance.SKILL_COSTS[lv])
+
+
+func upgrade_skill(evo: String, skill: String) -> bool:
+	var cost := skill_upgrade_cost(evo, skill)
+	if cost < 0:
+		return false
+	var next := skill_level(evo, skill) + 1
+	if not try_spend(cost, "%s %s 스킬 Lv%d" % [Evolutions.evo_name(evo), Evolutions.skill_name(evo, skill), next]):
+		return false
+	skill_levels[evo][skill] = next
+	Log.info(Log.Category.TOWER, "[P%d] 스킬 업그레이드: %s %s -> Lv%d" % [
+		player_id + 1, Evolutions.evo_name(evo), Evolutions.skill_name(evo, skill), next])
+	return true
+
+
+## 사거리 안의 몬스터 중 기지에 가까운 순서로 최대 count마리 (난사형이 서로 다른 적을 노릴 때 사용)
+func find_targets(from_cell_pos: Vector2, range_cells: float, anti_air: bool, count: int) -> Array[Monster]:
+	var found: Array[Monster] = []
+	for m in monsters:
+		if m.flying == anti_air and m.cell_pos.distance_to(from_cell_pos) <= range_cells:
+			found.append(m)
+	found.sort_custom(func(a: Monster, b: Monster): return a.remaining_distance() < b.remaining_distance())
+	var picked: Array[Monster] = []
+	for i in range(mini(count, found.size())):
+		picked.append(found[i])
+	return picked
 
 
 ## 사거리 안의 몬스터 중 기지에 가장 가까운(남은 이동거리가 짧은) 몬스터
@@ -96,11 +151,6 @@ func _on_cell_changed(position: Vector2i, _old_state, new_state) -> void:
 			tower.queue_free()
 			towers.erase(tower)
 			break
-
-
-## 이 칸에 겹쳐 있는 트랩 수
-func trap_count(cell: Vector2i) -> int:
-	return _trap_counts.get(cell, 0)
 
 
 # --- 경제 ---
@@ -166,8 +216,28 @@ func spawn_wave_monster(hp_value: float, type_id: String = "grunt", level: int =
 	_next_monster_id += 1
 
 
+## 지원형 B: 표식이 걸린 적이 죽으면 근처 표식 없는 적에게 표식을 옮긴다
+func _spread_marks(monster: Monster) -> void:
+	var lv := skill_level("support", "B")
+	if lv <= 0 or monster.death_marks.is_empty():
+		return
+	var radius := Evolutions.p("support", "B", "radius", lv)
+	var count := int(Evolutions.p("support", "B", "count", lv))
+	var near: Array[Monster] = []
+	for m in monsters:
+		if m != monster and not m.is_dead() and m.flying == monster.flying and m.marks.is_empty() \
+				and m.cell_pos.distance_to(monster.cell_pos) <= radius:
+			near.append(m)
+	near.sort_custom(func(a: Monster, b: Monster): return a.cell_pos.distance_to(monster.cell_pos) < b.cell_pos.distance_to(monster.cell_pos))
+	for m in near.slice(0, count):
+		var mk: Dictionary = monster.death_marks.pick_random()
+		m.add_mark(mk.src, float(mk.dmg))
+		Effects.ring(_renderer, m.cell_pos, 0.5, Color(0.8, 0.5, 1.0), lane_visible)
+
+
 func _on_monster_died(monster: Monster) -> void:
 	monsters.erase(monster)
+	_spread_marks(monster)
 	gold += monster.reward
 	Effects.float_text(_renderer, monster.cell_pos, "+%d" % monster.reward, Color(1.0, 0.9, 0.3), lane_visible)
 	Effects.ring(_renderer, monster.cell_pos, 0.6, monster.body_color, lane_visible)

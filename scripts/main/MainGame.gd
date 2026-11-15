@@ -13,6 +13,15 @@ class_name MainGame
 # 몬스터 버튼은 monster_buttons[0]이 뒤로 가기, [1]부터 SentMonsters.ORDER 순서대로 몬스터 종류.
 
 var hud_label: Label
+var tower_info_row: HBoxContainer
+var tower_info_label: Label
+var evolve_buttons: Array[Button] = []   # 선택한 타워가 아직 진화 전이면 계열 2개 중 고르는 버튼
+var evolve_ids: Array[String] = ["", ""]
+var skill_hint_label: Label              # 업그레이드 탭에서 마우스를 올린 스킬 설명
+var upgrade_menu: HBoxContainer          # 업그레이드 탭: [←] [타워] [색깔]
+var skill_view: GridContainer            # 타워 업그레이드: 진화 계열 8개 x A/B 스킬
+var skill_buttons: Dictionary = {}       # "계열|A" -> Button
+var _hover_skill: Array = []             # [계열, A/B] 마우스가 올라간 스킬
 var tower_view: GridContainer
 var _hud_timer := 0.0
 
@@ -39,8 +48,10 @@ func setup_ui():
 		if button:
 			monster_buttons.append(button)
 
+	empty2_button.text = "업그레이드"
 	_setup_monster_buttons()
 	_create_tower_view()
+	_create_upgrade_views()
 	_create_minimaps()
 	_create_hud()
 
@@ -81,7 +92,7 @@ func _create_tower_view():
 	# 타워 배럭: 속성 2개 조합 타워 선택 (코드로 생성, 몬스터 뷰와 같은 자리를 쓴다)
 	var left_panel: Control = main_view.get_parent()
 	tower_view = GridContainer.new()
-	tower_view.columns = 6  # 뒤로 가기 + 10종 = 2줄
+	tower_view.columns = 5  # 뒤로 가기 + 기본 타워 4종
 	tower_view.visible = false
 	left_panel.add_child(tower_view)
 	tower_view.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -93,7 +104,7 @@ func _create_tower_view():
 	back.pressed.connect(_on_tower_back_pressed)
 	tower_view.add_child(back)
 
-	for kind_id in Balance.TOWER_COMBOS:
+	for kind_id in Balance.TOWER_KINDS:
 		var kind := Balance.tower_kind(kind_id)
 		var b := Button.new()
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -103,6 +114,112 @@ func _create_tower_view():
 		var icon := UnitIcon.new()
 		icon.show_tower(kind)
 		_decorate_unit_button(b, icon, kind.cost, Balance.tower_tooltip(kind))
+
+## 업그레이드 탭 (타워 / 색깔). 타워 탭에서 진화 계열 스킬을 올리면 그 계열의 모든 타워에 적용된다.
+## 색깔 탭은 아직 기획이 없어서 자리만 만들어 두었다.
+func _create_upgrade_views():
+	var left_panel: Control = main_view.get_parent()
+
+	upgrade_menu = HBoxContainer.new()
+	upgrade_menu.visible = false
+	left_panel.add_child(upgrade_menu)
+	upgrade_menu.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var back := _make_view_button("←")
+	back.pressed.connect(_show_view.bind("main"))
+	upgrade_menu.add_child(back)
+	var tower_tab := _make_view_button("타워")
+	tower_tab.pressed.connect(_show_view.bind("skills"))
+	upgrade_menu.add_child(tower_tab)
+	var color_tab := _make_view_button("색깔")
+	color_tab.disabled = true
+	color_tab.tooltip_text = "색깔별 업그레이드 (준비 중)"
+	upgrade_menu.add_child(color_tab)
+
+	# 스킬 버튼: [←] + (장거리 4, 범위 4) / (대공 4, 트랩 4) = 9칸 x 2줄
+	skill_view = GridContainer.new()
+	skill_view.columns = 9
+	skill_view.visible = false
+	left_panel.add_child(skill_view)
+	skill_view.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var skill_back := _make_view_button("←", 10)
+	skill_back.pressed.connect(_show_view.bind("upgrade"))
+	skill_view.add_child(skill_back)
+	for evo in Evolutions.ORDER:
+		for skill in ["A", "B"]:
+			var b := _make_view_button("", 9)
+			b.clip_text = true
+			b.pressed.connect(_on_skill_pressed.bind(evo, skill))
+			b.mouse_entered.connect(func(): _hover_skill = [evo, skill])
+			b.mouse_exited.connect(func(): _hover_skill = [])
+			skill_view.add_child(b)
+			skill_buttons["%s|%s" % [evo, skill]] = b
+
+
+func _make_view_button(text: String, font_size: int = 14) -> Button:
+	var b := Button.new()
+	b.text = text
+	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	b.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	b.add_theme_font_size_override("font_size", font_size)
+	return b
+
+
+## 왼쪽 패널에 보여줄 화면을 하나만 켠다: main / tower / monster / upgrade / skills
+func _show_view(view: String) -> void:
+	main_view.visible = view == "main"
+	tower_view.visible = view == "tower"
+	monster_view.visible = view == "monster"
+	upgrade_menu.visible = view == "upgrade"
+	skill_view.visible = view == "skills"
+	skill_hint_label.visible = view == "skills"
+
+
+func _on_skill_pressed(evo: String, skill: String) -> void:
+	game_field.upgrade_skill(evo, skill)
+
+
+## 스킬 버튼 글자/활성 상태/툴팁 갱신
+func _refresh_skill_buttons(lane: LaneController) -> void:
+	for evo in Evolutions.ORDER:
+		for skill in ["A", "B"]:
+			var b: Button = skill_buttons["%s|%s" % [evo, skill]]
+			var lv := lane.skill_level(evo, skill)
+			var cost := lane.skill_upgrade_cost(evo, skill)
+			var state := "Lv%d" % lv
+			if lv >= Evolutions.MAX_LEVEL:
+				state = "최대"
+			elif lv == 0 and skill == "A":
+				state = "잠김"
+			b.text = "%s%s\n%s" % [Evolutions.DATA[evo].short, skill, state]
+			b.disabled = cost < 0 or lane.gold < cost
+			b.add_theme_color_override("font_color", Evolutions.DATA[evo].color)
+			b.add_theme_color_override("font_disabled_color", Color(Evolutions.DATA[evo].color, 0.45))
+			b.tooltip_text = _skill_info_text(lane, evo, skill)
+	if _hover_skill.size() == 2:
+		skill_hint_label.text = _skill_info_text(lane, _hover_skill[0], _hover_skill[1])
+	else:
+		skill_hint_label.text = "스킬 칸에 마우스를 올리면 설명이 나옵니다. 누르면 같은 계열 모든 타워에 적용되는 업그레이드"
+
+
+func _skill_info_text(lane: LaneController, evo: String, skill: String) -> String:
+	var lv := lane.skill_level(evo, skill)
+	var head := "%s - %s %s (Lv%d/%d)" % [Evolutions.evo_name(evo), skill, Evolutions.skill_name(evo, skill), lv, Evolutions.MAX_LEVEL]
+	var lines: Array[String] = [head]
+	if lv > 0:
+		lines.append("현재: " + Evolutions.skill_text(evo, skill, lv))
+	if lv < Evolutions.MAX_LEVEL:
+		lines.append("다음 레벨: " + Evolutions.skill_text(evo, skill, lv + 1))
+		var cost := lane.skill_upgrade_cost(evo, skill)
+		if cost >= 0:
+			lines.append("비용 %d골드" % cost)
+		elif skill_level_locked(lane, evo):
+			lines.append("이 계열로 타워를 진화시켜야 열린다")
+	return "\n".join(lines)
+
+
+func skill_level_locked(lane: LaneController, evo: String) -> bool:
+	return lane.skill_level(evo, "A") <= 0
+
 
 func _create_minimaps():
 	# 오른쪽 3x3 버튼 위에 축소 레인 화면을 겹쳐 그린다 (눌러서 레인 전환하는 기능은 그대로)
@@ -151,7 +268,41 @@ func _create_hud():
 	hud_label = Label.new()
 	hud_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hud_label.add_theme_font_size_override("font_size", 12)
-	panel.add_child(hud_label)
+	var box := VBoxContainer.new()
+	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(box)
+	box.add_child(hud_label)
+
+	# 선택한 타워 정보 + 업그레이드 버튼 (타워를 선택했을 때만 보인다)
+	tower_info_row = HBoxContainer.new()
+	tower_info_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	tower_info_row.visible = false
+	box.add_child(tower_info_row)
+	tower_info_label = Label.new()
+	tower_info_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	tower_info_label.add_theme_font_size_override("font_size", 12)
+	tower_info_label.add_theme_color_override("font_color", Color(1.0, 1.0, 0.6))
+	tower_info_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	tower_info_label.custom_minimum_size = Vector2(230, 0)
+	tower_info_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tower_info_row.add_child(tower_info_label)
+	for i in range(2):
+		var eb := Button.new()
+		eb.add_theme_font_size_override("font_size", 12)
+		eb.pressed.connect(_on_evolve_pressed.bind(i))
+		tower_info_row.add_child(eb)
+		evolve_buttons.append(eb)
+	game_field.ui_blockers.append(tower_info_row)  # 버튼을 눌렀을 때 뒤의 맵이 클릭되지 않도록
+
+	skill_hint_label = Label.new()
+	skill_hint_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	skill_hint_label.visible = false
+	skill_hint_label.add_theme_font_size_override("font_size", 12)
+	skill_hint_label.add_theme_color_override("font_color", Color(0.7, 1.0, 0.8))
+	skill_hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	skill_hint_label.custom_minimum_size = Vector2(400, 0)
+	box.add_child(skill_hint_label)
+
 	add_child(panel)
 
 func _process(delta):
@@ -168,6 +319,9 @@ func _update_hud():
 	var boss: BossController = game_field.boss
 	if lane == null or boss == null:
 		return
+	_update_tower_info(lane)
+	if skill_view.visible:
+		_refresh_skill_buttons(lane)
 
 	var state_text := ""
 	match boss.state:
@@ -184,6 +338,47 @@ func _update_hud():
 		lane.gold, lane.income, Balance.INCOME_INTERVAL, ceili(lane.income_time_left()), lane.lives, lane.towers.size(), state_text,
 		selected.name, selected.cost, boss.level, BossLevels.COUNT, boss.level_data.name,
 		int(boss.hp), int(boss.max_hp), int(boss.time_left), attack_text, boss.current_wave_text]
+
+func _update_tower_info(lane: LaneController):
+	var t := game_field.get_selected_tower()
+	if t == null:
+		tower_info_row.visible = false
+		return
+	tower_info_row.visible = true
+	var title: String = t.kind.name
+	if t.evolution != "":
+		title += " · " + Evolutions.evo_name(t.evolution)
+	var text := "[%s] 한 발 %.2f / %.2f초 / 사거리 %.1f칸\n누적 피해 %.1f  킬 %d" % [
+		title, t.kind.damage, t.cur_cooldown(), t.kind.range, t.total_damage, t.kills]
+	match t.evolution:
+		"support":
+			text += "\n공격력 없음: 표식 구름을 깐다"
+		"skill":
+			text += "\n공격력 없음: 공격이 맞으면 확률로 스킬 발동"
+		"growth":
+			text += "\n치명타 %.1f%%  광란 x%d" % [t.crit_chance() * 100.0, t.haste_stacks]
+		"charge":
+			text += "\n충전 %.1f / %.0f초 (%.0f초 이상이면 발동)" % [t.charge, Evolutions.CHARGE_MAX, Evolutions.CHARGE_MIN]
+	tower_info_label.text = text
+
+	# 아직 진화 전이면 계열 2개 중 하나를 고른다 (골드). 고르는 순간 A 스킬을 배운다.
+	var can_pick := t.can_evolve()
+	var choices: Array = Evolutions.TREE[t.kind.id]
+	for i in range(evolve_buttons.size()):
+		var eb := evolve_buttons[i]
+		eb.visible = can_pick
+		if not can_pick:
+			continue
+		var evo: String = choices[i]
+		evolve_ids[i] = evo
+		eb.text = "%s 진화 (%d골드)" % [Evolutions.evo_name(evo), Balance.EVOLVE_COST]
+		eb.tooltip_text = Evolutions.tooltip(evo)
+		eb.disabled = t.lane != lane or lane.gold < Balance.EVOLVE_COST
+
+
+func _on_evolve_pressed(index: int):
+	game_field.evolve_selected_tower(evolve_ids[index])
+
 
 func connect_signals():
 	# 버튼 클릭 이벤트 연결
@@ -228,29 +423,26 @@ func reset_game():
 func _on_tower_button_pressed():
 	# 타워 배럭으로 전환
 	Log.info(Log.Category.UI, "타워 배럭 열기")
-	main_view.visible = false
-	tower_view.visible = true
+	_show_view("tower")
 
 func _on_tower_back_pressed():
-	tower_view.visible = false
-	main_view.visible = true
+	_show_view("main")
 
 func _on_tower_kind_selected(kind_id: String):
 	if game_field:
 		game_field.set_tower_kind(kind_id)
 		game_field.set_current_tool(GameField.PlacementTool.TOWER)
-	tower_view.visible = false
-	main_view.visible = true
+	_show_view("main")
 
 func _on_monster_button_pressed():
 	# 몬스터 뷰로 전환
 	Log.info(Log.Category.UI, "몬스터 배럭 열기")
-	main_view.visible = false
-	monster_view.visible = true
+	_show_view("monster")
 
 func _on_empty2_button_pressed():
-	if game_field:
-		game_field.set_current_tool(GameField.PlacementTool.NONE)
+	# 업그레이드 탭 열기 (건설 도구 취소는 마우스 우클릭)
+	Log.info(Log.Category.UI, "업그레이드 탭 열기")
+	_show_view("upgrade")
 
 # 플레이어 전환 핸들러
 func _on_player_button_pressed(player_id: int):
@@ -266,8 +458,7 @@ func _on_boss_button_pressed():
 func _on_back_button_pressed():
 	# 메인 뷰로 돌아가기
 	Log.info(Log.Category.UI, "몬스터 배럭 닫기")
-	monster_view.visible = false
-	main_view.visible = true
+	_show_view("main")
 
 # 몬스터 선택 핸들러
 func _on_monster_selected(button_index: int):
