@@ -30,6 +30,8 @@ var haste_stacks: int = 0       # 성장형 B: 광란 중첩
 var _haste_timer := 0.0
 var _shot_count := 0            # 대량 처리형 A: 몇 번째 공격인지
 
+const TRAP_ALPHA := 0.55   # 트랩(길을 막지 않는 타워)의 투명도
+
 var _renderer: GridRenderer
 var _cooldown := 0.0
 var _aim := -PI * 0.5
@@ -118,6 +120,8 @@ func _process(delta: float) -> void:
 
 	_t += delta
 	_recoil = maxf(0.0, _recoil - delta * 5.0)
+	# 트랩은 바닥에 깔린 함정이라 살짝 투명하게 (선택하면 또렷하게)
+	modulate.a = 1.0 if (kind.blocks or selected) else TRAP_ALPHA
 	position = center_cell_pos() * _renderer.CELL_SIZE
 
 	if lane.active:
