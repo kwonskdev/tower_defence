@@ -7,12 +7,20 @@ class_name SentMonsters
 ## ramp, ramp_cap: 보스 앞에 선 뒤 초당 dps가 늘어나는 양과 그 상한 (대기만성형)
 ## aura_radius, aura_bonus: 주변(칸) 몬스터의 dps를 늘려주는 지원형
 
-const ORDER := [
-	"worker", "miner", "vault", "banker",
-	"warrior", "knight", "crusher", "giant",
-	"scout", "mercenary",
-	"berserker", "rusher", "sprout",
-	"cheer", "banner",
+# 계열 색 (버튼 테두리/이름표). 같은 계열끼리 한눈에 묶여 보이도록 쓴다.
+const FAMILY_COLORS := {
+	"수입": Color(0.95, 0.8, 0.25),
+	"화력": Color(0.95, 0.35, 0.3),
+	"균형": Color(0.4, 0.75, 0.95),
+	"특수": Color(0.7, 0.45, 0.95),
+	"지원": Color(0.45, 0.9, 0.55),
+}
+
+# 몬스터 배럭 칸 배치 (9열 격자의 두 번째 칸부터: 첫 칸은 뒤로 가기). ""는 계열 사이를 띄우는 빈칸.
+# 윗줄 = 수입 4 + 화력 4 / 아랫줄 = 균형 2, 빈칸, 특수 3, 빈칸, 지원 2
+const SLOTS := [
+	"worker", "miner", "vault", "banker", "warrior", "knight", "crusher", "giant",
+	"scout", "mercenary", "", "berserker", "rusher", "sprout", "", "cheer", "banner",
 ]
 
 const DATA := {

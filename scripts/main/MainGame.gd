@@ -10,11 +10,12 @@ class_name MainGame
 @onready var empty2_button: Button = $VBoxContainer/TopUI/HBoxContainer/LeftPanel/MainView/Empty2Button
 @onready var boss_button: Button = $VBoxContainer/TopUI/HBoxContainer/RightPanel/BonusButton
 
-# 몬스터 버튼은 monster_buttons[0]이 뒤로 가기, [1]부터 SentMonsters.ORDER 순서대로 몬스터 종류.
+# 몬스터 버튼은 monster_buttons[0]이 뒤로 가기, [1]부터 SentMonsters.SLOTS 순서대로 몬스터 종류 (계열별로 묶고 사이에 빈칸).
 
 var hud_label: Label
 var tower_info_row: HBoxContainer
 var start_button: Button
+var family_frames: Control               # 몬스터 배럭의 계열 묶음 외곽선
 var tower_info_label: Label
 var evolve_buttons: Array[Button] = []   # 선택한 타워가 아직 진화 전이면 계열 2개 중 고르는 버튼
 var evolve_ids: Array[String] = ["", ""]
@@ -51,13 +52,14 @@ func setup_ui():
 
 	empty2_button.text = "업그레이드"
 	_setup_monster_buttons()
+	_create_family_frames()
 	_create_tower_view()
 	_create_upgrade_views()
 	_create_minimaps()
 	_create_hud()
 
 ## 버튼을 "실제 모습 아이콘 + 비용 + 마우스 올리면 상세 설명" 형태로 꾸민다
-func _decorate_unit_button(b: Button, icon: UnitIcon, cost: int, tooltip: String):
+func _decorate_unit_button(b: Button, icon: UnitIcon, cost: int, tooltip: String, tag: String = "", tag_color: Color = Color.WHITE):
 	b.text = ""
 	b.tooltip_text = tooltip
 	b.clip_contents = true
@@ -76,18 +78,95 @@ func _decorate_unit_button(b: Button, icon: UnitIcon, cost: int, tooltip: String
 	b.add_child(cost_label)
 	cost_label.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
 
+	if tag != "":  # 계열 이름표 (왼쪽 위)
+		var tag_label := Label.new()
+		tag_label.text = tag
+		tag_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		tag_label.add_theme_font_size_override("font_size", 9)
+		tag_label.add_theme_color_override("font_color", tag_color)
+		tag_label.add_theme_color_override("font_outline_color", Color(0, 0, 0))
+		tag_label.add_theme_constant_override("outline_size", 3)
+		b.add_child(tag_label)
+		tag_label.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
+		tag_label.position += Vector2(3, 0)  # 테두리에 붙지 않게 살짝 안쪽으로
+
+## 몬스터 배럭: 계열(수입/화력/균형/특수/지원)별로 색 테두리 + 이름표를 달고, 계열 사이는 빈칸으로 띄운다
 func _setup_monster_buttons():
 	for i in range(1, monster_buttons.size()):
 		var b := monster_buttons[i]
-		var order_idx := i - 1
-		if order_idx >= SentMonsters.ORDER.size():
-			b.text = ""
-			b.disabled = true  # 아직 비어 있는 칸
+		var slot_idx := i - 1
+		if slot_idx >= SentMonsters.SLOTS.size():
+			b.visible = false  # 쓰지 않는 칸은 숨겨서 격자가 두 줄로 커진다
 			continue
-		var kind_id: String = SentMonsters.ORDER[order_idx]
+		var kind_id: String = SentMonsters.SLOTS[slot_idx]
+		if kind_id == "":
+			b.text = ""
+			b.flat = true  # 계열 사이 빈칸 (보이지 않고 눌리지도 않는다)
+			b.disabled = true
+			b.focus_mode = Control.FOCUS_NONE
+			continue
+		var data: Dictionary = SentMonsters.DATA[kind_id]
+		var fam_color: Color = SentMonsters.FAMILY_COLORS[data.family]
 		var icon := UnitIcon.new()
 		icon.show_monster(kind_id)
-		_decorate_unit_button(b, icon, SentMonsters.DATA[kind_id].cost, SentMonsters.tooltip(kind_id))
+		_decorate_unit_button(b, icon, data.cost, SentMonsters.tooltip(kind_id), data.family, fam_color)
+		_apply_family_style(b, fam_color)
+
+
+## 계열 묶음마다 굵은 외곽선 프레임을 씌운다 (버튼 격자 위에 겹쳐 그리는 안 눌리는 레이어)
+func _create_family_frames() -> void:
+	var left_panel: Control = main_view.get_parent()
+	var frames := FamilyFrames.new()
+	family_frames = frames
+	frames.visible = false
+	left_panel.add_child(frames)
+	frames.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	# 칸 배치(SLOTS)에서 같은 계열이 이어진 구간을 한 묶음으로 본다
+	var run_family := ""
+	var run_buttons: Array[Button] = []
+	for i in range(SentMonsters.SLOTS.size() + 1):
+		var kind_id: String = SentMonsters.SLOTS[i] if i < SentMonsters.SLOTS.size() else ""
+		var fam: String = SentMonsters.DATA[kind_id].family if kind_id != "" else ""
+		if fam != run_family and not run_buttons.is_empty():
+			frames.groups.append({"buttons": run_buttons, "color": SentMonsters.FAMILY_COLORS[run_family]})
+			run_buttons = []
+		run_family = fam
+		if fam != "":
+			run_buttons.append(monster_buttons[i + 1])
+
+
+## 버튼 격자 위에 계열 묶음 외곽선만 그린다
+class FamilyFrames extends Control:
+	var groups: Array = []  # [{buttons: Array[Button], color: Color}]
+
+	func _init() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		z_index = 50
+
+	func _process(_delta: float) -> void:
+		if visible:
+			queue_redraw()  # 격자가 배치된 뒤의 버튼 위치를 따라간다
+
+	func _draw() -> void:
+		for g in groups:
+			var rect := Rect2()
+			var first := true
+			for b in g.buttons:
+				var r := Rect2(b.global_position - global_position, b.size)
+				rect = r if first else rect.merge(r)
+				first = false
+			draw_rect(rect.grow(1.0), g.color, false, 3.0)
+
+
+func _apply_family_style(b: Button, fam_color: Color) -> void:
+	for state in ["normal", "hover", "pressed", "disabled"]:
+		var sb := StyleBoxFlat.new()
+		var lift := 0.0 if state == "normal" else (0.12 if state == "hover" else (0.2 if state == "pressed" else -0.05))
+		sb.bg_color = Color(fam_color.r * 0.2 + lift, fam_color.g * 0.2 + lift, fam_color.b * 0.2 + lift, 1.0)
+		sb.border_color = Color(fam_color, 0.5)  # 버튼 테두리는 옅게 (계열 묶음 외곽선이 더 굵고 진하다)
+		sb.set_border_width_all(1)
+		sb.set_corner_radius_all(4)
+		b.add_theme_stylebox_override(state, sb)
 
 func _create_tower_view():
 	# 타워 배럭: 속성 2개 조합 타워 선택 (코드로 생성, 몬스터 뷰와 같은 자리를 쓴다)
@@ -170,6 +249,7 @@ func _show_view(view: String) -> void:
 	main_view.visible = view == "main"
 	tower_view.visible = view == "tower"
 	monster_view.visible = view == "monster"
+	family_frames.visible = view == "monster"
 	upgrade_menu.visible = view == "upgrade"
 	skill_view.visible = view == "skills"
 	skill_hint_label.visible = view == "skills"
@@ -341,7 +421,7 @@ func _update_hud():
 
 	var state_text := ""
 	match boss.state:
-		BossController.State.WAITING: state_text = "  [시작 대기: 시작 버튼을 누르면 모든 레인이 동시에 시작]"
+		BossController.State.WAITING: state_text = "  [시작 대기]"
 		BossController.State.VICTORY: state_text = "  [전체 승리!]"
 		BossController.State.DEFEAT: state_text = "  [패배]"
 	var selected := Balance.tower_kind(game_field.selected_tower_kind)
@@ -479,10 +559,9 @@ func _on_back_button_pressed():
 
 # 몬스터 선택 핸들러
 func _on_monster_selected(button_index: int):
-	var order_idx := button_index - 1
-	if order_idx < 0 or order_idx >= SentMonsters.ORDER.size():
-		Log.info(Log.Category.UI, "몬스터 M%d 선택 (미구현)" % (button_index + 1))
-		return
-	var kind_id: String = SentMonsters.ORDER[order_idx]
+	var slot_idx := button_index - 1
+	if slot_idx < 0 or slot_idx >= SentMonsters.SLOTS.size() or SentMonsters.SLOTS[slot_idx] == "":
+		return  # 쓰지 않는 칸 / 계열 사이 빈칸
+	var kind_id: String = SentMonsters.SLOTS[slot_idx]
 	Log.info(Log.Category.UI, "몬스터 생산 요청: %s" % kind_id)
 	game_field.send_monster(kind_id)
