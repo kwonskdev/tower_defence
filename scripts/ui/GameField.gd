@@ -193,10 +193,16 @@ func evolve_selected_tower(evo: String) -> bool:
 	return lane != null and lane.evolve_tower(get_selected_tower(), evo)
 
 
-## 업그레이드 탭: 진화 스킬 레벨을 올린다 (같은 계열의 모든 타워에 적용)
-func upgrade_skill(evo: String, skill: String) -> bool:
+## 업그레이드 탭: 진화 항목 레벨을 올린다 (같은 계열의 모든 타워에 적용)
+func upgrade_stat(evo: String, skill: String, key: String) -> bool:
 	var lane: LaneController = lanes.get(local_player_id)
-	return lane != null and lane.upgrade_skill(evo, skill)
+	return lane != null and lane.upgrade_stat(evo, skill, key)
+
+
+## 업그레이드 탭: B 스킬 배우기
+func learn_skill(evo: String) -> bool:
+	var lane: LaneController = lanes.get(local_player_id)
+	return lane != null and lane.learn_skill(evo)
 
 func get_current_grid_system() -> GridSystem:
 	return grid_systems[current_player_id]

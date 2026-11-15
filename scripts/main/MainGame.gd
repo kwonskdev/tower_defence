@@ -19,11 +19,14 @@ var family_frames: Control               # 몬스터 배럭의 계열 묶음 외
 var tower_info_label: Label
 var evolve_buttons: Array[Button] = []   # 선택한 타워가 아직 진화 전이면 계열 2개 중 고르는 버튼
 var evolve_ids: Array[String] = ["", ""]
-var skill_hint_label: Label              # 업그레이드 탭에서 마우스를 올린 스킬 설명
+var skill_hint_label: Label              # 업그레이드 탭에서 마우스를 올린 항목의 설명
 var upgrade_menu: HBoxContainer          # 업그레이드 탭: [←] [타워] [색깔]
-var skill_view: GridContainer            # 타워 업그레이드: 진화 계열 8개 x A/B 스킬
-var skill_buttons: Dictionary = {}       # "계열|A" -> Button
-var _hover_skill: Array = []             # [계열, A/B] 마우스가 올라간 스킬
+var evo_view: GridContainer              # 타워 업그레이드 1단계: 진화 계열 8개 중 고르기
+var evo_buttons: Dictionary = {}         # 계열 -> Button
+var detail_view: GridContainer           # 타워 업그레이드 2단계: 고른 계열의 업그레이드 항목들
+var _detail_evo := ""                    # 지금 보고 있는 계열
+var _detail_items: Array = []            # [{btn, kind: "stat"/"learn", stat: Dictionary}]
+var _hover: Array = []                   # 마우스가 올라간 항목: [계열, 종류("evo"/"stat"/"learn"), 스킬, 키]
 var tower_view: GridContainer
 var _hud_timer := 0.0
 
@@ -195,8 +198,9 @@ func _create_tower_view():
 		icon.show_tower(kind)
 		_decorate_unit_button(b, icon, kind.cost, Balance.tower_tooltip(kind))
 
-## 업그레이드 탭 (타워 / 색깔). 타워 탭에서 진화 계열 스킬을 올리면 그 계열의 모든 타워에 적용된다.
-## 색깔 탭은 아직 기획이 없어서 자리만 만들어 두었다.
+## 업그레이드 탭 (타워 / 색깔).
+## 타워 탭: 진화 계열 8개 중 하나를 고르면 그 계열의 업그레이드 항목(관통 수, 독 피해 ...)이 나오고,
+## 항목을 올리면 그 계열로 진화한 모든 타워가 강해진다. 색깔 탭은 아직 기획이 없어서 자리만 만들어 두었다.
 func _create_upgrade_views():
 	var left_panel: Control = main_view.get_parent()
 
@@ -208,31 +212,37 @@ func _create_upgrade_views():
 	back.pressed.connect(_show_view.bind("main"))
 	upgrade_menu.add_child(back)
 	var tower_tab := _make_view_button("타워")
-	tower_tab.pressed.connect(_show_view.bind("skills"))
+	tower_tab.pressed.connect(_show_view.bind("evos"))
 	upgrade_menu.add_child(tower_tab)
 	var color_tab := _make_view_button("색깔")
 	color_tab.disabled = true
 	color_tab.tooltip_text = "색깔별 업그레이드 (준비 중)"
 	upgrade_menu.add_child(color_tab)
 
-	# 스킬 버튼: [←] + (장거리 4, 범위 4) / (대공 4, 트랩 4) = 9칸 x 2줄
-	skill_view = GridContainer.new()
-	skill_view.columns = 9
-	skill_view.visible = false
-	left_panel.add_child(skill_view)
-	skill_view.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	var skill_back := _make_view_button("←", 10)
-	skill_back.pressed.connect(_show_view.bind("upgrade"))
-	skill_view.add_child(skill_back)
+	# 1단계: [←] + 진화 계열 8개 = 9칸 한 줄
+	evo_view = GridContainer.new()
+	evo_view.columns = 9
+	evo_view.visible = false
+	left_panel.add_child(evo_view)
+	evo_view.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var evo_back := _make_view_button("←", 12)
+	evo_back.pressed.connect(_show_view.bind("upgrade"))
+	evo_view.add_child(evo_back)
 	for evo in Evolutions.ORDER:
-		for skill in ["A", "B"]:
-			var b := _make_view_button("", 9)
-			b.clip_text = true
-			b.pressed.connect(_on_skill_pressed.bind(evo, skill))
-			b.mouse_entered.connect(func(): _hover_skill = [evo, skill])
-			b.mouse_exited.connect(func(): _hover_skill = [])
-			skill_view.add_child(b)
-			skill_buttons["%s|%s" % [evo, skill]] = b
+		var eb := _make_view_button("", 10)
+		eb.add_theme_color_override("font_color", Evolutions.DATA[evo].color)
+		eb.pressed.connect(_open_evo_detail.bind(evo))
+		eb.mouse_entered.connect(func(): _hover = [evo, "evo", "", ""])
+		eb.mouse_exited.connect(func(): _hover = [])
+		evo_view.add_child(eb)
+		evo_buttons[evo] = eb
+
+	# 2단계: 항목 버튼 (계열마다 항목이 달라서 열 때마다 새로 만든다)
+	detail_view = GridContainer.new()
+	detail_view.columns = 4
+	detail_view.visible = false
+	left_panel.add_child(detail_view)
+	detail_view.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
 
 func _make_view_button(text: String, font_size: int = 14) -> Button:
@@ -244,62 +254,121 @@ func _make_view_button(text: String, font_size: int = 14) -> Button:
 	return b
 
 
-## 왼쪽 패널에 보여줄 화면을 하나만 켠다: main / tower / monster / upgrade / skills
+## 왼쪽 패널에 보여줄 화면을 하나만 켠다: main / tower / monster / upgrade / evos / detail
 func _show_view(view: String) -> void:
 	main_view.visible = view == "main"
 	tower_view.visible = view == "tower"
 	monster_view.visible = view == "monster"
 	family_frames.visible = view == "monster"
 	upgrade_menu.visible = view == "upgrade"
-	skill_view.visible = view == "skills"
-	skill_hint_label.visible = view == "skills"
+	evo_view.visible = view == "evos"
+	detail_view.visible = view == "detail"
+	skill_hint_label.visible = view == "evos" or view == "detail"
+	_hover = []
 
 
-func _on_skill_pressed(evo: String, skill: String) -> void:
-	game_field.upgrade_skill(evo, skill)
+## 고른 계열의 업그레이드 항목 화면을 만든다: [←] + A 항목들 + [B 배우기] + B 항목들
+func _open_evo_detail(evo: String) -> void:
+	_detail_evo = evo
+	_detail_items.clear()
+	for c in detail_view.get_children():
+		detail_view.remove_child(c)
+		c.queue_free()
+	var color: Color = Evolutions.DATA[evo].color
+
+	var back := _make_view_button("←", 12)
+	back.pressed.connect(_show_view.bind("evos"))
+	detail_view.add_child(back)
+
+	var learn_added := false
+	for stat in Evolutions.STATS[evo]:
+		if stat.s == "B" and not learn_added:
+			learn_added = true
+			_add_detail_button(evo, "learn", {"s": "B", "k": ""}, color)
+		_add_detail_button(evo, "stat", stat, color)
+	_show_view("detail")
+	_refresh_now()
 
 
-## 스킬 버튼 글자/활성 상태/툴팁 갱신
-func _refresh_skill_buttons(lane: LaneController) -> void:
-	for evo in Evolutions.ORDER:
-		for skill in ["A", "B"]:
-			var b: Button = skill_buttons["%s|%s" % [evo, skill]]
-			var lv := lane.skill_level(evo, skill)
-			var cost := lane.skill_upgrade_cost(evo, skill)
-			var state := "Lv%d" % lv
-			if lv >= Evolutions.MAX_LEVEL:
-				state = "최대"
-			elif lv == 0 and skill == "A":
-				state = "잠김"
-			b.text = "%s%s\n%s" % [Evolutions.DATA[evo].short, skill, state]
-			b.disabled = cost < 0 or lane.gold < cost
-			b.add_theme_color_override("font_color", Evolutions.DATA[evo].color)
-			b.add_theme_color_override("font_disabled_color", Color(Evolutions.DATA[evo].color, 0.45))
-			b.tooltip_text = _skill_info_text(lane, evo, skill)
-	if _hover_skill.size() == 2:
-		skill_hint_label.text = _skill_info_text(lane, _hover_skill[0], _hover_skill[1])
+func _add_detail_button(evo: String, kind: String, stat: Dictionary, color: Color) -> void:
+	var b := _make_view_button("", 10)
+	b.add_theme_color_override("font_color", color)
+	b.add_theme_color_override("font_disabled_color", Color(color, 0.55))
+	if kind == "learn":
+		b.pressed.connect(_on_learn_pressed.bind(evo))
 	else:
-		skill_hint_label.text = "스킬 칸에 마우스를 올리면 설명이 나옵니다. 누르면 같은 계열 모든 타워에 적용되는 업그레이드"
+		b.pressed.connect(_on_stat_pressed.bind(evo, stat.s, stat.k))
+	b.mouse_entered.connect(func(): _hover = [evo, kind, stat.s, stat.k])
+	b.mouse_exited.connect(func(): _hover = [])
+	detail_view.add_child(b)
+	_detail_items.append({"btn": b, "kind": kind, "stat": stat})
 
 
-func _skill_info_text(lane: LaneController, evo: String, skill: String) -> String:
-	var lv := lane.skill_level(evo, skill)
-	var head := "%s - %s %s (Lv%d/%d)" % [Evolutions.evo_name(evo), skill, Evolutions.skill_name(evo, skill), lv, Evolutions.MAX_LEVEL]
-	var lines: Array[String] = [head]
-	if lv > 0:
-		lines.append("현재: " + Evolutions.skill_text(evo, skill, lv))
-	if lv < Evolutions.MAX_LEVEL:
-		lines.append("다음 레벨: " + Evolutions.skill_text(evo, skill, lv + 1))
-		var cost := lane.skill_upgrade_cost(evo, skill)
-		if cost >= 0:
-			lines.append("비용 %d골드" % cost)
-		elif skill_level_locked(lane, evo):
-			lines.append("이 계열로 타워를 진화시켜야 열린다")
-	return "\n".join(lines)
+func _on_stat_pressed(evo: String, skill: String, key: String) -> void:
+	game_field.upgrade_stat(evo, skill, key)
+	_refresh_now()
 
 
-func skill_level_locked(lane: LaneController, evo: String) -> bool:
-	return lane.skill_level(evo, "A") <= 0
+func _on_learn_pressed(evo: String) -> void:
+	game_field.learn_skill(evo)
+	_refresh_now()
+
+
+func _refresh_now() -> void:
+	var lane: LaneController = game_field.lanes.get(game_field.local_player_id)
+	if lane:
+		_refresh_upgrade_views(lane)
+
+
+## 업그레이드 화면 글자/활성 상태/설명 갱신
+func _refresh_upgrade_views(lane: LaneController) -> void:
+	if evo_view.visible:
+		for evo in Evolutions.ORDER:
+			var d: Dictionary = Evolutions.DATA[evo]
+			var learned := "  B✔" if lane.has_skill(evo, "B") else ""
+			evo_buttons[evo].text = "%s\n%s%s" % [d.short, Balance.TOWER_DEFS[d.tower].name, learned]
+	if detail_view.visible and _detail_evo != "":
+		var evo := _detail_evo
+		for item in _detail_items:
+			var b: Button = item.btn
+			var stat: Dictionary = item.stat
+			if item.kind == "learn":
+				var lc := lane.learn_cost(evo)
+				if lc < 0:
+					b.text = "B %s\n배움 ✔" % Evolutions.skill_name(evo, "B")
+					b.disabled = true
+				else:
+					b.text = "B %s\n배우기 %d골드" % [Evolutions.skill_name(evo, "B"), lc]
+					b.disabled = lane.gold < lc
+				continue
+			var lv := lane.stat_level(evo, stat.s, stat.k)
+			var cost := lane.stat_upgrade_cost(evo, stat.s, stat.k)
+			var third := ""
+			if lv >= Evolutions.MAX_LEVEL:
+				third = "최대"
+			elif stat.s == "B" and not lane.has_skill(evo, "B"):
+				third = "B를 먼저 배우기"
+			else:
+				third = "→ %s  %d골드" % [Evolutions.stat_value_text(evo, stat, lv + 1), cost]
+			b.text = "%s %s\nLv%d  %s\n%s" % [stat.s, stat.name, lv, Evolutions.stat_value_text(evo, stat, lv), third]
+			b.disabled = cost < 0 or lane.gold < cost
+	skill_hint_label.text = _hover_text(lane)
+
+
+func _hover_text(lane: LaneController) -> String:
+	if _hover.size() == 4:
+		var evo: String = _hover[0]
+		match _hover[1]:
+			"evo":
+				return Evolutions.tooltip(evo)
+			"learn":
+				return "B %s 배우기 (%d골드): %s" % [Evolutions.skill_name(evo, "B"),
+					maxi(lane.learn_cost(evo), 0), Evolutions.skill_text(evo, "B", lane.levels_of(evo))]
+			"stat":
+				return "%s - %s: %s" % [Evolutions.evo_name(evo), _hover[2], Evolutions.skill_text(evo, _hover[2], lane.levels_of(evo))]
+	if detail_view.visible:
+		return "항목을 누르면 %s로 진화한 모든 타워가 강해집니다. 마우스를 올리면 설명." % Evolutions.evo_name(_detail_evo)
+	return "계열을 고르면 그 계열의 업그레이드 항목이 나옵니다. 마우스를 올리면 설명."
 
 
 func _create_minimaps():
@@ -416,8 +485,8 @@ func _update_hud():
 	if lane == null or boss == null:
 		return
 	_update_tower_info(lane)
-	if skill_view.visible:
-		_refresh_skill_buttons(lane)
+	if evo_view.visible or detail_view.visible:
+		_refresh_upgrade_views(lane)
 
 	var state_text := ""
 	match boss.state:
@@ -455,7 +524,7 @@ func _update_tower_info(lane: LaneController):
 		"growth":
 			text += "\n치명타 %.1f%%  광란 x%d" % [t.crit_chance() * 100.0, t.haste_stacks]
 		"charge":
-			text += "\n충전 %.1f / %.0f초 (%.0f초 이상이면 발동)" % [t.charge, Evolutions.CHARGE_MAX, Evolutions.CHARGE_MIN]
+			text += "\n충전 %.1f / %.0f초 (%.0f초 이상이면 발동)" % [t.charge, t.charge_max(), Evolutions.CHARGE_MIN]
 	tower_info_label.text = text
 
 	# 아직 진화 전이면 계열 2개 중 하나를 고른다 (골드). 고르는 순간 A 스킬을 배운다.

@@ -18,8 +18,9 @@ var lane_visible := true
 var monsters: Array[Monster] = []
 var towers: Array[Tower] = []  # 한 칸에 타워 1개
 
-# 진화 스킬 레벨 (레인 전체 공유): skill_levels[계열]["A"/"B"] = 0~3. 0이면 아직 못 배움
-var skill_levels: Dictionary = {}
+# 진화 업그레이드 (레인 전체 공유, 같은 계열의 모든 타워에 적용)
+var b_learned: Dictionary = {}   # 계열 -> B 스킬을 배웠는가
+var stat_levels: Dictionary = {} # "계열.스킬.키" -> 레벨 1~3 (없으면 1)
 
 var _grid: GridSystem
 var _renderer: GridRenderer
@@ -30,8 +31,6 @@ var _next_monster_id := 1
 
 func setup(p_player_id: int, grid: GridSystem, renderer: GridRenderer) -> void:
 	player_id = p_player_id
-	for evo in Evolutions.ORDER:
-		skill_levels[evo] = {"A": 0, "B": 0}
 	_grid = grid
 	_renderer = renderer
 	_pathfinder = Pathfinder.new(grid)
@@ -72,13 +71,28 @@ func build_tower(cell: Vector2i, kind_id: String) -> Tower:
 	return tower
 
 
-# --- 진화 / 스킬 ---
+# --- 진화 / 업그레이드 ---
 
-func skill_level(evo: String, skill: String) -> int:
-	return int(skill_levels.get(evo, {}).get(skill, 0))
+## B 스킬을 배웠는가 (A 스킬은 진화한 타워에 처음부터 붙어 있다)
+func has_skill(evo: String, skill: String) -> bool:
+	return skill == "A" or bool(b_learned.get(evo, false))
 
 
-## 타워 1기를 진화시킨다 (골드). 선택하는 순간 그 계열의 A 스킬을 배운다 (이미 배웠으면 그대로).
+## 업그레이드 항목 하나의 현재 레벨 (1~3). 안 올렸으면 1.
+func stat_level(evo: String, skill: String, key: String) -> int:
+	return int(stat_levels.get("%s.%s.%s" % [evo, skill, key], 1))
+
+
+## 설명 문구용: 이 계열의 항목별 레벨 {"A.count": 2, ...}
+func levels_of(evo: String) -> Dictionary:
+	var levels := {}
+	for skill in ["A", "B"]:
+		for key in Evolutions.PARAMS[evo][skill]:
+			levels["%s.%s" % [skill, key]] = stat_level(evo, skill, key)
+	return levels
+
+
+## 타워 1기를 진화시킨다 (골드). 같은 기본 타워가 가진 계열 2개 중 하나를 고르며, 한 번 고르면 바꿀 수 없다.
 func evolve_tower(tower: Tower, evo: String) -> bool:
 	if tower == null or tower.lane != self or not tower.can_evolve():
 		return false
@@ -87,31 +101,46 @@ func evolve_tower(tower: Tower, evo: String) -> bool:
 	if not try_spend(Balance.EVOLVE_COST, "타워 진화 %s(%s) -> %s" % [tower.cell, tower.kind.name, Evolutions.evo_name(evo)]):
 		return false
 	tower.set_evolution(evo)
-	if skill_levels[evo].A == 0:
-		skill_levels[evo].A = 1
 	Effects.ring(_renderer, tower.center_cell_pos(), 0.8, Evolutions.DATA[evo].color, lane_visible)
 	Log.info(Log.Category.TOWER, "[P%d] 타워 진화 %s: %s -> %s" % [player_id + 1, tower.cell, tower.kind.name, Evolutions.evo_name(evo)])
 	return true
 
 
-## 스킬을 한 단계 올리는 비용. 올릴 수 없으면 -1 (B는 0레벨에서 사서 배운다. A는 그 계열 타워를 진화시켜야 열린다)
-func skill_upgrade_cost(evo: String, skill: String) -> int:
-	var lv := skill_level(evo, skill)
-	if lv >= Evolutions.MAX_LEVEL or skill_level(evo, "A") <= 0:
-		return -1
-	return int(Balance.SKILL_COSTS[lv])
+## B 스킬을 배우는 비용. 이미 배웠으면 -1.
+func learn_cost(evo: String) -> int:
+	return -1 if has_skill(evo, "B") else Balance.SKILL_LEARN_COST
 
 
-func upgrade_skill(evo: String, skill: String) -> bool:
-	var cost := skill_upgrade_cost(evo, skill)
+## 업그레이드 탭: 이 계열의 B 스킬을 배운다 (계열의 모든 타워에 붙는다)
+func learn_skill(evo: String) -> bool:
+	var cost := learn_cost(evo)
 	if cost < 0:
 		return false
-	var next := skill_level(evo, skill) + 1
-	if not try_spend(cost, "%s %s 스킬 Lv%d" % [Evolutions.evo_name(evo), Evolutions.skill_name(evo, skill), next]):
+	if not try_spend(cost, "%s %s 배우기" % [Evolutions.evo_name(evo), Evolutions.skill_name(evo, "B")]):
 		return false
-	skill_levels[evo][skill] = next
-	Log.info(Log.Category.TOWER, "[P%d] 스킬 업그레이드: %s %s -> Lv%d" % [
-		player_id + 1, Evolutions.evo_name(evo), Evolutions.skill_name(evo, skill), next])
+	b_learned[evo] = true
+	Log.info(Log.Category.TOWER, "[P%d] B 스킬 습득: %s %s" % [player_id + 1, Evolutions.evo_name(evo), Evolutions.skill_name(evo, "B")])
+	return true
+
+
+## 항목 레벨을 한 단계 올리는 비용. 올릴 수 없으면 -1 (최대 레벨이거나, 아직 안 배운 B 스킬의 항목)
+func stat_upgrade_cost(evo: String, skill: String, key: String) -> int:
+	var lv := stat_level(evo, skill, key)
+	if lv >= Evolutions.MAX_LEVEL or not has_skill(evo, skill):
+		return -1
+	return int(Balance.STAT_UPGRADE_COSTS[lv - 1])
+
+
+## 업그레이드 탭: 항목 하나를 올린다. 그 계열로 진화한 모든 타워가 바로 강해진다.
+func upgrade_stat(evo: String, skill: String, key: String) -> bool:
+	var cost := stat_upgrade_cost(evo, skill, key)
+	if cost < 0:
+		return false
+	var next := stat_level(evo, skill, key) + 1
+	if not try_spend(cost, "%s %s Lv%d" % [Evolutions.evo_name(evo), key, next]):
+		return false
+	stat_levels["%s.%s.%s" % [evo, skill, key]] = next
+	Log.info(Log.Category.TOWER, "[P%d] 업그레이드: %s %s.%s -> Lv%d" % [player_id + 1, Evolutions.evo_name(evo), skill, key, next])
 	return true
 
 
@@ -230,11 +259,10 @@ func spawn_wave_monster(hp_value: float, type_id: String = "grunt", level: int =
 
 ## 지원형 B: 표식이 걸린 적이 죽으면 근처 표식 없는 적에게 표식을 옮긴다
 func _spread_marks(monster: Monster) -> void:
-	var lv := skill_level("support", "B")
-	if lv <= 0 or monster.death_marks.is_empty():
+	if not has_skill("support", "B") or monster.death_marks.is_empty():
 		return
-	var radius := Evolutions.p("support", "B", "radius", lv)
-	var count := int(Evolutions.p("support", "B", "count", lv))
+	var radius := Evolutions.p("support", "B", "radius", stat_level("support", "B", "radius"))
+	var count := int(Evolutions.p("support", "B", "count", stat_level("support", "B", "count")))
 	var near: Array[Monster] = []
 	for m in monsters:
 		if m != monster and not m.is_dead() and m.flying == monster.flying and m.marks.is_empty() \

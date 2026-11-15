@@ -3,7 +3,7 @@ class_name Tower
 ## 타워 1기. 사거리 안에서 기지에 가장 가까운 몬스터를 조준해 공격한다.
 ## - 기본 4종: 장거리 / 범위 / 대공 / 트랩. 대공 타워는 공중 몬스터만, 그 외 타워는 지상 몬스터만 공격한다.
 ## - 지은 뒤 진화 계열(evolution)을 하나 고르면 그 계열의 스킬이 붙는다 (Evolutions.gd).
-##   스킬 레벨은 레인 전체가 공유한다 (LaneController.skill_level).
+##   항목 레벨은 레인 전체가 공유한다 (LaneController.stat_level).
 ## 외형: 바닥판 테두리 = 랜덤 배정된 색깔, 포신 모양 = 기본 종류, 오른쪽 아래 마름모 = 진화 계열 색.
 ## preview=true이면 아이콘용 미리보기: 가만히 서 있다 (선택창이 산만하지 않도록 아무것도 움직이지 않는다).
 
@@ -52,7 +52,7 @@ func center_cell_pos() -> Vector2:
 	return Vector2(cell) + Vector2(0.5, 0.5)
 
 
-## 진화 계열을 정한다 (골드 처리와 A 스킬 습득은 LaneController.evolve_tower가 한다)
+## 진화 계열을 정한다 (골드 처리는 LaneController.evolve_tower가 한다)
 func set_evolution(evo: String) -> void:
 	evolution = evo
 	charge = 0.0
@@ -77,13 +77,14 @@ func record_kill() -> void:
 
 # --- 스킬 수치 ---
 
-## 이 타워 계열의 스킬 레벨 (0 = 안 배움)
-func skill_lv(skill: String) -> int:
-	return lane.skill_level(evolution, skill) if evolution != "" and lane != null else 0
+## 이 타워가 그 스킬을 쓸 수 있는가 (A는 진화하면 바로, B는 업그레이드 탭에서 배워야 한다)
+func has_skill(skill: String) -> bool:
+	return evolution != "" and lane != null and lane.has_skill(evolution, skill)
 
 
+## 스킬 수치 하나. 업그레이드 탭에서 올린 항목 레벨이 반영된다 (레인 전체 공유).
 func _p(skill: String, key: String) -> float:
-	return Evolutions.p(evolution, skill, key, skill_lv(skill))
+	return Evolutions.p(evolution, skill, key, lane.stat_level(evolution, skill, key))
 
 
 func evo_color() -> Color:
@@ -98,7 +99,7 @@ func cur_damage() -> float:
 ## 다음 공격까지의 시간 (광란 중첩만큼 빨라진다)
 func cur_cooldown() -> float:
 	var cd: float = Evolutions.COOLDOWN.get(evolution, kind.cooldown)
-	if evolution == "growth" and haste_stacks > 0 and skill_lv("B") > 0:
+	if evolution == "growth" and haste_stacks > 0 and has_skill("B"):
 		cd /= 1.0 + haste_stacks * _p("B", "haste")
 	return cd
 
@@ -110,8 +111,13 @@ func crit_chance() -> float:
 	return minf(_p("A", "cap"), Evolutions.CRIT_BASE + _p("A", "per_kill") * kills)
 
 
+## 충전형이 모을 수 있는 최대 충전량 ("충전 상한" 업그레이드)
+func charge_max() -> float:
+	return _p("A", "cap") if evolution == "charge" else Evolutions.CHARGE_MIN
+
+
 func charge_ratio() -> float:
-	return clampf(charge / Evolutions.CHARGE_MAX, 0.0, 1.0)
+	return clampf(charge / charge_max(), 0.0, 1.0)
 
 
 func _process(delta: float) -> void:
@@ -153,7 +159,7 @@ func _fire(target: Monster) -> void:
 			_fire_cloud(target)
 		"barrage":
 			_fire_volley(target)
-			# 연속 발사: 확률로 한 번 더
+			# 연속 발사: 확률로 한 번 더 (위력은 "연발 위력" 항목)
 			if randf() < _p("A", "chance"):
 				_second_volley()
 		_:
@@ -161,18 +167,18 @@ func _fire(target: Monster) -> void:
 
 
 ## 투사체 1발 (진화 계열에 따라 피해/효과가 붙는다)
-func _shoot(target: Monster) -> void:
-	var dmg: float = cur_damage()
+func _shoot(target: Monster, power: float = 1.0) -> void:
+	var dmg: float = cur_damage() * power
 	var fx := {}
 	match evolution:
 		"pierce":
 			fx.pierce = int(_p("A", "count"))
 			fx.falloff = _p("A", "falloff")
-			if skill_lv("B") > 0:
+			if has_skill("B"):
 				fx.poison = {"dps": _p("B", "dps"), "time": _p("B", "time")}
 		"boss":
 			fx.armor_break = {"chance": _p("A", "chance"), "time": _p("A", "time")}
-			if skill_lv("B") > 0:
+			if has_skill("B"):
 				fx.execute = {"chance": _p("B", "chance"), "hp": _p("B", "hp")}
 		"mass":
 			_shot_count += 1
@@ -180,18 +186,18 @@ func _shoot(target: Monster) -> void:
 				_shot_count = 0
 				dmg *= _p("A", "mult")  # N번에 한 번 더 강한 공격
 				Effects.float_text(_renderer, center_cell_pos(), "강타!", evo_color(), lane.lane_visible)
-			if skill_lv("B") > 0:
+			if has_skill("B"):
 				fx.center = {"radius": _p("B", "radius"), "mult": _p("B", "mult")}
 		"skill":
 			dmg = 0.0  # 스킬형은 공격력이 없다. 공격이 맞을 때 확률로 스킬만 터진다
 			fx.snare = {"chance": _p("A", "chance"), "radius": _p("A", "radius"), "slow": _p("A", "slow"), "time": _p("A", "time")}
-			if skill_lv("B") > 0:
+			if has_skill("B"):
 				fx.capture = {"chance": _p("B", "chance"), "time": _p("B", "time")}
 		"growth":
 			if randf() < crit_chance():
 				dmg *= Evolutions.CRIT_MULT
 				Effects.float_text(_renderer, center_cell_pos(), "치명!", evo_color(), lane.lane_visible)
-				if skill_lv("B") > 0:  # 광란: 치명타가 터지면 공격속도 중첩, 일정 시간 치명타가 없으면 초기화
+				if has_skill("B"):  # 광란: 치명타가 터지면 공격속도 중첩, 일정 시간 치명타가 없으면 초기화
 					haste_stacks = mini(haste_stacks + 1, Evolutions.HASTE_MAX_STACKS)
 					_haste_timer = _p("B", "time")
 
@@ -201,16 +207,18 @@ func _shoot(target: Monster) -> void:
 
 
 ## 난사형: 한 번에 N발 (가능하면 서로 다른 적을 조준, 적이 모자라면 같은 적에게 겹쳐 쏜다)
-func _fire_volley(target: Monster) -> void:
-	var count := int(_p("B", "missiles")) if skill_lv("B") > 0 else 1
+func _fire_volley(target: Monster, power: float = 1.0) -> void:
+	var count := int(_p("B", "missiles")) if has_skill("B") else 1
+	if has_skill("B"):
+		power *= _p("B", "power")  # 일제 사격 미사일 한 발의 위력
 	if count <= 1:
-		_shoot(target)
+		_shoot(target, power)
 		return
 	var targets := lane.find_targets(center_cell_pos(), kind.range, kind.anti_air, count)
 	if targets.is_empty():
 		targets.append(target)
 	for i in range(count):
-		_shoot(targets[i % targets.size()])
+		_shoot(targets[i % targets.size()], power)
 
 
 func _second_volley() -> void:
@@ -220,7 +228,7 @@ func _second_volley() -> void:
 	var t := lane.find_target(center_cell_pos(), kind.range, kind.anti_air)
 	if t:
 		_recoil = 1.0
-		_fire_volley(t)
+		_fire_volley(t, _p("A", "second"))
 
 
 ## 지원형: 공격 대신 표식 구름을 깐다
@@ -230,15 +238,15 @@ func _fire_cloud(target: Monster) -> void:
 
 ## 충전형: 기본 공격 없음. 에너지를 모으다가 적이 들어오면 부비 트랩 폭발
 func _process_charge(delta: float, target: Monster) -> void:
-	charge = minf(Evolutions.CHARGE_MAX, charge + delta * _p("A", "rate"))
+	charge = minf(charge_max(), charge + delta * _p("A", "rate"))
 	if target and charge >= Evolutions.CHARGE_MIN:
 		_detonate()
 
 
 func _detonate() -> void:
 	var dmg: float = kind.damage * (1.0 + charge * Evolutions.CHARGE_DMG_PER_SEC)
-	var full := charge >= Evolutions.CHARGE_MAX - 0.001
-	var stun := _p("B", "stun") if (full and skill_lv("B") > 0) else 0.0
+	var full := charge >= charge_max() - 0.001
+	var stun := _p("B", "stun") if (full and has_skill("B")) else 0.0
 	for m in lane.monsters.duplicate():
 		if is_instance_valid(m) and not m.is_dead() and m.flying == kind.anti_air \
 				and m.cell_pos.distance_to(center_cell_pos()) <= kind.range:
