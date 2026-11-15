@@ -14,6 +14,7 @@ var lane_scroll_rows: Dictionary = {}  # 레인별로 마지막에 보던 위치
 var selected_tower_kind: String = Balance.TOWER_KINDS[0]
 
 var current_tool: PlacementTool = PlacementTool.NONE
+var game_started: bool = false  # 시작 버튼을 눌렀는지
 var selected_tower: Tower = null  # 클릭해서 선택한 타워 (정보/업그레이드 대상)
 var ui_blockers: Array[Control] = []  # 이 영역 위의 클릭은 맵 클릭으로 처리하지 않는다 (필드 위에 겹친 UI)
 
@@ -63,6 +64,16 @@ func setup_game_field():
 	# PvE 임시: 1번 플레이어만 참여 (나머지 레인은 비어 있음)
 	start_lane(0)
 	start_boss()
+
+## 시작 버튼: 참여한 모든 레인과 보스가 동시에 시작한다 (수입, 보스 제한시간, 몬스터 파견)
+func start_game() -> void:
+	if game_started or boss == null:
+		return
+	game_started = true
+	for lane in lanes.values():
+		lane.begin()
+	boss.begin()
+	Log.info(Log.Category.GAME, "시작 버튼: 레인 %d개 동시 시작" % lanes.size())
 
 func start_lane(player_id: int):
 	var lane := LaneController.new()

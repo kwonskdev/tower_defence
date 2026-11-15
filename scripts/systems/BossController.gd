@@ -14,14 +14,14 @@ signal level_cleared(level: int)
 signal boss_defeated        # 마지막 라운드까지 모두 처치
 signal boss_failed(reason: String)
 
-enum State { RUNNING, VICTORY, DEFEAT }
+enum State { WAITING, RUNNING, VICTORY, DEFEAT }  # WAITING: 시작 버튼을 누르기 전 (시간도 몬스터 파견도 멈춰 있음)
 
 const SLOT_RING_GAP := 0.65   # 겹겹이 둘러쌀 때 바깥 고리 간격 (칸)
 const SLOT_SPACING := 0.85    # 같은 고리에서 몬스터 간 간격 (칸)
 const DPS_RECALC_INTERVAL := 0.25
 const AURA_BONUS_CAP := 1.5   # 지원형 오라는 아무리 겹쳐도 최대 +150%
 
-var state: State = State.RUNNING
+var state: State = State.WAITING
 var level: int = 1
 var level_data: Dictionary = {}
 var max_hp: float
@@ -82,6 +82,16 @@ func setup(boss_grid: GridSystem, renderer: GridRenderer, lanes: Dictionary) -> 
 	_start_level(1)
 
 
+## 시작 버튼: 보스 제한시간과 몬스터 파견이 동시에 시작된다
+func begin() -> void:
+	if state != State.WAITING:
+		return
+	state = State.RUNNING
+	level_flash = 1.0
+	_dispatch_timer.start()
+	Log.info(Log.Category.GAME, "게임 시작: 보스 Lv.%d '%s'" % [level, level_data.name])
+
+
 ## 보스 몸통 자리를 통과 불가 칸으로 만들어서 몬스터가 보스를 뚫고 가지 못하게 한다
 func _mark_boss_body() -> void:
 	var radius := Balance.BOSS_RADIUS + 0.25
@@ -103,7 +113,8 @@ func _start_level(new_level: int) -> void:
 	_streak_left = 0
 	current_wave_text = "-"
 	_dispatch_timer.wait_time = level_data.interval
-	_dispatch_timer.start()
+	if state == State.RUNNING:
+		_dispatch_timer.start()
 
 	Log.info(Log.Category.GAME, "보스 Lv.%d/%d '%s' 등장: hp=%.0f (참여 %d명), 제한시간=%.0fs, 파견 주기=%.1fs, 몬스터 체력x%.1f 마릿수x%.1f" % [
 		level, BossLevels.COUNT, level_data.name, max_hp, _lanes.size(), time_left, level_data.interval,

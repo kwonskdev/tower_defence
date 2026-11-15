@@ -40,11 +40,16 @@ func setup(p_player_id: int, grid: GridSystem, renderer: GridRenderer) -> void:
 	_income_timer = Timer.new()
 	_income_timer.wait_time = Balance.INCOME_INTERVAL
 	_income_timer.timeout.connect(_on_income_tick)
-	add_child(_income_timer)
-	_income_timer.start()
+	add_child(_income_timer)  # 수입 타이머는 시작 버튼을 누를 때 돈다 (begin)
 
 	Log.info(Log.Category.GAME, "[P%d] 레인 시작: 골드=%d, 수입=%d/%.0fs, 생명=%d" % [
 		player_id + 1, gold, income, Balance.INCOME_INTERVAL, lives])
+
+
+## 시작 버튼: 수입 지급이 시작된다
+func begin() -> void:
+	if active and _income_timer.is_stopped():
+		_income_timer.start()
 
 
 # --- 타워 ---

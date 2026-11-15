@@ -14,6 +14,7 @@ class_name MainGame
 
 var hud_label: Label
 var tower_info_row: HBoxContainer
+var start_button: Button
 var tower_info_label: Label
 var evolve_buttons: Array[Button] = []   # 선택한 타워가 아직 진화 전이면 계열 2개 중 고르는 버튼
 var evolve_ids: Array[String] = ["", ""]
@@ -305,6 +306,21 @@ func _create_hud():
 
 	add_child(panel)
 
+	# 시작 버튼: 누르기 전에는 시간도 수입도 몬스터도 멈춰 있어서 미리 타워를 지어 둘 수 있다
+	start_button = Button.new()
+	start_button.text = "▶ 시작"
+	start_button.add_theme_font_size_override("font_size", 28)
+	start_button.z_index = 101
+	start_button.custom_minimum_size = Vector2(200, 80)
+	start_button.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	start_button.pressed.connect(_on_start_pressed)
+	add_child(start_button)
+	game_field.ui_blockers.append(start_button)
+
+func _on_start_pressed():
+	game_field.start_game()
+	start_button.visible = false
+
 func _process(delta):
 	_hud_timer -= delta
 	if _hud_timer > 0.0:
@@ -325,6 +341,7 @@ func _update_hud():
 
 	var state_text := ""
 	match boss.state:
+		BossController.State.WAITING: state_text = "  [시작 대기: 시작 버튼을 누르면 모든 레인이 동시에 시작]"
 		BossController.State.VICTORY: state_text = "  [전체 승리!]"
 		BossController.State.DEFEAT: state_text = "  [패배]"
 	var selected := Balance.tower_kind(game_field.selected_tower_kind)
