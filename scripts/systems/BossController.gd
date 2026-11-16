@@ -8,7 +8,7 @@ class_name BossController
 ##   한 웨이브는 종류가 다른 몬스터 묶음 WAVE_GROUPS개이고, 다음 웨이브에 뭐가 오는지는 미리 정해져서 HUD에 보인다.
 ##   종류마다 이기는 타워가 달라서 그때그때 필요한 타워가 달라진다 (WaveTypes 상성 참고).
 ## - 제한시간 안에 못 잡으면 패배. 보스는 플레이어 몬스터를 공격하지 않는다 (현재 미정).
-## TODO: 보스 스킬, 플레이어별 기여도 UI
+## TODO: 보스 스킬
 
 signal level_started(level: int)
 signal level_cleared(level: int)
@@ -486,7 +486,7 @@ class BossView extends Node2D:
 			draw_circle(c, R * 1.3, Color(1, 1, 1, 0.6 * boss.level_flash))
 
 
-## 보스 체력바 + 이름. 몬스터들이 보스 위쪽에 몰려 서도 가려지지 않게 몬스터(z_index 2)보다 위에 그린다.
+## 보스 체력바 + 이름 + 플레이어 기여도. 몬스터들이 보스 위쪽에 몰려 서도 가려지지 않게 몬스터(z_index 2)보다 위에 그린다.
 class BossBar extends Node2D:
 	var boss: BossController
 	var renderer: GridRenderer
@@ -510,3 +510,47 @@ class BossBar extends Node2D:
 		draw_string(font, Vector2(c.x - bar_w * 0.5, bar_y - 6), "Lv.%d %s   %d / %d" % [
 			boss.level, boss.level_data.name, int(boss.hp), int(boss.max_hp)],
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color.WHITE)
+
+		# 플레이어 기여도 표시 (보스 오른쪽에 세로로 나열)
+		_draw_contribution(c, R, cell)
+
+	func _draw_contribution(c: Vector2, R: float, _cell: float) -> void:
+		# 전체 피해 계산
+		var total_dmg := 0.0
+		for dmg in boss.damage_by_player.values():
+			total_dmg += dmg
+
+		if total_dmg <= 0.0:
+			return
+
+		# 플레이어별 기여도 정렬 (내림차순)
+		var entries: Array = []
+		for player_id in boss.damage_by_player:
+			var dmg: float = boss.damage_by_player[player_id]
+			entries.append({"player_id": player_id, "damage": dmg, "percent": dmg / total_dmg * 100.0})
+		entries.sort_custom(func(a, b): return a.damage > b.damage)
+
+		# 보스 오른쪽에 표시
+		var font := ThemeDB.fallback_font
+		var start_x := c.x + R * 1.6
+		var start_y := c.y - R * 1.5
+		var line_h := 16.0
+
+		# 제목
+		draw_string(font, Vector2(start_x, start_y), "플레이어 기여도", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.8, 0.9, 1.0))
+		start_y += line_h
+
+		# 각 플레이어
+		for entry in entries:
+			var color := Color(1.0, 0.95, 0.6) if entry.player_id == 0 else Color(0.85, 0.85, 0.85)
+			var text := "P%d: %.1f%% (%s)" % [entry.player_id + 1, entry.percent, _format_damage(entry.damage)]
+			draw_string(font, Vector2(start_x, start_y), text, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, color)
+			start_y += line_h
+
+	func _format_damage(dmg: float) -> String:
+		if dmg >= 1000000.0:
+			return "%.1fM" % (dmg / 1000000.0)
+		elif dmg >= 1000.0:
+			return "%.1fK" % (dmg / 1000.0)
+		else:
+			return "%d" % int(dmg)
