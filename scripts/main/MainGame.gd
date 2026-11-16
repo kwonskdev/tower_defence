@@ -44,6 +44,8 @@ var _detail_items: Array = []            # [{btn, stat: Dictionary}]
 var _hover: Array = []                   # 마우스가 올라간 항목: [계열, 종류("evo"/"stat"), 스킬, 키]
 var tower_view: GridContainer
 var _hud_timer := 0.0
+var game_over_screen: GameOverScreen     # 승리/패배 화면
+var _play_start_time := 0.0              # 게임 시작 시각 (통계용)
 
 # 플레이어 버튼들
 @onready var player_buttons: Array[Button] = []
@@ -77,6 +79,7 @@ func setup_ui():
 	_create_hud()
 	_create_status_panel()
 	_create_confirm_dialog()
+	_create_game_over_screen()
 
 ## 버튼을 "실제 모습 아이콘 + 비용 + 마우스 올리면 상세 설명" 형태로 꾸민다
 func _decorate_unit_button(b: Button, icon: UnitIcon, cost: int, tooltip: String, tag: String = "", tag_color: Color = Color.WHITE):
@@ -632,6 +635,86 @@ func _on_path_block_confirmed() -> void:
 	game_field.place_tower(_pending_cell, true)
 
 
+## 승리/패배 화면 생성
+func _create_game_over_screen() -> void:
+	game_over_screen = GameOverScreen.new()
+	game_over_screen.visible = false
+	add_child(game_over_screen)
+
+	# UI 구조 생성 (코드로 직접 만듦)
+	var panel := PanelContainer.new()
+	panel.name = "Panel"
+	var panel_style := StyleBoxFlat.new()
+	panel_style.bg_color = Color(0.1, 0.1, 0.15, 0.95)
+	panel_style.border_color = Color(0.4, 0.4, 0.5)
+	panel_style.set_border_width_all(3)
+	panel_style.set_corner_radius_all(8)
+	panel_style.content_margin_left = 40
+	panel_style.content_margin_right = 40
+	panel_style.content_margin_top = 30
+	panel_style.content_margin_bottom = 30
+	panel.add_theme_stylebox_override("panel", panel_style)
+	panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	panel.custom_minimum_size = Vector2(500, 400)
+	game_over_screen.add_child(panel)
+
+	var vbox := VBoxContainer.new()
+	vbox.name = "VBox"
+	vbox.add_theme_constant_override("separation", 20)
+	panel.add_child(vbox)
+
+	# 제목
+	var title := Label.new()
+	title.name = "Title"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 36)
+	vbox.add_child(title)
+
+	# 통계
+	var stats := Label.new()
+	stats.name = "Stats"
+	stats.add_theme_font_size_override("font_size", 16)
+	stats.add_theme_color_override("font_color", Color(0.9, 0.9, 1.0))
+	vbox.add_child(stats)
+
+	# 기여도 (멀티플레이 시에만 표시)
+	var contribution := Label.new()
+	contribution.name = "Contribution"
+	contribution.add_theme_font_size_override("font_size", 14)
+	contribution.add_theme_color_override("font_color", Color(0.8, 0.9, 1.0))
+	contribution.visible = false
+	vbox.add_child(contribution)
+
+	# 버튼들
+	var buttons := HBoxContainer.new()
+	buttons.name = "Buttons"
+	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
+	buttons.add_theme_constant_override("separation", 20)
+	vbox.add_child(buttons)
+
+	var restart := Button.new()
+	restart.name = "RestartButton"
+	restart.text = "재도전"
+	restart.custom_minimum_size = Vector2(150, 50)
+	restart.add_theme_font_size_override("font_size", 18)
+	buttons.add_child(restart)
+
+	var quit := Button.new()
+	quit.name = "QuitButton"
+	quit.text = "종료"
+	quit.custom_minimum_size = Vector2(150, 50)
+	quit.add_theme_font_size_override("font_size", 18)
+	buttons.add_child(quit)
+
+	# 보스 시그널 연결
+	if game_field and game_field.boss:
+		game_field.boss.boss_defeated.connect(_on_boss_defeated)
+		game_field.boss.boss_failed.connect(_on_boss_failed)
+
+	game_over_screen.restart_requested.connect(_on_game_over_restart)
+	game_over_screen.quit_requested.connect(_on_game_over_quit)
+
+
 ## 상태 패널용 작은 아이콘 (하트 / 금화 / 점). 글꼴에 이모지가 없어도 보이도록 직접 그린다.
 class StatusIcon extends Control:
 	var kind := "dot"
@@ -661,6 +744,7 @@ class StatusIcon extends Control:
 func _on_start_pressed():
 	game_field.start_game()
 	start_button.visible = false
+	_play_start_time = Time.get_ticks_msec() / 1000.0
 
 func _process(delta):
 	_hud_timer -= delta
@@ -853,3 +937,88 @@ func _on_monster_selected(button_index: int):
 	var kind_id: String = SentMonsters.SLOTS[slot_idx]
 	Log.info(Log.Category.UI, "몬스터 생산 요청: %s" % kind_id)
 	game_field.send_monster(kind_id)
+
+
+## 보스 전체 승리
+func _on_boss_defeated() -> void:
+	var stats := _collect_game_stats(true)
+	game_over_screen.show_result(true, stats)
+
+
+## 보스 패배
+func _on_boss_failed(reason: String) -> void:
+	Log.info(Log.Category.GAME, "패배 사유: %s" % reason)
+	var stats := _collect_game_stats(false)
+	game_over_screen.show_result(false, stats)
+
+
+## 게임 통계 수집
+func _collect_game_stats(is_victory: bool) -> Dictionary:
+	var stats := {}
+	var lane: LaneController = game_field.lanes.get(game_field.local_player_id)
+	var boss: BossController = game_field.boss
+
+	if boss:
+		stats.boss_level = boss.level if is_victory else boss.level
+		stats.total_boss_levels = BossLevels.COUNT
+
+	# 플레이 시간
+	if _play_start_time > 0.0:
+		stats.play_time = Time.get_ticks_msec() / 1000.0 - _play_start_time
+
+	if lane:
+		# 타워 통계
+		var tower_count := 0
+		var total_dmg := 0.0
+		var total_kills := 0
+		for tower in lane.towers:
+			tower_count += 1
+			total_dmg += tower.total_damage
+			total_kills += tower.kills
+		stats.towers_built = tower_count
+		stats.total_tower_damage = total_dmg
+		stats.total_tower_kills = total_kills
+
+		# 경제
+		stats.final_gold = lane.gold
+		stats.final_income = lane.income
+
+	# 몬스터 파견 통계
+	if boss:
+		var sent_count := boss.get_sent_monsters().size()
+		stats.monsters_sent = sent_count
+
+		# 보스 피해 (내 기여도)
+		if boss.damage_by_player.has(game_field.local_player_id):
+			stats.boss_damage = boss.damage_by_player[game_field.local_player_id]
+		else:
+			stats.boss_damage = 0.0
+
+		# 플레이어별 기여도 (전체)
+		var total_dmg := 0.0
+		for dmg in boss.damage_by_player.values():
+			total_dmg += dmg
+
+		if total_dmg > 0.0:
+			var contributions: Array = []
+			for player_id in boss.damage_by_player:
+				var dmg: float = boss.damage_by_player[player_id]
+				contributions.append({
+					"player_id": player_id,
+					"damage": dmg,
+					"percent": dmg / total_dmg * 100.0
+				})
+			contributions.sort_custom(func(a, b): return a.damage > b.damage)
+			stats.contributions = contributions
+
+	return stats
+
+
+## 재도전 버튼
+func _on_game_over_restart() -> void:
+	reset_game()
+
+
+## 종료 버튼
+func _on_game_over_quit() -> void:
+	get_tree().quit()
