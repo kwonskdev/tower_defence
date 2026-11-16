@@ -31,6 +31,7 @@ var family_frames: Control               # 몬스터 배럭의 계열 묶음 외
 var tower_info_label: Label
 var evolve_buttons: Array[Button] = []   # 선택한 타워가 아직 진화 전이면 계열 2개 중 고르는 버튼
 var learn_button: Button                 # 선택한 타워가 진화했고 B 스킬을 아직 안 배웠으면 나오는 "B 스킬 배우기" 버튼
+var recolor_button: Button               # 선택한 타워의 색깔을 랜덤으로 바꾸는 버튼 (항상 보인다)
 var evolve_ids: Array[String] = ["", ""]
 var skill_hint_label: Label              # 업그레이드 탭에서 마우스를 올린 항목의 설명
 var upgrade_menu: HBoxContainer          # 업그레이드 탭: [←] [타워] [색깔]
@@ -521,6 +522,11 @@ func _create_hud():
 	learn_button.visible = false
 	learn_button.pressed.connect(_on_learn_selected_pressed)
 	evolve_row.add_child(learn_button)
+	recolor_button = Button.new()
+	recolor_button.add_theme_font_size_override("font_size", 12)
+	recolor_button.clip_text = true
+	recolor_button.pressed.connect(_on_recolor_selected_pressed)
+	tower_info_row.add_child(recolor_button)
 	game_field.ui_blockers.append(tower_info_row)  # 버튼을 눌렀을 때 뒤의 맵이 클릭되지 않도록
 
 	skill_hint_label = Label.new()
@@ -770,12 +776,17 @@ func _update_tower_info(lane: LaneController):
 			text += "\n치명타 %.1f%%  광란 x%d" % [t.crit_chance() * 100.0, t.haste_stacks]
 		"charge":
 			text += "\n충전 %.1f / %.0f초 (%.0f초 이상이면 발동)" % [t.charge, t.charge_max(), Evolutions.CHARGE_MIN]
+	text += "\n" + t.color_bonus_text()
 	# 스킬 현황: 진화하면 A 스킬이 붙고, B 스킬은 돈을 내고 배워야 한다 (계열 전체 타워에 적용)
 	var b_known := t.evolution != "" and t.b_learned
 	if t.evolution != "":
 		var evo_data: Dictionary = Evolutions.DATA[t.evolution]
 		text += "\nA %s ✔   B %s %s" % [evo_data.a_name, evo_data.b_name, "✔" if b_known else "(아직 안 배움)"]
 	tower_info_label.text = text
+
+	recolor_button.text = "색깔 바꾸기 (%d골드)" % Balance.RECOLOR_COST
+	recolor_button.tooltip_text = "이 타워의 색깔을 지금 색을 뺀 6색 중 랜덤으로 바꿉니다. 색깔 보너스는 그 색의 업그레이드를 따라갑니다."
+	recolor_button.disabled = t.lane != lane or lane.gold < Balance.RECOLOR_COST
 
 	# 아직 진화 전이면 계열 2개 중 하나를 고른다 (골드). 진화하면 그 계열의 A 스킬이 붙는다.
 	var can_pick := t.can_evolve()
@@ -800,6 +811,11 @@ func _update_tower_info(lane: LaneController):
 		eb.text = "%s 진화 (%d골드)" % [Evolutions.evo_name(evo), Balance.EVOLVE_COST]
 		eb.tooltip_text = Evolutions.tooltip(evo)
 		eb.disabled = t.lane != lane or lane.gold < Balance.EVOLVE_COST
+
+
+## 선택한 타워의 색깔 바꾸기 (골드, 랜덤)
+func _on_recolor_selected_pressed():
+	game_field.recolor_selected_tower()
 
 
 ## 선택한 타워의 "B 스킬 배우기" (진화처럼 타워마다 개별, 골드)

@@ -209,6 +209,12 @@ func upgrade_stat(evo: String, skill: String, key: String) -> bool:
 	return lane != null and lane.upgrade_stat(evo, skill, key)
 
 
+## 선택한 타워 1기의 색깔을 랜덤으로 바꾼다 (골드)
+func recolor_selected_tower() -> bool:
+	var lane: LaneController = lanes.get(local_player_id)
+	return lane != null and lane.recolor_tower(get_selected_tower())
+
+
 ## 색깔 업그레이드 (골드, 그 색 타워 전체에 적용)
 func upgrade_color(color_name: String) -> bool:
 	var lane: LaneController = lanes.get(local_player_id)

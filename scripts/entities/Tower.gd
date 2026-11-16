@@ -128,6 +128,25 @@ func cur_range() -> float:
 	return r
 
 
+## 색깔을 바꾼다 (LaneController.recolor_tower가 골드 처리를 한 뒤 부른다)
+func set_color_info(info: Dictionary) -> void:
+	color_info = info
+	queue_redraw()
+
+
+## 선택한 타워 정보창에 보여줄 색깔 보너스 한 줄
+func color_bonus_text() -> String:
+	var cname: String = color_info.name
+	var lv := lane.color_level(cname)
+	var type: String = Balance.COLOR_BONUS_TYPES[cname]
+	if lv == 0:
+		return "색깔 %s: %s 보너스 (업그레이드 전)" % [cname, Balance.COLOR_BONUS_LABELS[type]]
+	var text := "색깔 %s Lv%d: %s %s" % [cname, lv, Balance.COLOR_BONUS_LABELS[type], Balance.color_bonus_value_text(cname, lv)]
+	if type == "damage" and evolution == "skill":
+		text += " (스킬형은 공격력이 없어 효과 없음)"
+	return text
+
+
 ## 방어력 관통 비율 (파랑 색깔 보너스). Monster.take_damage가 맞은 타워에게 물어본다.
 func armor_penetration() -> float:
 	return lane.color_bonus_value("파랑") if color_info.name == "파랑" else 0.0

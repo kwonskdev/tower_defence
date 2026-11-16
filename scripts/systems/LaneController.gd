@@ -74,6 +74,21 @@ func build_tower(cell: Vector2i, kind_id: String) -> Tower:
 	return tower
 
 
+## 타워 색깔을 다시 뽑는다 (골드). 지금 색을 뺀 나머지 6색 중 랜덤이라 돈을 내면 반드시 색이 바뀐다.
+func recolor_tower(tower: Tower) -> bool:
+	if tower == null or tower.lane != self:
+		return false
+	if not try_spend(Balance.RECOLOR_COST, "타워 색깔 바꾸기 %s" % tower.cell):
+		return false
+	var candidates: Array = Balance.TOWER_COLORS.filter(func(c): return c.name != tower.color_info.name)
+	var old_name: String = tower.color_info.name
+	var new_info: Dictionary = candidates.pick_random()
+	tower.set_color_info(new_info)
+	Effects.ring(_renderer, tower.center_cell_pos(), 0.8, new_info.color, lane_visible)
+	Log.info(Log.Category.COLOR, "[P%d] 타워 %s 색깔 변경: %s -> %s" % [player_id + 1, tower.cell, old_name, new_info.name])
+	return true
+
+
 # --- 진화 / 업그레이드 ---
 
 ## 업그레이드 항목 하나의 현재 레벨 (1~3). 안 올렸으면 1.
