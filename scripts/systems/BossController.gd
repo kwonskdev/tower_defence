@@ -410,6 +410,11 @@ func get_sent_monsters() -> Array[Monster]:
 	return _sent_monsters
 
 
+## 보스 앞에 도착해서 공격 중인 몬스터들
+func get_attackers() -> Array[Monster]:
+	return _attackers
+
+
 func get_attacker_count() -> int:
 	return _attackers.size()
 

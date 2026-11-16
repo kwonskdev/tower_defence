@@ -97,12 +97,17 @@ func evo_color() -> Color:
 
 ## 한 발 피해 (진화하면 계열에 따라 배율이 붙는다 + 색깔 보너스)
 func cur_damage() -> float:
-	var base := kind.damage * Evolutions.DAMAGE_MULT.get(evolution, 1.0)
-	# 빨강 색깔 보너스: 공격력 증가
-	if color_info.name == "빨강":
-		var bonus := lane.color_bonus_value("빨강")
-		base *= (1.0 + bonus)
-	return base
+	return kind.damage * Evolutions.DAMAGE_MULT.get(evolution, 1.0) * color_damage_mult()
+
+
+## 빨강 색깔 보너스: 공격력 배율 (다른 색이면 1.0)
+func color_damage_mult() -> float:
+	return 1.0 + lane.color_bonus_value("빨강") if color_info.name == "빨강" else 1.0
+
+
+## 주황 색깔 보너스: 공격속도 배율 (다른 색이면 1.0)
+func color_speed_mult() -> float:
+	return 1.0 + lane.color_bonus_value("주황") if color_info.name == "주황" else 1.0
 
 
 ## 다음 공격까지의 시간 (광란 중첩만큼 빨라진다 + 색깔 보너스)
@@ -110,11 +115,7 @@ func cur_cooldown() -> float:
 	var cd: float = Evolutions.COOLDOWN.get(evolution, kind.cooldown)
 	if evolution == "growth" and haste_stacks > 0 and has_skill("B"):
 		cd /= 1.0 + haste_stacks * _p("B", "haste")
-	# 주황 색깔 보너스: 공격속도 증가
-	if color_info.name == "주황":
-		var bonus := lane.color_bonus_value("주황")
-		cd /= (1.0 + bonus)
-	return cd
+	return cd / color_speed_mult()
 
 
 ## 실제 사거리 (색깔 보너스 반영)
@@ -261,18 +262,18 @@ func _second_volley() -> void:
 
 ## 지원형: 공격 대신 표식 구름을 깐다
 func _fire_cloud(target: Monster) -> void:
-	Effects.spawn_cloud(_renderer, lane, target.cell_pos, _p("A", "radius"), _p("A", "time"), self, _p("A", "dmg"), evo_color())
+	Effects.spawn_cloud(_renderer, lane, target.cell_pos, _p("A", "radius"), _p("A", "time"), self, _p("A", "dmg") * color_damage_mult(), evo_color())
 
 
 ## 충전형: 기본 공격 없음. 에너지를 모으다가 적이 들어오면 부비 트랩 폭발
 func _process_charge(delta: float, target: Monster) -> void:
-	charge = minf(charge_max(), charge + delta * _p("A", "rate"))
+	charge = minf(charge_max(), charge + delta * _p("A", "rate") * color_speed_mult())
 	if target and charge >= Evolutions.CHARGE_MIN:
 		_detonate()
 
 
 func _detonate() -> void:
-	var dmg: float = kind.damage * (1.0 + charge * Evolutions.CHARGE_DMG_PER_SEC)
+	var dmg: float = kind.damage * (1.0 + charge * Evolutions.CHARGE_DMG_PER_SEC) * color_damage_mult()
 	var full := charge >= charge_max() - 0.001
 	var stun := _p("B", "stun") if (full and has_skill("B")) else 0.0
 	var r := cur_range()

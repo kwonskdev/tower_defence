@@ -313,7 +313,7 @@ func _on_monster_died(monster: Monster) -> void:
 
 			"보라":  # 처치 시 확률로 체력 +1
 				var chance := color_bonus_value("보라")
-				if randf() < chance:
+				if lives < Balance.MAX_LIVES and randf() < chance:
 					lives += 1
 					lives_changed.emit(lives)
 					Effects.float_text(_renderer, monster.cell_pos, "+1 생명!", killer_tower.color_info.color, lane_visible)
@@ -425,9 +425,9 @@ func color_bonus_value(color_name: String) -> float:
 func _empower_sent_monsters(count: int) -> void:
 	if _boss_controller == null:
 		return
-	# 보스 앞에 도착한 몬스터들 중 이 플레이어가 보낸 것만 필터링
+	# 보스 앞에서 싸우는 몬스터 중 이 플레이어가 보낸 것만 (아직 걸어오는 중인 몬스터는 강화해도 의미가 없다)
 	var my_monsters: Array[Monster] = []
-	for m in _boss_controller._sent_monsters:
+	for m in _boss_controller.get_attackers():
 		if is_instance_valid(m) and m.owner_id == player_id:
 			my_monsters.append(m)
 

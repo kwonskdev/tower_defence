@@ -218,6 +218,8 @@ func add_empower(duration: float, boost: float) -> void:
 	_empower_buffs.append({"end_time": now + duration, "boost": boost})
 	# 종료 시간 순으로 정렬
 	_empower_buffs.sort_custom(func(a, b): return a.end_time < b.end_time)
+	while _empower_buffs.size() > Balance.EMPOWER_MAX_STACKS:
+		_empower_buffs.remove_at(0)  # 가장 먼저 끝나는 것을 밀어낸다
 
 
 ## 현재 적용 중인 강화 효과 총합 (만료된 버프는 제거)
