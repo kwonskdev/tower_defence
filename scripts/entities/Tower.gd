@@ -95,17 +95,36 @@ func evo_color() -> Color:
 	return Evolutions.DATA[evolution].color if evolution != "" else Color(0.9, 0.9, 1.0)
 
 
-## 한 발 피해 (진화하면 계열에 따라 배율이 붙는다)
+## 한 발 피해 (진화하면 계열에 따라 배율이 붙는다 + 색깔 보너스)
 func cur_damage() -> float:
-	return kind.damage * Evolutions.DAMAGE_MULT.get(evolution, 1.0)
+	var base := kind.damage * Evolutions.DAMAGE_MULT.get(evolution, 1.0)
+	# 빨강 색깔 보너스: 공격력 증가
+	if color_info.name == "빨강":
+		var bonus := lane.color_bonus_value("빨강")
+		base *= (1.0 + bonus)
+	return base
 
 
-## 다음 공격까지의 시간 (광란 중첩만큼 빨라진다)
+## 다음 공격까지의 시간 (광란 중첩만큼 빨라진다 + 색깔 보너스)
 func cur_cooldown() -> float:
 	var cd: float = Evolutions.COOLDOWN.get(evolution, kind.cooldown)
 	if evolution == "growth" and haste_stacks > 0 and has_skill("B"):
 		cd /= 1.0 + haste_stacks * _p("B", "haste")
+	# 주황 색깔 보너스: 공격속도 증가
+	if color_info.name == "주황":
+		var bonus := lane.color_bonus_value("주황")
+		cd /= (1.0 + bonus)
 	return cd
+
+
+## 실제 사거리 (색깔 보너스 반영)
+func cur_range() -> float:
+	var r: float = kind.range
+	# 노랑 색깔 보너스: 사거리 증가
+	if color_info.name == "노랑":
+		var bonus := lane.color_bonus_value("노랑")
+		r *= (1.0 + bonus)
+	return r
 
 
 ## 치명타 확률 (성장형: 처치할 때마다 오른다)
@@ -139,7 +158,7 @@ func _process(delta: float) -> void:
 			_haste_timer -= delta
 			if _haste_timer <= 0.0:
 				haste_stacks = 0  # 치명타가 한동안 안 터지면 광란 초기화
-		var target := lane.find_target(center_cell_pos(), kind.range, kind.anti_air)
+		var target := lane.find_target(center_cell_pos(), cur_range(), kind.anti_air)
 		if target:
 			var want := (target.cell_pos - center_cell_pos()).angle()
 			_aim = lerp_angle(_aim, want, minf(1.0, delta * 14.0))
@@ -174,6 +193,13 @@ func _fire(target: Monster) -> void:
 func _shoot(target: Monster, power: float = 1.0) -> void:
 	var dmg: float = cur_damage() * power
 	var fx := {}
+
+	# 파랑 색깔 보너스: 방어력 관통
+	if color_info.name == "파랑":
+		var penetration := lane.color_bonus_value("파랑")
+		if penetration > 0.0:
+			fx.penetration = penetration
+
 	match evolution:
 		"pierce":
 			fx.pierce = int(_p("A", "count"))
@@ -218,7 +244,7 @@ func _fire_volley(target: Monster, power: float = 1.0) -> void:
 	if count <= 1:
 		_shoot(target, power)
 		return
-	var targets := lane.find_targets(center_cell_pos(), kind.range, kind.anti_air, count)
+	var targets := lane.find_targets(center_cell_pos(), cur_range(), kind.anti_air, count)
 	if targets.is_empty():
 		targets.append(target)
 	for i in range(count):
@@ -229,7 +255,7 @@ func _second_volley() -> void:
 	await get_tree().create_timer(0.18).timeout
 	if not is_instance_valid(self) or lane == null or not lane.active:
 		return
-	var t := lane.find_target(center_cell_pos(), kind.range, kind.anti_air)
+	var t := lane.find_target(center_cell_pos(), cur_range(), kind.anti_air)
 	if t:
 		_recoil = 1.0
 		_fire_volley(t, _p("A", "second"))
@@ -251,13 +277,14 @@ func _detonate() -> void:
 	var dmg: float = kind.damage * (1.0 + charge * Evolutions.CHARGE_DMG_PER_SEC)
 	var full := charge >= charge_max() - 0.001
 	var stun := _p("B", "stun") if (full and has_skill("B")) else 0.0
+	var r := cur_range()
 	for m in lane.monsters.duplicate():
 		if is_instance_valid(m) and not m.is_dead() and m.flying == kind.anti_air \
-				and m.cell_pos.distance_to(center_cell_pos()) <= kind.range:
+				and m.cell_pos.distance_to(center_cell_pos()) <= r:
 			m.take_damage(dmg, self)
 			if stun > 0.0 and not m.is_dead():
 				m.apply_stun(stun)
-	Effects.ring(_renderer, center_cell_pos(), kind.range, evo_color(), lane.lane_visible)
+	Effects.ring(_renderer, center_cell_pos(), r, evo_color(), lane.lane_visible)
 	Effects.float_text(_renderer, center_cell_pos(), "과충전!" if stun > 0.0 else "폭발!", evo_color(), lane.lane_visible)
 	charge = 0.0
 	_recoil = 1.0
@@ -280,8 +307,9 @@ func _draw() -> void:
 
 	# 선택됨: 사거리 원 + 선택 테두리
 	if selected and not preview:
-		draw_circle(Vector2.ZERO, kind.range * cell_px, Color(1, 1, 1, 0.07))
-		draw_arc(Vector2.ZERO, kind.range * cell_px, 0.0, TAU, 48, Color(1, 1, 1, 0.5), 2.0)
+		var r := cur_range()
+		draw_circle(Vector2.ZERO, r * cell_px, Color(1, 1, 1, 0.07))
+		draw_arc(Vector2.ZERO, r * cell_px, 0.0, TAU, 48, Color(1, 1, 1, 0.5), 2.0)
 		draw_rect(Rect2(-cell_px * 0.5, -cell_px * 0.5, cell_px, cell_px).grow(-1.0), Color(1, 1, 0.4), false, 2.0)
 
 	# 바닥판 + 색깔 테두리 (테두리 색은 색깔 보너스용으로 건설할 때 랜덤 배정된 색)

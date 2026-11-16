@@ -168,7 +168,8 @@ func _recalc_dps() -> void:
 
 	var total := 0.0
 	for m in _attackers:
-		var base := m.dps + minf(m.ramp * m.time_at_boss, m.ramp_cap)
+		# 강화 효과 반영된 기본 DPS + 성장형 램프
+		var base := m.get_boosted_dps() + minf(m.ramp * m.time_at_boss, m.ramp_cap)
 		var bonus := 0.0
 		for s in supporters:
 			if s != m and s.cell_pos.distance_to(m.cell_pos) <= s.aura_radius:

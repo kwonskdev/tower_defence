@@ -77,8 +77,10 @@ var _vision_dirty := true
 var _vision_timer := 0.0
 
 var _poisons: Array = []         # [{src, stacks, dps, time}] 독 (타워별로 따로 집계)
+var _empower_buffs: Array = []   # [{end_time: float, boost: float}] 강화 버프 (시간 순 정렬, 중첩 가능)
 var _consumed_marks: Array = []  # 이번 타격에 터진 표식
 var _captured := false
+var _killer = null               # 이 몬스터를 처치한 타워 (색깔 보너스 처리용)
 
 var _grid: GridSystem
 var _renderer: GridRenderer
@@ -143,6 +145,7 @@ func _lose_hp(amount: float, damage_source, kill_source) -> void:
 		damage_source.record_damage(applied)
 	if hp <= 0.0:
 		if is_instance_valid(kill_source):
+			_killer = kill_source
 			kill_source.record_kill()
 		_die()
 
@@ -202,6 +205,39 @@ func apply_slow(ratio: float, duration: float) -> void:
 
 func apply_stun(duration: float) -> void:
 	stun_time = maxf(stun_time, duration)
+
+
+# --- 강화 시스템 (남색 색깔 보너스) ---
+
+## 강화 버프 추가 (중첩 가능)
+func add_empower(duration: float, boost: float) -> void:
+	var now := Time.get_ticks_msec() / 1000.0
+	_empower_buffs.append({"end_time": now + duration, "boost": boost})
+	# 종료 시간 순으로 정렬
+	_empower_buffs.sort_custom(func(a, b): return a.end_time < b.end_time)
+
+
+## 현재 적용 중인 강화 효과 총합 (만료된 버프는 제거)
+func get_total_empower() -> float:
+	var now := Time.get_ticks_msec() / 1000.0
+	var total := 0.0
+	# 만료된 버프 제거 (역순으로)
+	for i in range(_empower_buffs.size() - 1, -1, -1):
+		if _empower_buffs[i].end_time < now:
+			_empower_buffs.remove_at(i)
+		else:
+			total += _empower_buffs[i].boost
+	return total
+
+
+## 강화가 반영된 최대 체력 (보스 레인 몬스터용)
+func get_boosted_max_hp() -> float:
+	return max_hp * (1.0 + get_total_empower())
+
+
+## 강화가 반영된 기본 DPS (보스 레인 몬스터용)
+func get_boosted_dps() -> float:
+	return dps * (1.0 + get_total_empower())
 
 
 ## 공중 몬스터를 지상에 붙잡는다. 그동안 제자리에 정지하고 지상 몬스터로 취급된다 (끝나면 다시 공중).
