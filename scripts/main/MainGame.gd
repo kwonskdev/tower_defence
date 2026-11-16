@@ -1037,8 +1037,7 @@ func _collect_game_stats(is_victory: bool) -> Dictionary:
 
 	# 몬스터 파견 통계
 	if boss:
-		var sent_count := boss.get_sent_monsters().size()
-		stats.monsters_sent = sent_count
+		stats.monsters_sent = boss.sent_count  # 죽은 몬스터도 센다
 
 		# 보스 피해 (내 기여도)
 		if boss.damage_by_player.has(game_field.local_player_id):

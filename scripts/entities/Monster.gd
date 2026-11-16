@@ -51,6 +51,12 @@ var aura_radius: float = 0.0     # 지원형: 주변 아군 dps 증가
 var aura_bonus: float = 0.0
 var time_at_boss: float = 0.0    # 보스 앞에 선 뒤 지난 시간
 var current_dps: float = 0.0     # 성장/오라까지 반영한 실제 dps
+var slot_key: String = ""        # 보스 주변에서 차지한 자리 (죽으면 비운다)
+# 보스 스킬이 거는 상태 (BossController가 관리)
+var chill_time: float = 0.0      # 동상: 이 라운드에서 보스 앞에 서 있던 시간
+var chill: float = 0.0           # 동상: dps가 줄어든 비율 (0~1)
+var dread_time: float = 0.0      # 공포: 남은 시간 동안 dps 0
+var warn_color: Color = Color(0, 0, 0, 0)  # 예고 표식 (처단=빨강, 공포=보라). 알파 0이면 없음
 
 # 목표: goal_cell을 주면 그 칸까지 간 뒤 final_point로 이동, 주지 않으면 맨 아래 EXIT 행
 var goal_cell: Vector2i = Pathfinder.NO_GOAL
@@ -476,6 +482,14 @@ func _draw() -> void:
 			draw_arc(c, rr + 9.0, 0.0, TAU, 20, Color(1.0, 0.6, 0.2, 0.9), 2.0)
 		if revive_ratio > 0.0 and not _revived:
 			draw_arc(c, rr + 9.0, 0.0, TAU, 20, Color(0.9, 0.9, 0.8, 0.9), 2.0)
+		# 보스 스킬 표시: 동상=얼음색 고리(짙을수록 많이 얼음), 공포=보라 굵은 고리, 예고 표식=깜빡이는 고리
+		if chill > 0.05:
+			draw_arc(c, rr + 12.0, 0.0, TAU, 20, Color(0.6, 0.85, 1.0, 0.35 + 0.55 * chill), 2.0)
+		if dread_time > 0.0:
+			draw_arc(c, rr + 15.0, 0.0, TAU, 20, Color(0.75, 0.35, 0.95, 0.95), 3.5)
+		if warn_color.a > 0.0:
+			var pulse := 0.55 + 0.45 * sin(_anim * 12.0)
+			draw_arc(c, rr + 15.0, 0.0, TAU, 24, Color(warn_color, pulse), 3.5)
 		for i in range(mini(marks.size(), 8)):
 			var mp := c + Vector2((i - minf(marks.size(), 8.0) * 0.5 + 0.5) * 8.0, -r - cell * 0.38)
 			draw_colored_polygon(PackedVector2Array([

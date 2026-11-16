@@ -8,8 +8,9 @@ class_name BossController
 ##   한 웨이브는 종류가 다른 몬스터 묶음 WAVE_GROUPS개이고, 다음 웨이브에 뭐가 오는지는 미리 정해져서 HUD에 보인다.
 ##   종류마다 이기는 타워가 달라서 그때그때 필요한 타워가 달라진다 (WaveTypes 상성 참고).
 ## - 제한시간 안에 못 잡으면 패배. 보스는 플레이어 몬스터를 공격하지 않는다 (현재 미정).
-## - 보스 스킬은 BossSkills.gd에 라운드별로 정의한다. 지금 있는 것: 웨이브 주기/마릿수, 웨이브 변형(돌격/부활/공습), 비늘 보호막.
-## TODO: 체력 조건/주기 발동형 스킬 (Lv.5 분열, Lv.7 처단, Lv.9 봉인/공포), Lv.6 동상, Lv.10 페이즈
+## - 보스 스킬은 BossSkills.gd에 라운드별로 정의한다. 지금 있는 것: 웨이브 주기/마릿수, 웨이브 변형(돌격/부활/공습), 비늘 보호막,
+##   동상(Lv.6), 체력 조건/주기 발동형(Lv.7 처단+환영, Lv.9 공포). 발동형은 예고(배너+몬스터 표식) 뒤에 발동한다.
+## TODO: Lv.5 슬라임 분열(+타워 내구도), Lv.9 봉인, Lv.10 페이즈
 
 signal level_started(level: int)
 signal level_cleared(level: int)
@@ -57,6 +58,12 @@ var _next_affix := ""                 # 다음 웨이브에 붙는 변형 (BossS
 var _level_wave_no := 0               # 이번 보스 라운드에서 지금까지 보낸 웨이브 수
 var _guard_per_monster := 0.0         # 비늘 보호막: 웨이브 몬스터 1마리당 피해 감소 / 최대 감소
 var _guard_cap := 0.0
+var sent_count := 0                   # 지금까지 보낸 몬스터 수 (죽은 것 포함)
+var _chill_start := 0.0               # 동상: 이 라운드에서 선 지 _chill_start초부터 dps가 줄고 _chill_full초에 _chill_max만큼 줄어 있다 (_chill_max가 0이면 없음)
+var _chill_full := 1.0
+var _chill_max := 0.0
+var _triggered: Array = []            # 이번 라운드의 발동형 스킬 [{skill, fired: Array, timer: float}]
+var _pending_casts: Array = []        # 예고 중인 발동 [{skill, left, targets: Array}]
 
 
 func setup(boss_grid: GridSystem, renderer: GridRenderer, lanes: Dictionary) -> void:
@@ -139,11 +146,25 @@ func _apply_level_skills() -> void:
 	_level_wave_no = 0
 	_guard_per_monster = 0.0
 	_guard_cap = 0.0
+	_chill_max = 0.0
+	_clear_pending_casts()  # 이전 라운드에서 예고만 하고 발동 못 한 스킬은 취소한다
+	_triggered.clear()
 	for skill in BossSkills.of_level(level):
 		interval = minf(interval, float(skill.get("wave_interval", interval)))
 		_skill_count_mult *= float(skill.get("count_mult", 1.0))
 		_guard_per_monster += float(skill.get("guard_per_monster", 0.0))
 		_guard_cap = maxf(_guard_cap, float(skill.get("guard_cap", 0.0)))
+		if skill.has("chill_max"):
+			_chill_start = float(skill.chill_start)
+			_chill_full = float(skill.chill_full)
+			_chill_max = float(skill.chill_max)
+		if skill.has("trigger"):
+			var fired: Array = []
+			for _r in skill.get("hp_ratios", []):
+				fired.append(false)
+			_triggered.append({"skill": skill, "fired": fired, "timer": float(skill.get("first", skill.get("period", 20.0)))})
+	for m in _attackers:
+		m.chill_time = 0.0  # 동상은 이 라운드가 시작된 뒤에 선 시간부터 센다
 	_apply_wave_interval(interval)
 	# 라운드가 바뀌어 다음 웨이브의 변형이 달라지면 다음 웨이브를 다시 정한다 (처음 setup 때는 setup이 정한다)
 	if not _next_types.is_empty() and _affix_for_wave(1) != _next_affix:
@@ -193,10 +214,13 @@ func _process(delta: float) -> void:
 	# 성장형 몬스터는 보스 앞에 서 있는 시간이 길어질수록 강해진다
 	for m in _attackers:
 		m.time_at_boss += delta
+		m.chill_time += delta
+		m.dread_time = maxf(0.0, m.dread_time - delta)
 	_dps_timer -= delta
 	if _dps_timer <= 0.0:
 		_dps_timer = DPS_RECALC_INTERVAL
 		_recalc_dps()
+	_update_skills(delta)
 
 	# 도착한 몬스터들이 보스를 지속 공격 (비늘 보호막이 있으면 필드 위 웨이브 몬스터 수만큼 피해가 줄어든다)
 	damage_mult = 1.0 - _guard_reduction()
@@ -261,7 +285,9 @@ func _recalc_dps() -> void:
 		for s in supporters:
 			if s != m and s.cell_pos.distance_to(m.cell_pos) <= s.aura_radius:
 				bonus += s.aura_bonus
-		m.current_dps = base * (1.0 + minf(bonus, AURA_BONUS_CAP))
+		var dps_now := base * (1.0 + minf(bonus, AURA_BONUS_CAP))
+		m.chill = _chill_of(m)
+		m.current_dps = 0.0 if m.dread_time > 0.0 else dps_now * (1.0 - m.chill)  # 공포 중이면 0, 동상이면 그만큼 감소
 		total += m.current_dps
 	total_dps = total
 
@@ -404,12 +430,15 @@ func spawn_player_monster(owner_id: int, kind_id: String) -> void:
 
 	var spawn_cell: Vector2i = spawn_cells.pick_random()
 	var spawn_pos := Vector2(spawn_cell) + Vector2(0.5, 0.5)
-	var slot := _allocate_slot(spawn_pos)
+	var slot_info := _allocate_slot(spawn_pos)
+	var slot: Vector2 = slot_info.pos
 
 	var monster := Monster.new()
 	monster.apply_look(data)
 	monster.owner_id = owner_id
 	monster.kind_id = kind_id
+	monster.max_hp = SentMonsters.max_hp(kind_id)  # setup()이 hp를 가득 채운다
+	monster.slot_key = slot_info.key
 	monster.dps = float(data.dps)
 	monster.ramp = float(data.get("ramp", 0.0))
 	monster.ramp_cap = float(data.get("ramp_cap", 0.0))
@@ -421,8 +450,10 @@ func spawn_player_monster(owner_id: int, kind_id: String) -> void:
 	monster.z_index = 2
 	monster.setup(_next_monster_id, _grid, _renderer, _pathfinder, spawn_cell)
 	monster.reached_exit.connect(_on_monster_arrived)
+	monster.died.connect(_on_sent_monster_died)
 	_renderer.add_child(monster)
 	_sent_monsters.append(monster)
+	sent_count += 1
 	Log.info(Log.Category.GAME, "[P%d] %s 파견 (보스 레인 몬스터#%d, 목표 자리 %s)" % [
 		owner_id + 1, data.name, _next_monster_id, slot.snapped(Vector2(0.01, 0.01))])
 	_next_monster_id += 1
@@ -430,7 +461,8 @@ func spawn_player_monster(owner_id: int, kind_id: String) -> void:
 
 ## 보스 주변 빈 자리를 하나 예약한다. 안쪽 고리부터 채우고, 가득 차면 바깥 고리로 넓어진다.
 ## 같은 고리 안에서는 몬스터가 오는 방향과 가장 가까운 자리를 고른다.
-func _allocate_slot(approach_from: Vector2) -> Vector2:
+## 돌려주는 값: {pos: 자리 좌표, key: 자리 이름}. 몬스터가 죽으면 key로 자리를 비운다 (안전장치 자리는 key가 "").
+func _allocate_slot(approach_from: Vector2) -> Dictionary:
 	var approach_angle := (approach_from - Balance.BOSS_CENTER).angle()
 	var first_radius := Balance.BOSS_RADIUS + 0.55
 
@@ -453,11 +485,12 @@ func _allocate_slot(approach_from: Vector2) -> Vector2:
 				best_j = j
 				best_pos = p
 		if best_j >= 0:
-			_slots_taken["%d:%d" % [ring_idx, best_j]] = true
-			return best_pos
+			var key := "%d:%d" % [ring_idx, best_j]
+			_slots_taken[key] = true
+			return {"pos": best_pos, "key": key}
 
 	# 극단적으로 많을 때의 안전장치
-	return Balance.BOSS_CENTER + Vector2(0, first_radius)
+	return {"pos": Balance.BOSS_CENTER + Vector2(0, first_radius), "key": ""}
 
 
 func _slot_in_bounds(p: Vector2) -> bool:
@@ -493,6 +526,148 @@ func _on_monster_arrived(monster: Monster) -> void:
 		monster.monster_id, monster.owner_id + 1, monster.kind_id, total_dps, _attackers.size()])
 
 
+## 보스 레인 몬스터가 죽었다 (보스 스킬 처단, 앞으로는 PvP에서 상대 타워에게 맞아서 등)
+func _on_sent_monster_died(monster: Monster) -> void:
+	_attackers.erase(monster)
+	_sent_monsters.erase(monster)
+	if monster.slot_key != "":
+		_slots_taken.erase(monster.slot_key)  # 비운 자리는 다음에 오는 몬스터가 쓴다
+	Effects.ring(_renderer, monster.cell_pos, 0.6, monster.body_color, _lane_visible)
+	Log.info(Log.Category.GAME, "[P%d] 보스 레인 몬스터#%d(%s) 사망 (공격 중 %d마리 남음)" % [
+		monster.owner_id + 1, monster.monster_id, monster.kind_id, _attackers.size()])
+	monster.queue_free()
+	_recalc_dps()
+
+
+# --- 발동형 보스 스킬 (체력 조건 / 주기) ---
+
+## 조건이 되면 예고를 시작하고, 예고 시간이 끝나면 발동한다
+func _update_skills(delta: float) -> void:
+	var ratio := hp / max_hp
+	for entry in _triggered:
+		var skill: Dictionary = entry.skill
+		if skill.trigger == "hp_below":
+			var ratios: Array = skill.hp_ratios
+			for i in range(ratios.size()):
+				if not entry.fired[i] and ratio <= float(ratios[i]):
+					entry.fired[i] = true
+					_cast_skill(skill)
+		elif skill.trigger == "every":
+			entry.timer -= delta
+			if entry.timer <= 0.0:
+				entry.timer = float(skill.period)
+				_cast_skill(skill)
+	for i in range(_pending_casts.size() - 1, -1, -1):
+		var cast: Dictionary = _pending_casts[i]
+		cast.left -= delta
+		if cast.left <= 0.0:
+			_pending_casts.remove_at(i)
+			_resolve_skill(cast)
+
+
+## 스킬 예고: 대상을 정해서 표식을 붙이고, 어떤 몬스터가 어떻게 되는지 배너로 알린다
+func _cast_skill(skill: Dictionary) -> void:
+	var targets: Array = []
+	var text: String = skill.text
+	var warn := Color(0, 0, 0, 0)
+	match skill.effect:
+		"execute":
+			targets = _top_dps_attackers(1)
+			warn = Color(1.0, 0.15, 0.15)
+			if targets.is_empty():
+				text = "처단할 몬스터가 없습니다. 환영만 나타납니다."
+			else:
+				var victim: Monster = targets[0]
+				text = "DPS 1위 %s(P%d)가 제거됩니다 (비용의 %d%% 환급). 동시에 각 레인에 환영이 나타납니다." % [
+					SentMonsters.DATA[victim.kind_id].name, victim.owner_id + 1, roundi(float(skill.refund) * 100.0)]
+		"dread":
+			targets = _top_dps_attackers(int(skill.count))
+			if targets.is_empty():
+				return  # 아직 보스 앞에 아무도 없다
+			warn = Color(0.75, 0.35, 0.95)
+			var names: Array[String] = []
+			for target in targets:
+				names.append(SentMonsters.DATA[target.kind_id].name)
+			text = "DPS 상위 %d마리(%s)의 DPS가 %.0f초간 0이 됩니다." % [targets.size(), ", ".join(names), float(skill.duration)]
+	for target in targets:
+		target.warn_color = warn
+	var delay := float(skill.get("delay", 0.0))
+	_pending_casts.append({"skill": skill, "left": delay, "targets": targets})
+	skill_announced.emit({"name": skill.name, "text": text, "lane": skill.lane, "delay": delay, "boss": level_data.name})
+	Log.info(Log.Category.GAME, "보스 스킬 예고: %s (%.0f초 뒤, 대상 %d마리)" % [skill.name, delay, targets.size()])
+
+
+## 예고가 끝났다: 아직 살아서 보스 앞에 있는 대상에게만 효과를 준다
+func _resolve_skill(cast: Dictionary) -> void:
+	var skill: Dictionary = cast.skill
+	var victims: Array = []
+	for target in cast.targets:
+		if is_instance_valid(target):  # 예고 중에 죽어서 해제됐을 수 있다
+			target.warn_color = Color(0, 0, 0, 0)
+			if not target.is_dead() and _attackers.has(target):
+				victims.append(target)
+	match skill.effect:
+		"execute":
+			for victim in victims:
+				_execute_attacker(victim, float(skill.refund))
+			_spawn_phantoms(skill)
+		"dread":
+			for victim in victims:
+				victim.dread_time = float(skill.duration)
+				Effects.ring(_renderer, victim.cell_pos, 0.8, Color(0.75, 0.35, 0.95), _lane_visible)
+			_recalc_dps()
+	Log.info(Log.Category.GAME, "보스 스킬 발동: %s (대상 %d마리)" % [skill.name, victims.size()])
+
+
+## 보스 앞에서 싸우는 몬스터 중 지금 DPS가 높은 순서로 최대 count마리 (DPS 0인 지원형은 제외)
+func _top_dps_attackers(count: int) -> Array:
+	var list: Array = []
+	for m in _attackers:
+		if m.current_dps > 0.0 and not m.is_dead():
+			list.append(m)
+	list.sort_custom(func(a: Monster, b: Monster): return a.current_dps > b.current_dps)
+	return list.slice(0, count)
+
+
+## 처단: 몬스터를 제거하고 비용의 일부를 주인에게 돌려준다
+func _execute_attacker(monster: Monster, refund_ratio: float) -> void:
+	var cost := int(SentMonsters.DATA[monster.kind_id].cost)
+	var refund := roundi(float(cost) * refund_ratio)
+	var lane: LaneController = _lanes.get(monster.owner_id)
+	if lane != null and lane.active and refund > 0:
+		lane.gold += refund
+	Effects.ring(_renderer, monster.cell_pos, 1.0, Color(1.0, 0.2, 0.2), _lane_visible)
+	Effects.float_text(_renderer, monster.cell_pos, "처단! +%d골드" % refund, Color(1.0, 0.5, 0.4), _lane_visible)
+	Log.info(Log.Category.ECONOMY, "[P%d] %s 처단됨: 환급 +%d골드 (비용 %d)" % [monster.owner_id + 1, monster.kind_id, refund, cost])
+	monster.execute(null)  # 죽음 처리(자리 비우기, DPS 다시 계산)는 died 시그널을 받는 쪽이 한다
+
+
+## 환영: 모든 참여 레인에 중장갑 몬스터를 보낸다
+func _spawn_phantoms(skill: Dictionary) -> void:
+	var wave_type: Dictionary = WaveTypes.TYPES["tank"]
+	var hp_value: float = Balance.WAVE_MONSTER_HP * float(wave_type.hp) * float(level_data.wave_hp) * float(skill.get("phantom_hp", 1.0))
+	for lane in _lanes.values():
+		for i in range(int(skill.get("phantoms", 1))):
+			lane.spawn_wave_monster(hp_value, "tank", level, lane.pick_spawn_cell())
+
+
+## 예고만 하고 발동하지 못한 스킬을 취소한다 (표식도 지운다)
+func _clear_pending_casts() -> void:
+	for cast in _pending_casts:
+		for target in cast.targets:
+			if is_instance_valid(target):
+				target.warn_color = Color(0, 0, 0, 0)
+	_pending_casts.clear()
+
+
+## 동상: 이 라운드에서 보스 앞에 선 시간에 따라 dps가 줄어드는 비율
+func _chill_of(monster: Monster) -> float:
+	if _chill_max <= 0.0:
+		return 0.0
+	var span := maxf(_chill_full - _chill_start, 0.001)
+	return _chill_max * clampf((monster.chill_time - _chill_start) / span, 0.0, 1.0)
+
+
 func _on_lane_failed(player_id: int) -> void:
 	# 모든 참여 플레이어가 패배하면 전체 패배
 	for lane in _lanes.values():
@@ -506,6 +681,7 @@ func _finish(result: State, reason: String) -> void:
 		return
 	state = result
 	_dispatch_timer.stop()
+	_clear_pending_casts()
 	for lane in _lanes.values():
 		lane.shutdown()
 	for m in _sent_monsters:

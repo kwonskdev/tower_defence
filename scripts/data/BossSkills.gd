@@ -11,7 +11,13 @@ class_name BossSkills
 ##   count_mult: 웨이브 한 묶음의 마릿수 배율. 없으면 1.0
 ##   wave_affix + affix_every: N번째 웨이브마다(N, 2N, ...) 그 웨이브에 AFFIXES의 변형을 붙인다. 다음 웨이브 미리보기에 먼저 뜬다.
 ##   guard_per_monster + guard_cap: 비늘 보호막. 필드 위 웨이브 몬스터(참여 레인 평균) 1마리당 보스가 받는 피해가 이만큼 줄고, 최대 guard_cap까지
-## (체력 조건/주기 발동 스킬은 해당 보스를 만들 때 이 파일에 항목을 추가한다)
+##   chill_start / chill_full / chill_max: 동상. 이 라운드에서 보스 앞에 선 지 chill_start초부터 dps가 줄기 시작해 chill_full초에 chill_max(비율)가 된다
+## 발동형 스킬(조건이 되면 예고 후 발동)이 쓰는 항목
+##   trigger: "hp_below"(보스 체력이 hp_ratios의 각 비율 이하가 될 때 한 번씩) / "every"(first초 뒤부터 period초마다)
+##   delay: 예고 시간(초). 발동 전에 배너와 몬스터 표식으로 알린다
+##   effect: "execute"(보스 앞 DPS 1위 제거 + 환영) / "dread"(보스 앞 DPS 상위 count마리의 dps를 duration초 동안 0)
+##   execute: refund(비용 환급 비율), phantoms(레인마다 나오는 환영 수), phantom_hp(환영 체력 배율)
+##   dread: count, duration
 
 ## 웨이브 변형. 웨이브 전체에 붙는다.
 ##   speed_mult: 이동속도 배율 / revive: 처음 죽을 때 이 비율의 체력으로 한 번 되살아남 / air_only: 공중 몬스터 종류만 뽑는다
@@ -40,6 +46,17 @@ const BY_LEVEL := {
 			"text": "3웨이브마다 한 번, 그 웨이브 몬스터는 처음 죽으면 체력 50%로 한 번 되살아납니다. 골드는 마지막에 죽을 때만 줍니다.",
 			"wave_affix": "undead", "affix_every": 3},
 	],
+	6: [
+		{"id": "chill", "name": "동상", "lane": "boss",
+			"text": "보스 앞에 10초 넘게 서 있으면 DPS가 줄기 시작해 40초에 -50%가 됩니다. 새로 도착한 몬스터는 다시 100%이니 계속 보강하세요.",
+			"chill_start": 10.0, "chill_full": 40.0, "chill_max": 0.5},
+	],
+	7: [
+		{"id": "execute", "name": "처단", "lane": "both",
+			"text": "체력 75/50/25%에서 보스 앞 DPS 1위 몬스터가 3초 예고 뒤 제거됩니다 (비용의 50% 환급). 동시에 각 레인에 환영(중장갑)이 나타납니다.",
+			"trigger": "hp_below", "hp_ratios": [0.75, 0.5, 0.25], "delay": 3.0,
+			"effect": "execute", "refund": 0.5, "phantoms": 1, "phantom_hp": 1.5},
+	],
 	8: [
 		{"id": "airraid", "name": "공습", "lane": "player",
 			"text": "2웨이브마다 한 번, 그 웨이브가 전부 공중 몬스터입니다. 대공 타워가 없으면 막을 수 없습니다.",
@@ -47,6 +64,12 @@ const BY_LEVEL := {
 		{"id": "scale_guard", "name": "비늘 보호막", "lane": "both",
 			"text": "필드 위 웨이브 몬스터 1마리당 보스가 받는 피해가 2% 줄어듭니다 (최대 40%). 웨이브를 빨리 잡아야 합니다.",
 			"guard_per_monster": 0.02, "guard_cap": 0.4},
+	],
+	9: [
+		{"id": "dread", "name": "공포", "lane": "boss",
+			"text": "25초마다 보스 앞 DPS 상위 3마리가 3초 예고 뒤 6초간 DPS 0이 됩니다. 한두 마리에 화력을 몰아주지 마세요.",
+			"trigger": "every", "first": 15.0, "period": 25.0, "delay": 3.0,
+			"effect": "dread", "count": 3, "duration": 6.0},
 	],
 }
 
