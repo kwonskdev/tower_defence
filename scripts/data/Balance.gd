@@ -78,6 +78,42 @@ const COLOR_LEVEL_BONUS := {
 const COLOR_MAX_LEVEL := 5
 const COLOR_UPGRADE_COSTS := [20, 40, 70, 110, 160]
 
+# UI 표시용 보너스 이름
+const COLOR_BONUS_LABELS := {
+	"damage": "공격력", "cooldown": "공격속도", "range": "사거리", "income": "처치 골드",
+	"penetration": "방어력 관통", "empower": "몬스터 강화", "lifegain": "생명 +1 확률",
+}
+
+
+## 색깔 보너스 수치 글자 (level 0이면 "-"). 예: "+22%", "2마리"
+static func color_bonus_value_text(color_name: String, level: int) -> String:
+	if level <= 0:
+		return "-"
+	var type: String = COLOR_BONUS_TYPES[color_name]
+	if type == "empower":
+		return "%d마리" % COLOR_LEVEL_BONUS["empower_count"][level - 1]
+	return "+%d%%" % roundi(float(COLOR_LEVEL_BONUS[type][level - 1]) * 100.0)
+
+
+## 색깔 보너스 설명 (마우스를 올렸을 때)
+static func color_tooltip(color_name: String, level: int) -> String:
+	var type: String = COLOR_BONUS_TYPES[color_name]
+	var text := "%s: %s (이 색 타워에 적용, 레인 전체 공유)\n" % [color_name, COLOR_BONUS_LABELS[type]]
+	match type:
+		"damage": text += "이 색 타워의 공격력이 오른다."
+		"cooldown": text += "이 색 타워의 공격 간격이 짧아진다."
+		"range": text += "이 색 타워의 사거리가 늘어난다."
+		"income": text += "이 색 타워가 처치한 몬스터의 골드 보상이 늘어난다."
+		"penetration": text += "이 색 타워의 공격이 적 방어력의 일부를 무시한다."
+		"empower": text += "이 색 타워가 적을 처치하면 내가 보낸 몬스터 N마리가 %d초간 공격력 +%d%% (같은 몬스터에게 겹치면 효과가 쌓인다)." % [
+			roundi(EMPOWER_DURATION), roundi(EMPOWER_BOOST * 100.0)]
+		"lifegain": text += "이 색 타워가 적을 처치하면 확률로 생명 +1."
+	text += "\n현재 %s" % color_bonus_value_text(color_name, level)
+	if level < COLOR_MAX_LEVEL:
+		text += " -> 다음 %s" % color_bonus_value_text(color_name, level + 1)
+	return text
+
+
 # 강화 효과 상수
 const EMPOWER_DURATION := 8.0      # 강화 지속시간 (초)
 const EMPOWER_BOOST := 0.1         # 강화 효과 +10% (중첩 가능)

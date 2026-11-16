@@ -42,6 +42,8 @@ var detail_grid: GridContainer
 var _detail_evo := ""                    # 지금 보고 있는 계열
 var _detail_items: Array = []            # [{btn, stat: Dictionary}]
 var _hover: Array = []                   # 마우스가 올라간 항목: [계열, 종류("evo"/"stat"), 스킬, 키]
+var color_view: HBoxContainer            # 색깔 업그레이드: [←] + 4x2 격자 (7색 중 업그레이드할 색 고르기)
+var color_buttons: Dictionary = {}       # 색깔 이름 -> Button
 var tower_view: GridContainer
 var _hud_timer := 0.0
 
@@ -218,7 +220,8 @@ func _create_tower_view():
 
 ## 업그레이드 탭 (타워 / 색깔).
 ## 타워 탭: 진화 계열 8개 중 하나를 고르면 그 계열의 업그레이드 항목(관통 수, 독 피해 ...)이 나오고,
-## 항목을 올리면 그 계열로 진화한 모든 타워가 강해진다 (계열 공통). 색깔 탭은 아직 기획이 없어서 자리만 만들어 두었다.
+## 항목을 올리면 그 계열로 진화한 모든 타워가 강해진다 (계열 공통).
+## 색깔 탭: 7색 중 하나를 고르면 그 색 타워의 고유 보너스(공격력, 공속 등) 레벨이 오른다 (레인 공유).
 ## (진화와 B 스킬 배우기는 타워마다 개별: 타워를 선택하면 나오는 버튼으로 한다.)
 ## 타워 탭의 두 화면은 모두 [←] 한 칸 + 4x2 격자로 보여준다.
 func _create_upgrade_views():
@@ -235,9 +238,34 @@ func _create_upgrade_views():
 	tower_tab.pressed.connect(_show_view.bind("evos"))
 	upgrade_menu.add_child(tower_tab)
 	var color_tab := _make_view_button("색깔")
-	color_tab.disabled = true
-	color_tab.tooltip_text = "색깔별 업그레이드 (준비 중)"
+	color_tab.tooltip_text = "색깔별 업그레이드: 색을 고르면 그 색 타워의 고유 보너스가 강해진다"
+	color_tab.pressed.connect(_show_view.bind("colors"))
 	upgrade_menu.add_child(color_tab)
+
+	# 색깔 화면: 7색 버튼 (4x2 격자, 마지막 칸은 비워 둔다). 누르면 바로 업그레이드
+	color_view = HBoxContainer.new()
+	color_view.visible = false
+	left_panel.add_child(color_view)
+	color_view.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var color_back := _make_back_column("colors_back")
+	color_back.pressed.connect(_show_view.bind("upgrade"))
+	color_view.add_child(color_back)
+	var color_grid := GridContainer.new()
+	color_grid.columns = 4
+	color_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	color_grid.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	color_view.add_child(color_grid)
+	for info in Balance.TOWER_COLORS:
+		var cname: String = info.name
+		var cb := _make_view_button("", 10)
+		var font_col: Color = info.color.lightened(0.35)  # 남색처럼 어두운 색도 글자가 보이게
+		cb.add_theme_color_override("font_color", font_col)
+		cb.add_theme_color_override("font_disabled_color", Color(font_col, 0.55))
+		cb.pressed.connect(_on_color_pressed.bind(cname))
+		cb.mouse_entered.connect(func(): _hover = [cname, "color", "", ""])
+		cb.mouse_exited.connect(func(): _hover = [])
+		color_grid.add_child(cb)
+		color_buttons[cname] = cb
 
 	# 1단계: 진화 계열 8개 (4x2). 윗줄 = 장거리 2 + 범위 2, 아랫줄 = 대공 2 + 트랩 2
 	evo_view = HBoxContainer.new()
@@ -316,7 +344,8 @@ func _show_view(view: String) -> void:
 	evo_view.visible = view == "evos"
 	evo_frames.visible = view == "evos"
 	detail_view.visible = view == "detail"
-	skill_hint_label.visible = view == "evos" or view == "detail"
+	color_view.visible = view == "colors"
+	skill_hint_label.visible = view == "evos" or view == "detail" or view == "colors"
 	_hover = []
 
 
@@ -350,6 +379,11 @@ func _on_stat_pressed(evo: String, skill: String, key: String) -> void:
 	_refresh_now()
 
 
+func _on_color_pressed(color_name: String) -> void:
+	game_field.upgrade_color(color_name)
+	_refresh_now()
+
+
 func _refresh_now() -> void:
 	var lane: LaneController = game_field.lanes.get(game_field.local_player_id)
 	if lane:
@@ -372,10 +406,23 @@ func _refresh_upgrade_views(lane: LaneController) -> void:
 			var nxt := "최대" if lv >= Evolutions.MAX_LEVEL else "→ %s\n%d골드" % [Evolutions.stat_value_text(evo, stat, lv + 1), cost]
 			b.text = "%s %s\nLv%d  %s\n%s" % [stat.s, stat.name, lv, Evolutions.stat_value_text(evo, stat, lv), nxt]
 			b.disabled = cost < 0 or lane.gold < cost
+	if color_view.visible:
+		for cname in color_buttons:
+			var b: Button = color_buttons[cname]
+			var lv := lane.color_level(cname)
+			var cost := lane.color_upgrade_cost(cname)
+			var type: String = Balance.COLOR_BONUS_TYPES[cname]
+			var nxt := "최대" if cost < 0 else "→ %s\n%d골드" % [Balance.color_bonus_value_text(cname, lv + 1), cost]
+			b.text = "%s\n%s\nLv%d  %s\n%s" % [cname, Balance.COLOR_BONUS_LABELS[type], lv, Balance.color_bonus_value_text(cname, lv), nxt]
+			b.disabled = cost < 0 or lane.gold < cost
 	skill_hint_label.text = _hover_text(lane)
 
 
 func _hover_text(lane: LaneController) -> String:
+	if _hover.size() == 4 and _hover[1] == "color":
+		return Balance.color_tooltip(_hover[0], lane.color_level(_hover[0]))
+	if color_view.visible:
+		return "색을 고르면 그 색 타워의 고유 보너스가 강해집니다 (레인 전체 공유). 마우스를 올리면 설명."
 	if _hover.size() == 4:
 		var evo: String = _hover[0]
 		match _hover[1]:
@@ -677,7 +724,7 @@ func _update_hud():
 	if lane == null or boss == null:
 		return
 	_update_tower_info(lane)
-	if evo_view.visible or detail_view.visible:
+	if evo_view.visible or detail_view.visible or color_view.visible:
 		_refresh_upgrade_views(lane)
 
 	_update_status_panel(lane, boss)

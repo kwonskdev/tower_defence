@@ -209,6 +209,12 @@ func upgrade_stat(evo: String, skill: String, key: String) -> bool:
 	return lane != null and lane.upgrade_stat(evo, skill, key)
 
 
+## 색깔 업그레이드 (골드, 그 색 타워 전체에 적용)
+func upgrade_color(color_name: String) -> bool:
+	var lane: LaneController = lanes.get(local_player_id)
+	return lane != null and lane.upgrade_color(color_name)
+
+
 ## 선택한 타워 1기의 B 스킬을 배운다 (골드, 타워마다 따로)
 func learn_selected_tower_skill() -> bool:
 	var lane: LaneController = lanes.get(local_player_id)
