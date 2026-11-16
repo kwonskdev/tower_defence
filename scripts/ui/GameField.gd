@@ -15,6 +15,7 @@ var selected_tower_kind: String = Balance.TOWER_KINDS[0]
 
 var current_tool: PlacementTool = PlacementTool.NONE
 signal path_block_confirm(cell: Vector2i)  # 이 타워를 지으면 길이 막힌다: 사용자에게 확인을 받아야 한다
+signal boss_ready(boss: BossController)    # 보스가 만들어졌다 (한 프레임 기다린 뒤라서 MainGame._ready 시점에는 아직 없다)
 
 var awaiting_confirm: bool = false  # 길 막힘 확인을 기다리는 중 (이 클릭으로는 타워 선택/해제를 하지 않는다)
 var game_started: bool = false  # 시작 버튼을 눌렀는지
@@ -92,6 +93,7 @@ func start_boss():
 	add_child(boss)
 	boss.setup(grid_systems[BOSS_LANE_ID], grid_renderer, lanes)
 	boss.set_lane_visible(current_player_id == BOSS_LANE_ID)
+	boss_ready.emit(boss)
 
 func setup_scroll_container():
 	# 가로 스크롤 비활성화 (세로 드래그 스크롤만 사용)

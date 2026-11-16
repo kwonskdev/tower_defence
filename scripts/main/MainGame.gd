@@ -635,84 +635,24 @@ func _on_path_block_confirmed() -> void:
 	game_field.place_tower(_pending_cell, true)
 
 
-## 승리/패배 화면 생성
+## 승리/패배 화면 생성 (화면의 UI는 GameOverScreen이 스스로 만든다)
 func _create_game_over_screen() -> void:
 	game_over_screen = GameOverScreen.new()
-	game_over_screen.visible = false
 	add_child(game_over_screen)
-
-	# UI 구조 생성 (코드로 직접 만듦)
-	var panel := PanelContainer.new()
-	panel.name = "Panel"
-	var panel_style := StyleBoxFlat.new()
-	panel_style.bg_color = Color(0.1, 0.1, 0.15, 0.95)
-	panel_style.border_color = Color(0.4, 0.4, 0.5)
-	panel_style.set_border_width_all(3)
-	panel_style.set_corner_radius_all(8)
-	panel_style.content_margin_left = 40
-	panel_style.content_margin_right = 40
-	panel_style.content_margin_top = 30
-	panel_style.content_margin_bottom = 30
-	panel.add_theme_stylebox_override("panel", panel_style)
-	panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
-	panel.custom_minimum_size = Vector2(500, 400)
-	game_over_screen.add_child(panel)
-
-	var vbox := VBoxContainer.new()
-	vbox.name = "VBox"
-	vbox.add_theme_constant_override("separation", 20)
-	panel.add_child(vbox)
-
-	# 제목
-	var title := Label.new()
-	title.name = "Title"
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", 36)
-	vbox.add_child(title)
-
-	# 통계
-	var stats := Label.new()
-	stats.name = "Stats"
-	stats.add_theme_font_size_override("font_size", 16)
-	stats.add_theme_color_override("font_color", Color(0.9, 0.9, 1.0))
-	vbox.add_child(stats)
-
-	# 기여도 (멀티플레이 시에만 표시)
-	var contribution := Label.new()
-	contribution.name = "Contribution"
-	contribution.add_theme_font_size_override("font_size", 14)
-	contribution.add_theme_color_override("font_color", Color(0.8, 0.9, 1.0))
-	contribution.visible = false
-	vbox.add_child(contribution)
-
-	# 버튼들
-	var buttons := HBoxContainer.new()
-	buttons.name = "Buttons"
-	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
-	buttons.add_theme_constant_override("separation", 20)
-	vbox.add_child(buttons)
-
-	var restart := Button.new()
-	restart.name = "RestartButton"
-	restart.text = "재도전"
-	restart.custom_minimum_size = Vector2(150, 50)
-	restart.add_theme_font_size_override("font_size", 18)
-	buttons.add_child(restart)
-
-	var quit := Button.new()
-	quit.name = "QuitButton"
-	quit.text = "종료"
-	quit.custom_minimum_size = Vector2(150, 50)
-	quit.add_theme_font_size_override("font_size", 18)
-	buttons.add_child(quit)
-
-	# 보스 시그널 연결
-	if game_field and game_field.boss:
-		game_field.boss.boss_defeated.connect(_on_boss_defeated)
-		game_field.boss.boss_failed.connect(_on_boss_failed)
-
 	game_over_screen.restart_requested.connect(_on_game_over_restart)
 	game_over_screen.quit_requested.connect(_on_game_over_quit)
+	game_field.ui_blockers.append(game_over_screen)  # 화면이 떠 있는 동안 뒤의 맵이 클릭되지 않도록
+
+	# 보스는 GameField가 한 프레임 기다린 뒤에 만들어서 지금은 아직 없다: 만들어지는 순간 연결한다
+	if game_field.boss != null:
+		_connect_boss(game_field.boss)
+	else:
+		game_field.boss_ready.connect(_connect_boss)
+
+
+func _connect_boss(boss: BossController) -> void:
+	boss.boss_defeated.connect(_on_boss_defeated)
+	boss.boss_failed.connect(_on_boss_failed)
 
 
 ## 상태 패널용 작은 아이콘 (하트 / 금화 / 점). 글꼴에 이모지가 없어도 보이도록 직접 그린다.
