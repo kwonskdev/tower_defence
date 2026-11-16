@@ -8,8 +8,8 @@ class_name BossController
 ##   한 웨이브는 종류가 다른 몬스터 묶음 WAVE_GROUPS개이고, 다음 웨이브에 뭐가 오는지는 미리 정해져서 HUD에 보인다.
 ##   종류마다 이기는 타워가 달라서 그때그때 필요한 타워가 달라진다 (WaveTypes 상성 참고).
 ## - 제한시간 안에 못 잡으면 패배. 보스는 플레이어 몬스터를 공격하지 않는다 (현재 미정).
-## - 보스 스킬은 BossSkills.gd에 라운드별로 정의한다. 지금은 항상 켜져 있는 스킬(웨이브 주기/마릿수)만 있다.
-## TODO: 보스 스킬 중 체력 조건/주기 발동형, 웨이브 변형, 보스 레인 보정 (BossSkills.gd 참고)
+## - 보스 스킬은 BossSkills.gd에 라운드별로 정의한다. 지금 있는 것: 웨이브 주기/마릿수, 웨이브 변형(돌격/부활/공습), 비늘 보호막.
+## TODO: 체력 조건/주기 발동형 스킬 (Lv.5 분열, Lv.7 처단, Lv.9 봉인/공포), Lv.6 동상, Lv.10 페이즈
 
 signal level_started(level: int)
 signal level_cleared(level: int)
@@ -52,6 +52,11 @@ var _dmg_timer := 0.0
 var _dps_timer := 0.0
 var _next_types: Array[String] = []   # 다음 웨이브에 오는 몬스터 묶음 종류 (미리 정해 둔다)
 var _skill_count_mult := 1.0          # 이번 보스 스킬이 정한 웨이브 마릿수 배율
+var damage_mult := 1.0                # 보스가 받는 피해 배율 (비늘 보호막. 1.0이면 그대로)
+var _next_affix := ""                 # 다음 웨이브에 붙는 변형 (BossSkills.AFFIXES 키, 없으면 "")
+var _level_wave_no := 0               # 이번 보스 라운드에서 지금까지 보낸 웨이브 수
+var _guard_per_monster := 0.0         # 비늘 보호막: 웨이브 몬스터 1마리당 피해 감소 / 최대 감소
+var _guard_cap := 0.0
 
 
 func setup(boss_grid: GridSystem, renderer: GridRenderer, lanes: Dictionary) -> void:
@@ -131,12 +136,21 @@ func _start_level(new_level: int) -> void:
 func _apply_level_skills() -> void:
 	var interval := Balance.INCOME_INTERVAL
 	_skill_count_mult = 1.0
+	_level_wave_no = 0
+	_guard_per_monster = 0.0
+	_guard_cap = 0.0
 	for skill in BossSkills.of_level(level):
 		interval = minf(interval, float(skill.get("wave_interval", interval)))
 		_skill_count_mult *= float(skill.get("count_mult", 1.0))
+		_guard_per_monster += float(skill.get("guard_per_monster", 0.0))
+		_guard_cap = maxf(_guard_cap, float(skill.get("guard_cap", 0.0)))
 	_apply_wave_interval(interval)
-	if interval != Balance.INCOME_INTERVAL or _skill_count_mult != 1.0:
-		Log.info(Log.Category.GAME, "보스 스킬 적용: 웨이브 주기 %.0fs, 마릿수 x%.2f" % [interval, _skill_count_mult])
+	# 라운드가 바뀌어 다음 웨이브의 변형이 달라지면 다음 웨이브를 다시 정한다 (처음 setup 때는 setup이 정한다)
+	if not _next_types.is_empty() and _affix_for_wave(1) != _next_affix:
+		_plan_next_wave()
+	if not BossSkills.of_level(level).is_empty():
+		Log.info(Log.Category.GAME, "보스 스킬 적용: 웨이브 주기 %.0fs, 마릿수 x%.2f, 보호막 %.0f%%/마리(최대 %.0f%%)" % [
+			interval, _skill_count_mult, _guard_per_monster * 100.0, _guard_cap * 100.0])
 
 
 ## 이번 라운드의 스킬을 배너로 알린다 (시작 버튼을 누를 때와 새 보스가 나올 때)
@@ -184,13 +198,14 @@ func _process(delta: float) -> void:
 		_dps_timer = DPS_RECALC_INTERVAL
 		_recalc_dps()
 
-	# 도착한 몬스터들이 보스를 지속 공격
+	# 도착한 몬스터들이 보스를 지속 공격 (비늘 보호막이 있으면 필드 위 웨이브 몬스터 수만큼 피해가 줄어든다)
+	damage_mult = 1.0 - _guard_reduction()
 	if total_dps > 0.0:
-		var dealt := total_dps * delta
+		var dealt := total_dps * delta * damage_mult
 		hp -= dealt
 		_dmg_accum += dealt
 		for m in _attackers:
-			damage_by_player[m.owner_id] = damage_by_player.get(m.owner_id, 0.0) + m.current_dps * delta
+			damage_by_player[m.owner_id] = damage_by_player.get(m.owner_id, 0.0) + m.current_dps * delta * damage_mult
 
 		_dmg_timer += delta
 		if _dmg_timer >= 1.0:
@@ -205,6 +220,31 @@ func _process(delta: float) -> void:
 	elif time_left <= 0.0:
 		time_left = 0.0
 		_finish(State.DEFEAT, "제한시간 초과 (Lv.%d)" % level)
+
+
+## 비늘 보호막이 지금 줄이는 피해 비율 (0~guard_cap). 필드 위 웨이브 몬스터 수를 참여 레인 평균으로 센다.
+func _guard_reduction() -> float:
+	if _guard_per_monster <= 0.0:
+		return 0.0
+	var alive := 0
+	var lane_count := 0
+	for lane in _lanes.values():
+		if lane.active:
+			alive += lane.monsters.size()
+			lane_count += 1
+	if lane_count == 0:
+		return 0.0
+	return minf(_guard_cap, _guard_per_monster * float(alive) / float(lane_count))
+
+
+## 보호막까지 반영해서 보스가 실제로 깎이는 초당 피해
+func effective_dps() -> float:
+	return total_dps * damage_mult
+
+
+## 이번 라운드에 비늘 보호막이 있는가 (HUD 표시용)
+func has_guard() -> bool:
+	return _guard_per_monster > 0.0
 
 
 ## 보스 앞에 선 몬스터들의 실제 초당 피해 합계 (성장 + 지원형 오라 반영)
@@ -254,11 +294,30 @@ func _on_level_cleared() -> void:
 	_announce_level_skills()
 
 
-## 다음 웨이브의 몬스터 묶음 종류를 미리 정한다 (HUD 미리보기용). 종류는 라운드에 맞게 가중치로 뽑는다.
+## 다음 웨이브의 변형과 몬스터 묶음 종류를 미리 정한다 (HUD 미리보기용). 종류는 라운드에 맞게 가중치로 뽑는다.
+## 공습 변형이면 공중 종류만 뽑는다.
 func _plan_next_wave() -> void:
+	_next_affix = _affix_for_wave(_level_wave_no + 1)
+	var air_only := _next_affix != "" and bool(BossSkills.AFFIXES[_next_affix].get("air_only", false))
 	_next_types.clear()
 	for i in range(Balance.WAVE_GROUPS):
-		_next_types.append(WaveTypes.pick(level))
+		_next_types.append(WaveTypes.pick(level, air_only))
+
+
+## 이번 라운드의 wave_no번째 웨이브에 붙는 변형 (없으면 ""). "N웨이브마다"는 N, 2N, ... 번째에 붙는다.
+func _affix_for_wave(wave_no: int) -> String:
+	for skill in BossSkills.of_level(level):
+		if skill.has("wave_affix") and wave_no % int(skill.affix_every) == 0:
+			return skill.wave_affix
+	return ""
+
+
+## HUD용: 다음 웨이브에 붙는 변형 {id, name, color}. 없으면 빈 딕셔너리.
+func get_next_wave_affix() -> Dictionary:
+	if _next_affix == "":
+		return {}
+	var a: Dictionary = BossSkills.AFFIXES[_next_affix]
+	return {"id": _next_affix, "name": a.name, "color": a.color}
 
 
 ## 묶음 하나의 마릿수. 라운드가 오를수록(파견 압박 interval이 짧아질수록, count_mult가 클수록) 늘어난다.
@@ -299,12 +358,18 @@ func _dispatch_wave() -> void:
 		return
 	var types := _next_types.duplicate()
 	var preview := get_next_wave_preview()
+	var affix_id := _next_affix
+	_level_wave_no += 1
 	_plan_next_wave()  # 그다음 웨이브를 미리 정해 둔다
 	var parts: Array[String] = []
 	for e in preview:
 		parts.append("%s x%d%s" % [e.name, e.count, "(공중)" if e.flying else ""])
 	current_wave_text = ", ".join(parts)
-	Log.debug(Log.Category.GAME, "보스 파견: %s (Lv.%d)" % [current_wave_text, level])
+	Log.debug(Log.Category.GAME, "보스 파견: %s%s (Lv.%d, %d번째 웨이브)" % [
+		"[%s] " % affix_id if affix_id != "" else "", current_wave_text, level, _level_wave_no])
+	if affix_id != "":  # 변형 웨이브는 도착할 때 한 번 더 알린다 (미리보기는 이미 한 웨이브 전부터 떠 있다)
+		var a: Dictionary = BossSkills.AFFIXES[affix_id]
+		skill_announced.emit({"name": "%s 웨이브" % a.name, "text": a.text, "lane": "player", "delay": 0.0, "boss": level_data.name})
 
 	var dispatch_level := level
 	var ratio := hp / max_hp
@@ -326,7 +391,7 @@ func _dispatch_wave() -> void:
 					return
 			first = false
 			for lane in _lanes.values():
-				lane.spawn_wave_monster(hp_value, type_id, dispatch_level, spawn_cells[lane])
+				lane.spawn_wave_monster(hp_value, type_id, dispatch_level, spawn_cells[lane], affix_id)
 
 
 ## 플레이어가 생산한 몬스터를 보스 레인으로 보낸다

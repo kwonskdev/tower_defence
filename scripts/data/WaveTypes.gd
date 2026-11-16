@@ -46,18 +46,22 @@ const TYPES := {
 }
 
 
-## 보스 라운드에 맞는 종류를 가중치로 뽑는다
-static func pick(level: int) -> String:
+## 보스 라운드에 맞는 종류를 가중치로 뽑는다. flying_only이면 공중 종류만 (공습 웨이브).
+static func pick(level: int, flying_only: bool = false) -> String:
 	var total := 0.0
 	for id in TYPES:
-		if level >= TYPES[id].min_level:
+		if _can_pick(id, level, flying_only):
 			total += TYPES[id].weight
 	var roll := randf() * total
 	for id in TYPES:
-		var t: Dictionary = TYPES[id]
-		if level < t.min_level:
+		if not _can_pick(id, level, flying_only):
 			continue
-		roll -= t.weight
+		roll -= TYPES[id].weight
 		if roll <= 0.0:
 			return id
-	return "grunt"
+	return "flyer" if flying_only else "grunt"
+
+
+static func _can_pick(id: String, level: int, flying_only: bool) -> bool:
+	var t: Dictionary = TYPES[id]
+	return level >= t.min_level and (not flying_only or t.flying)

@@ -231,7 +231,8 @@ func pick_spawn_cell() -> Vector2i:
 
 
 ## 보스의 자동 파견: 이 레인에 몬스터를 보낸다 (level: 보스 라운드. 보상/방어력이 라운드에 따라 오른다)
-func spawn_wave_monster(hp_value: float, type_id: String = "grunt", level: int = 1, spawn_cell: Vector2i = Pathfinder.NO_GOAL) -> void:
+## affix: 웨이브 변형 (BossSkills.AFFIXES 키, 없으면 "")
+func spawn_wave_monster(hp_value: float, type_id: String = "grunt", level: int = 1, spawn_cell: Vector2i = Pathfinder.NO_GOAL, affix: String = "") -> void:
 	if not active:
 		return
 	if spawn_cell == Pathfinder.NO_GOAL:
@@ -250,6 +251,10 @@ func spawn_wave_monster(hp_value: float, type_id: String = "grunt", level: int =
 	monster.regen = wave_type.regen
 	monster.flying = wave_type.flying
 	monster.reward = roundi(wave_type.reward * (1.0 + 0.15 * (level - 1)))
+	if affix != "":
+		var affix_data: Dictionary = BossSkills.AFFIXES[affix]
+		monster.speed_boost = float(affix_data.get("speed_mult", 1.0))
+		monster.revive_ratio = float(affix_data.get("revive", 0.0))
 	monster.visible = lane_visible
 	monster.z_index = 2
 	monster.setup(_next_monster_id, _grid, _renderer, _pathfinder, spawn_cell)

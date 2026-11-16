@@ -38,6 +38,11 @@ var regen: float = 0.0           # 초당 최대체력 회복 비율
 var flying: bool = false
 var body_color: Color = Color(0.85, 0.2, 0.2)
 
+# 웨이브 변형 (보스 스킬이 웨이브 전체에 붙인다. BossSkills.AFFIXES)
+var speed_boost: float = 1.0     # 이동속도 배율 (돌격)
+var revive_ratio: float = 0.0    # 처음 죽을 때 이 비율의 체력으로 되살아난다 (부활). 0이면 없음
+var _revived := false
+
 # 보스 레인에서 쓰는 값 (내가 보낸 몬스터)
 var dps: float = 0.0             # 기본 초당 피해
 var ramp: float = 0.0            # 보스 앞에 선 뒤 초당 dps 증가량
@@ -142,9 +147,21 @@ func _lose_hp(amount: float, damage_source, kill_source) -> void:
 	if is_instance_valid(damage_source):  # 투사체가 날아가는 사이 타워가 부서졌을 수 있다
 		damage_source.record_damage(applied)
 	if hp <= 0.0:
+		if revive_ratio > 0.0 and not _revived:  # 처음 죽는 순간: 킬로 치지 않고 되살아난다
+			_revive()
+			return
 		if is_instance_valid(kill_source):
 			kill_source.record_kill()
 		_die()
+
+
+## 부활: 체력 일부로 되살아난다 (한 번뿐). 독은 그대로 이어지고, 이번 타격에 터진 표식은 이미 쓰였다.
+func _revive() -> void:
+	_revived = true
+	hp = max_hp * revive_ratio
+	_hit_flash = 0.25
+	Effects.ring(_renderer, cell_pos, 0.8, Color(0.9, 0.9, 0.8), visible)
+	Effects.float_text(_renderer, cell_pos, "부활!", Color(0.9, 0.9, 0.8), visible)
 
 
 func _die() -> void:
@@ -359,7 +376,7 @@ func _process(delta: float) -> void:
 		return
 
 	var to_target := target - cell_pos
-	var step := speed * speed_mult() * delta
+	var step := speed * speed_mult() * speed_boost * delta
 	if to_target.length() <= step:
 		cell_pos = target
 		waypoints.pop_front()
@@ -454,6 +471,11 @@ func _draw() -> void:
 			draw_arc(c, rr + 6.0, 0.0, TAU, 20, Color(1.0, 0.9, 0.2, 0.95), 2.5)
 		if armor_break_time > 0.0:
 			draw_arc(c, r * 1.05, PI * 0.1, PI * 0.9, 8, Color(1.0, 0.25, 0.2), 3.0)
+		# 웨이브 변형 표시: 돌격=주황 고리, 부활(아직 안 되살아남)=뼈색 고리
+		if speed_boost > 1.0:
+			draw_arc(c, rr + 9.0, 0.0, TAU, 20, Color(1.0, 0.6, 0.2, 0.9), 2.0)
+		if revive_ratio > 0.0 and not _revived:
+			draw_arc(c, rr + 9.0, 0.0, TAU, 20, Color(0.9, 0.9, 0.8, 0.9), 2.0)
 		for i in range(mini(marks.size(), 8)):
 			var mp := c + Vector2((i - minf(marks.size(), 8.0) * 0.5 + 0.5) * 8.0, -r - cell * 0.38)
 			draw_colored_polygon(PackedVector2Array([

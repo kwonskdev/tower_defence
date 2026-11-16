@@ -26,6 +26,8 @@ var status_lives_label: Label
 var status_gold_label: Label
 var status_income_label: Label
 var status_wave_title: Label
+var status_affix_label: Label            # 다음 웨이브에 변형(돌격/부활/공습)이 붙으면 표시
+var status_guard_label: Label            # 비늘 보호막이 보스 피해를 얼마나 줄이는지
 var status_wave_rows: Array = []         # [{dot: StatusIcon, label: Label}]
 var family_frames: Control               # 몬스터 배럭의 계열 묶음 외곽선
 var tower_info_label: Label
@@ -578,6 +580,9 @@ func _create_status_panel() -> void:
 	status_wave_title = _status_label(10)
 	status_wave_title.add_theme_color_override("font_color", Color(0.75, 0.9, 1.0))
 	box.add_child(status_wave_title)
+	status_affix_label = _status_label(11)
+	status_affix_label.visible = false
+	box.add_child(status_affix_label)
 	for i in range(Balance.WAVE_GROUPS):
 		var row := HBoxContainer.new()
 		box.add_child(row)
@@ -586,6 +591,11 @@ func _create_status_panel() -> void:
 		var label := _status_label(11)
 		row.add_child(label)
 		status_wave_rows.append({"row": row, "dot": dot, "label": label})
+
+	status_guard_label = _status_label(10)
+	status_guard_label.add_theme_color_override("font_color", Color(1.0, 0.6, 0.35))
+	status_guard_label.visible = false
+	box.add_child(status_guard_label)
 
 
 func _status_label(size: int) -> Label:
@@ -621,6 +631,16 @@ func _update_status_panel(lane: LaneController, boss: BossController) -> void:
 			r.dot.color = e.color
 			r.dot.queue_redraw()
 			r.label.text = "%s x%d%s" % [e.name, e.count, " 공중" if e.flying else ""]
+
+	var affix := boss.get_next_wave_affix()
+	status_affix_label.visible = not affix.is_empty()
+	if not affix.is_empty():
+		status_affix_label.text = "%s 웨이브!" % affix.name
+		status_affix_label.add_theme_color_override("font_color", affix.color)
+
+	status_guard_label.visible = boss.has_guard()
+	if boss.has_guard():
+		status_guard_label.text = "보스 보호막 -%d%%" % roundi((1.0 - boss.damage_mult) * 100.0)
 
 
 ## 타워를 지으면 길이 완전히 막힐 때 한 번 확인하는 창
@@ -806,9 +826,11 @@ func _update_hud():
 			boss.level, BossLevels.COUNT, boss.level_data.name, int(boss.hp), int(boss.max_hp), int(boss.time_left)])
 		# 보스 공격 현황: 보스 앞에 서 있는 몬스터들이 1초에 주는 피해의 합
 		if boss.total_dps > 0.0:
-			var eta := boss.hp / boss.total_dps
+			var eta := boss.hp / boss.effective_dps()  # 보호막까지 반영한 실제 피해로 계산
 			lines.append("보스에게 초당 %.1f 피해 (%d마리) -> %d초 뒤 처치%s" % [
-				boss.total_dps, boss.get_attacker_count(), ceili(eta), " (시간 부족!)" if eta > boss.time_left else ""])
+				boss.effective_dps(), boss.get_attacker_count(), ceili(eta), " (시간 부족!)" if eta > boss.time_left else ""])
+			if boss.has_guard():
+				lines.append("비늘 보호막: 피해 -%d%% (필드 웨이브 몬스터를 잡을수록 약해진다)" % roundi((1.0 - boss.damage_mult) * 100.0))
 		else:
 			lines.append("보스를 공격 중인 몬스터 없음")
 	hud_label.text = "\n".join(lines)
