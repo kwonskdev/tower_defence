@@ -93,6 +93,10 @@ func start_boss():
 	boss.setup(grid_systems[BOSS_LANE_ID], grid_renderer, lanes)
 	boss.set_lane_visible(current_player_id == BOSS_LANE_ID)
 
+	# 각 레인에 boss 참조 설정 (남색 색깔 보너스용)
+	for lane in lanes.values():
+		lane._boss_controller = boss
+
 func setup_scroll_container():
 	# 가로 스크롤 비활성화 (세로 드래그 스크롤만 사용)
 	horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
