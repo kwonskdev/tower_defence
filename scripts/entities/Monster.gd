@@ -14,6 +14,7 @@ class_name Monster
 
 signal reached_exit(monster: Monster)
 signal died(monster: Monster)
+signal gnawed(cell: Vector2i, amount: float)  # 타워를 갉는 중: 이 칸의 타워 내구도를 amount(초)만큼 깎아 달라 (LaneController가 처리)
 
 const DEFAULT_SPEED := 3.0
 const ARRIVE_DISTANCE := 0.1
@@ -22,6 +23,8 @@ const FLY_LIFT := 0.42                # 공중 몬스터가 몸을 띄우는 높
 const MIN_DAMAGE_RATIO := 0.2         # 방어력이 아무리 높아도 최소한 이 비율만큼은 들어간다
 const VISION_RANGE := 3               # 사방 이 칸 수 안의 타워만 본다
 const VISION_INTERVAL := 0.1          # 시야를 확인하는 주기(초)
+const GNAW_SEEK_RANGE := 4.0          # 갉는 몬스터가 타워를 목표로 삼는 거리 (본 적 있는 타워 중 이 안에 있는 것)
+const GNAW_DISTANCE := 1.15           # 타워 중심까지 이 거리 이하면 멈춰서 갉는다
 
 var monster_id: int = 0
 var owner_id: int = -1           # 보스 레인으로 보낸 플레이어 (보스가 보낸 몬스터는 -1)
@@ -37,6 +40,14 @@ var armor: float = 0.0
 var regen: float = 0.0           # 초당 최대체력 회복 비율
 var flying: bool = false
 var body_color: Color = Color(0.85, 0.2, 0.2)
+
+# 타워를 갉아 먹는 몬스터 (슬라임 새끼). 시야 안의 벽 타워를 찾아가 멈춰서 갉는다. 트랩 타워는 시야에 안 잡혀 목표가 되지 않는다.
+var gnaws_towers: bool = false
+var gnaw_rate: float = 1.0         # 초당 갉는 양 (타워 내구도 Balance.TOWER_DURABILITY 기준)
+var _gnaw_cell: Vector2i = Pathfinder.NO_GOAL   # 지금 노리는 타워 칸 (없으면 NO_GOAL)
+var _gnaw_retarget := 0.0
+var _gnaw_skip: Dictionary = {}    # 곁으로 갈 길이 없어서 포기한 타워 칸
+var _gnawing := false
 
 # 웨이브 변형 (보스 스킬이 웨이브 전체에 붙인다. BossSkills.AFFIXES)
 var speed_boost: float = 1.0     # 이동속도 배율 (돌격)
@@ -187,6 +198,15 @@ func is_dead() -> bool:
 	return _dead
 
 
+## 보스 스킬 예고 표식 (알파 0이면 없음). Tower도 같은 이름으로 받는다.
+func set_warn(color: Color) -> void:
+	warn_color = color
+
+
+func clear_warn() -> void:
+	warn_color = Color(0, 0, 0, 0)
+
+
 func effective_armor() -> float:
 	return 0.0 if armor_break_time > 0.0 else armor
 
@@ -318,6 +338,10 @@ func _repath() -> void:
 		breaching = false
 		return
 
+	# 노리는 타워가 있으면 그 곁으로 간다 (길이 없으면 목표를 버리고 원래 목적지로)
+	if _gnaw_cell != Pathfinder.NO_GOAL and _route_to_gnaw_target():
+		return
+
 	# 지금 서 있는 위치에서 다시 계산하므로 뒤로 되돌아가는 일이 없다.
 	var result := _pathfinder.find_route(cell_pos, goal_cell, known_towers if _uses_vision() else null)
 	waypoints.assign(result.waypoints)
@@ -367,6 +391,8 @@ func _process(delta: float) -> void:
 
 	if stopped:
 		return
+	if gnaws_towers and not flying and _process_gnaw(delta):
+		return  # 타워를 갉는 중이라 제자리에 서 있다
 	if waypoints.is_empty():
 		_check_arrival()
 		return
@@ -397,6 +423,75 @@ func _process(delta: float) -> void:
 		_check_arrival()
 
 
+## 타워를 갉아 먹는 몬스터의 행동. 이번 프레임에 제자리에서 갉았으면 true (이동하지 않는다).
+## 시야 안(GNAW_SEEK_RANGE)에서 가장 가까운 벽 타워를 목표로 삼아 곁으로 가고, 가까워지면 멈춰서 갉는다.
+## 기절하면 _process가 먼저 멈추므로 갉지 못한다.
+func _process_gnaw(delta: float) -> bool:
+	_gnawing = false
+	if _gnaw_cell != Pathfinder.NO_GOAL:
+		if _grid.get_cell_state(_gnaw_cell) != GridSystem.CellState.TOWER:
+			_gnaw_cell = Pathfinder.NO_GOAL  # 목표 타워가 사라졌다 (다른 새끼가 부숨)
+			_repath()                        # 원래 목적지로 다시 간다
+			return false
+		var tower_center := Vector2(_gnaw_cell) + Vector2(0.5, 0.5)
+		if cell_pos.distance_to(tower_center) <= GNAW_DISTANCE:
+			facing = (tower_center - cell_pos).normalized()
+			_gnawing = true
+			gnawed.emit(_gnaw_cell, gnaw_rate * delta)
+			return true
+		return false  # 아직 그 곁으로 가는 중
+
+	_gnaw_retarget -= delta
+	if _gnaw_retarget > 0.0:
+		return false
+	_gnaw_retarget = 0.3
+	var found := _nearest_gnaw_target()
+	if found != Pathfinder.NO_GOAL:
+		_gnaw_cell = found
+		_repath()  # 목표가 생겼으니 그 곁으로 가는 길을 짠다 (길이 없으면 목표를 버린다)
+	return false
+
+
+## 본 적 있는 타워(벽 타워만) 중 GNAW_SEEK_RANGE 안에서 가장 가까운 것
+func _nearest_gnaw_target() -> Vector2i:
+	var best := Pathfinder.NO_GOAL
+	var best_d := GNAW_SEEK_RANGE
+	for c in known_towers:
+		if _gnaw_skip.has(c):
+			continue
+		var d := cell_pos.distance_to(Vector2(c) + Vector2(0.5, 0.5))
+		if d <= best_d:
+			best_d = d
+			best = c
+	return best
+
+
+## 노리는 타워의 빈 곁 칸까지 가는 길을 짠다. 곁으로 갈 길이 없으면 그 타워를 포기하고 false.
+func _route_to_gnaw_target() -> bool:
+	var goal := Pathfinder.NO_GOAL
+	var best_d := INF
+	for off in [Vector2i(0, -1), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(1, 0)]:
+		var n: Vector2i = _gnaw_cell + off
+		var state := _grid.get_cell_state(n)  # 격자 밖은 OBSTACLE
+		if state == GridSystem.CellState.TOWER or state == GridSystem.CellState.OBSTACLE:
+			continue
+		var d := cell_pos.distance_to(Vector2(n) + Vector2(0.5, 0.5))
+		if d < best_d:
+			best_d = d
+			goal = n
+	if goal != Pathfinder.NO_GOAL:
+		var result := _pathfinder.find_route(cell_pos, goal)  # known을 안 주면 타워를 전부 아는 길찾기
+		if result.ok:
+			waypoints.assign(result.waypoints)
+			if waypoints.is_empty():  # 이미 그 칸 안이면 칸 중심까지만 간다
+				waypoints.append(Vector2(goal) + Vector2(0.5, 0.5))
+			breaching = false
+			return true
+	_gnaw_skip[_gnaw_cell] = true
+	_gnaw_cell = Pathfinder.NO_GOAL
+	return false
+
+
 func _check_arrival() -> void:
 	if _arrived:
 		return
@@ -421,13 +516,15 @@ func _update_position() -> void:
 func _draw() -> void:
 	var cell := _cell_px()
 	var r: float = cell * 0.32 * size_scale
-	var moving := preview or (not stopped and not waypoints.is_empty())
+	var moving := preview or (not stopped and not _gnawing and not waypoints.is_empty())
 
-	# 걷는 동안 통통 튀고, 멈추면 숨쉬듯 흔들림. 보스 앞에서는 보스 쪽으로 달려들었다 물러남.
+	# 걷는 동안 통통 튀고, 멈추면 숨쉬듯 흔들림. 보스 앞에서는 보스 쪽으로 달려들었다 물러남. 타워를 갉을 때도 타워 쪽으로 달려든다.
 	var bob := absf(sin(_anim * speed * 3.0)) * cell * 0.09 if moving else sin(_anim * 3.0) * cell * 0.015
 	var lunge := Vector2.ZERO
 	if stopped:
 		lunge = attack_dir * maxf(0.0, sin(_anim * 9.0)) * cell * 0.14
+	elif _gnawing:
+		lunge = facing * maxf(0.0, sin(_anim * 9.0)) * cell * 0.14
 	var lift := Vector2(0.0, -cell * FLY_LIFT) if flying else Vector2.ZERO
 	var c := Vector2(0, -bob) + lunge + lift
 

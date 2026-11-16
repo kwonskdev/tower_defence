@@ -848,6 +848,10 @@ func _update_tower_info(lane: LaneController):
 		title += " · " + Evolutions.evo_name(t.evolution)
 	var text := "[%s] 한 발 %.2f / %.2f초 / 사거리 %.1f칸\n누적 피해 %.1f  킬 %d" % [
 		title, t.cur_damage(), t.cur_cooldown(), t.kind.range, t.total_damage, t.kills]
+	if t.durability < Balance.TOWER_DURABILITY - 0.001:  # 슬라임 새끼에게 갉인 타워 (회복되지 않는다)
+		text += "\n내구도 %.1f / %.1f (회복 안 됨)" % [t.durability, Balance.TOWER_DURABILITY]
+	if t.sealed_time > 0.0:
+		text += "\n봉인됨: %d초 뒤 풀린다" % ceili(t.sealed_time)
 	match t.evolution:
 		"support":
 			text += "\n공격력 없음: 표식 구름을 깐다"

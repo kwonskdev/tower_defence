@@ -20,6 +20,14 @@ var total_damage: float = 0.0  # 누적 피해 (맞은 시점에 오른다. 독/
 var kills: int = 0             # 처치 수 (마지막 한 방을 때린 타워만 오른다. 독으로 죽이면 독을 건 타워)
 var selected: bool = false     # 선택되면 사거리를 보여준다
 
+# 내구도: 슬라임 새끼 같은 몬스터가 갉으면 닳고, 한 번 닳으면 회복되지 않는다. 0이 되면 부서진다 (LaneController가 처리).
+# (길이 막혀서 뚫고 오는 일반 몬스터는 지금처럼 한 번에 부순다)
+var durability: float = Balance.TOWER_DURABILITY
+
+# 보스 스킬 봉인: 남은 시간 동안 조준, 공격, 충전을 못 한다. seal_warn은 봉인 예고 표식.
+var sealed_time: float = 0.0
+var seal_warn: bool = false
+
 # 아이콘 미리보기용
 var preview: bool = false
 var preview_cell: float = 40.0
@@ -65,6 +73,21 @@ func set_evolution(evo: String) -> void:
 
 func can_evolve() -> bool:
 	return evolution == ""
+
+
+## 몬스터가 amount(초)만큼 갉았다. 내구도가 바닥나서 부서져야 하면 true.
+func gnaw(amount: float) -> bool:
+	durability = maxf(0.0, durability - amount)
+	return durability <= 0.0
+
+
+## 보스 스킬 예고 표식 (알파 0이면 없음). Monster도 같은 이름으로 받는다.
+func set_warn(color: Color) -> void:
+	seal_warn = color.a > 0.0
+
+
+func clear_warn() -> void:
+	seal_warn = false
 
 
 # --- 전적 (Monster가 부른다) ---
@@ -139,17 +162,20 @@ func _process(delta: float) -> void:
 			_haste_timer -= delta
 			if _haste_timer <= 0.0:
 				haste_stacks = 0  # 치명타가 한동안 안 터지면 광란 초기화
-		var target := lane.find_target(center_cell_pos(), kind.range, kind.anti_air)
-		if target:
-			var want := (target.cell_pos - center_cell_pos()).angle()
-			_aim = lerp_angle(_aim, want, minf(1.0, delta * 14.0))
-
-		if evolution == "charge":
-			_process_charge(delta, target)
+		if sealed_time > 0.0:
+			sealed_time = maxf(0.0, sealed_time - delta)  # 봉인된 동안은 조준도 공격도 충전도 하지 않는다
 		else:
-			_cooldown -= delta
-			if target and _cooldown <= 0.0:
-				_fire(target)
+			var target := lane.find_target(center_cell_pos(), kind.range, kind.anti_air)
+			if target:
+				var want := (target.cell_pos - center_cell_pos()).angle()
+				_aim = lerp_angle(_aim, want, minf(1.0, delta * 14.0))
+
+			if evolution == "charge":
+				_process_charge(delta, target)
+			else:
+				_cooldown -= delta
+				if target and _cooldown <= 0.0:
+					_fire(target)
 	queue_redraw()
 
 
@@ -304,6 +330,32 @@ func _draw() -> void:
 
 	if not preview:
 		_draw_evolution_marks(s)
+		_draw_damage_marks(s)
+
+
+## 내구도가 닳은 타워는 아래에 막대와 균열을, 봉인 예고/봉인 중인 타워는 보라색 표식을 그린다
+func _draw_damage_marks(s: float) -> void:
+	var ratio := clampf(durability / Balance.TOWER_DURABILITY, 0.0, 1.0)
+	if ratio < 0.999:
+		var bar_y := s * 0.5 + 2.0
+		draw_rect(Rect2(-s * 0.5, bar_y, s, 4.0), Color(0, 0, 0, 0.75))
+		draw_rect(Rect2(-s * 0.5, bar_y, s * ratio, 4.0), Color(1.0, 0.25 + 0.5 * ratio, 0.1))
+		var cracks := ceili((1.0 - ratio) * 3.0)  # 많이 닳을수록 금이 늘어난다
+		var crack_col := Color(0.04, 0.04, 0.06)
+		if cracks >= 1:
+			draw_polyline(PackedVector2Array([Vector2(-s * 0.35, -s * 0.45), Vector2(-s * 0.15, -s * 0.1), Vector2(-s * 0.3, s * 0.1)]), crack_col, 2.0)
+		if cracks >= 2:
+			draw_polyline(PackedVector2Array([Vector2(s * 0.4, -s * 0.2), Vector2(s * 0.1, 0.0), Vector2(s * 0.25, s * 0.35)]), crack_col, 2.0)
+		if cracks >= 3:
+			draw_polyline(PackedVector2Array([Vector2(-s * 0.1, s * 0.45), Vector2(s * 0.05, s * 0.2), Vector2(-s * 0.05, -s * 0.3)]), crack_col, 2.0)
+	var purple := Color(0.75, 0.35, 0.95)
+	if sealed_time > 0.0:
+		draw_rect(Rect2(-s * 0.5, -s * 0.5, s, s), Color(purple, 0.4))
+		draw_line(Vector2(-s * 0.35, -s * 0.35), Vector2(s * 0.35, s * 0.35), purple, 3.0)
+		draw_line(Vector2(s * 0.35, -s * 0.35), Vector2(-s * 0.35, s * 0.35), purple, 3.0)
+	elif seal_warn:
+		var pulse := 0.55 + 0.45 * sin(_t * 12.0)
+		draw_rect(Rect2(-s * 0.5 - 2.0, -s * 0.5 - 2.0, s + 4.0, s + 4.0), Color(purple, pulse), false, 3.5)
 
 
 ## 진화 표시: 오른쪽 아래 마름모(계열 색), 충전형은 충전 게이지, 성장형은 광란 중첩 점

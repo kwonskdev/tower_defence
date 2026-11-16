@@ -16,8 +16,9 @@ class_name BossSkills
 ##   trigger: "hp_below"(보스 체력이 hp_ratios의 각 비율 이하가 될 때 한 번씩) / "every"(first초 뒤부터 period초마다)
 ##   delay: 예고 시간(초). 발동 전에 배너와 몬스터 표식으로 알린다
 ##   effect: "execute"(보스 앞 DPS 1위 제거 + 환영) / "dread"(보스 앞 DPS 상위 count마리의 dps를 duration초 동안 0)
+##           "split"(각 레인에 슬라임 새끼 count마리) / "seal"(각 레인에서 누적 피해 상위 타워 count기를 duration초 동안 사격 불가)
 ##   execute: refund(비용 환급 비율), phantoms(레인마다 나오는 환영 수), phantom_hp(환영 체력 배율)
-##   dread: count, duration
+##   dread, seal: count, duration / split: count
 
 ## 웨이브 변형. 웨이브 전체에 붙는다.
 ##   speed_mult: 이동속도 배율 / revive: 처음 죽을 때 이 비율의 체력으로 한 번 되살아남 / air_only: 공중 몬스터 종류만 뽑는다
@@ -46,6 +47,11 @@ const BY_LEVEL := {
 			"text": "3웨이브마다 한 번, 그 웨이브 몬스터는 처음 죽으면 체력 50%로 한 번 되살아납니다. 골드는 마지막에 죽을 때만 줍니다.",
 			"wave_affix": "undead", "affix_every": 3},
 	],
+	5: [
+		{"id": "split", "name": "분열", "lane": "player",
+			"text": "보스 체력이 50% 아래로 내려가면 한 번, 각 레인에 슬라임 새끼 4마리가 나타납니다. 새끼는 시야 안의 벽 타워를 갉아 부숩니다 (트랩 타워는 못 봅니다).",
+			"trigger": "hp_below", "hp_ratios": [0.5], "delay": 3.0, "effect": "split", "count": 4},
+	],
 	6: [
 		{"id": "chill", "name": "동상", "lane": "boss",
 			"text": "보스 앞에 10초 넘게 서 있으면 DPS가 줄기 시작해 40초에 -50%가 됩니다. 새로 도착한 몬스터는 다시 100%이니 계속 보강하세요.",
@@ -70,6 +76,10 @@ const BY_LEVEL := {
 			"text": "25초마다 보스 앞 DPS 상위 3마리가 3초 예고 뒤 6초간 DPS 0이 됩니다. 한두 마리에 화력을 몰아주지 마세요.",
 			"trigger": "every", "first": 15.0, "period": 25.0, "delay": 3.0,
 			"effect": "dread", "count": 3, "duration": 6.0},
+		{"id": "seal", "name": "봉인", "lane": "player",
+			"text": "25초마다 각 레인에서 누적 피해가 가장 큰 타워 3기가 3초 예고 뒤 8초간 사격하지 못합니다. 한 타워에만 의존하지 마세요.",
+			"trigger": "every", "first": 27.0, "period": 25.0, "delay": 3.0,
+			"effect": "seal", "count": 3, "duration": 8.0},
 	],
 }
 

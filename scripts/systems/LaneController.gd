@@ -251,6 +251,9 @@ func spawn_wave_monster(hp_value: float, type_id: String = "grunt", level: int =
 	monster.regen = wave_type.regen
 	monster.flying = wave_type.flying
 	monster.reward = roundi(wave_type.reward * (1.0 + 0.15 * (level - 1)))
+	monster.gnaws_towers = bool(wave_type.get("gnaws", false))
+	monster.gnaw_rate = float(wave_type.get("gnaw", 1.0))
+	monster.gnawed.connect(_on_tower_gnawed)
 	if affix != "":
 		var affix_data: Dictionary = BossSkills.AFFIXES[affix]
 		monster.speed_boost = float(affix_data.get("speed_mult", 1.0))
@@ -265,6 +268,16 @@ func spawn_wave_monster(hp_value: float, type_id: String = "grunt", level: int =
 	Log.debug(Log.Category.GAME, "[P%d] 몬스터#%d(%s) 스폰 hp=%.1f 방어=%.2f (필드 위 %d마리)" % [
 		player_id + 1, _next_monster_id, wave_type.name, hp_value, monster.armor, monsters.size()])
 	_next_monster_id += 1
+
+
+## 슬라임 새끼가 타워를 갉았다: 내구도를 깎고, 바닥나면 타워를 부순다 (칸을 비우면 _on_cell_changed가 타워를 치운다)
+func _on_tower_gnawed(cell: Vector2i, amount: float) -> void:
+	for tower in towers:
+		if tower.cell == cell:
+			if tower.gnaw(amount):
+				Log.info(Log.Category.TOWER, "[P%d] 타워 %s가 갉아 먹혀 부서짐" % [player_id + 1, cell])
+				_grid.set_cell_state(cell, GridSystem.CellState.EMPTY)
+			return
 
 
 ## 지원형 B: 표식이 걸린 적이 죽으면 근처 표식 없는 적에게 표식을 옮긴다

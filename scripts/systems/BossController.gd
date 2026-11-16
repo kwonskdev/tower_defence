@@ -9,8 +9,8 @@ class_name BossController
 ##   종류마다 이기는 타워가 달라서 그때그때 필요한 타워가 달라진다 (WaveTypes 상성 참고).
 ## - 제한시간 안에 못 잡으면 패배. 보스는 플레이어 몬스터를 공격하지 않는다 (현재 미정).
 ## - 보스 스킬은 BossSkills.gd에 라운드별로 정의한다. 지금 있는 것: 웨이브 주기/마릿수, 웨이브 변형(돌격/부활/공습), 비늘 보호막,
-##   동상(Lv.6), 체력 조건/주기 발동형(Lv.7 처단+환영, Lv.9 공포). 발동형은 예고(배너+몬스터 표식) 뒤에 발동한다.
-## TODO: Lv.5 슬라임 분열(+타워 내구도), Lv.9 봉인, Lv.10 페이즈
+##   동상(Lv.6), 체력 조건/주기 발동형(Lv.5 분열, Lv.7 처단+환영, Lv.9 공포+봉인). 발동형은 예고(배너+표식) 뒤에 발동한다.
+## TODO: Lv.10 페이즈
 
 signal level_started(level: int)
 signal level_cleared(level: int)
@@ -589,8 +589,21 @@ func _cast_skill(skill: Dictionary) -> void:
 			for target in targets:
 				names.append(SentMonsters.DATA[target.kind_id].name)
 			text = "DPS 상위 %d마리(%s)의 DPS가 %.0f초간 0이 됩니다." % [targets.size(), ", ".join(names), float(skill.duration)]
+		"split":
+			text = "슬라임 대장이 분열합니다! 각 레인에 슬라임 새끼 %d마리가 나타나 벽 타워를 갉습니다 (트랩 타워는 못 봅니다)." % int(skill.count)
+		"seal":
+			for lane in _lanes.values():
+				if not lane.active:
+					continue
+				var by_damage: Array = lane.towers.duplicate()
+				by_damage.sort_custom(func(a: Tower, b: Tower): return a.total_damage > b.total_damage)
+				targets.append_array(by_damage.slice(0, int(skill.count)))
+			if targets.is_empty():
+				return  # 봉인할 타워가 없다
+			warn = Color(0.75, 0.35, 0.95)
+			text = "각 레인의 누적 피해 상위 타워 %d기(총 %d기)가 %.0f초간 사격하지 못합니다." % [int(skill.count), targets.size(), float(skill.duration)]
 	for target in targets:
-		target.warn_color = warn
+		target.set_warn(warn)
 	var delay := float(skill.get("delay", 0.0))
 	_pending_casts.append({"skill": skill, "left": delay, "targets": targets})
 	skill_announced.emit({"name": skill.name, "text": text, "lane": skill.lane, "delay": delay, "boss": level_data.name})
@@ -602,11 +615,21 @@ func _resolve_skill(cast: Dictionary) -> void:
 	var skill: Dictionary = cast.skill
 	var victims: Array = []
 	for target in cast.targets:
-		if is_instance_valid(target):  # 예고 중에 죽어서 해제됐을 수 있다
-			target.warn_color = Color(0, 0, 0, 0)
-			if not target.is_dead() and _attackers.has(target):
+		if not is_instance_valid(target):  # 예고 중에 죽거나 부서져서 해제됐다
+			continue
+		target.clear_warn()
+		if skill.effect == "seal":
+			if target.lane.towers.has(target):
 				victims.append(target)
+		elif not target.is_dead() and _attackers.has(target):
+			victims.append(target)
 	match skill.effect:
+		"seal":
+			for victim in victims:
+				victim.sealed_time = float(skill.duration)
+				Effects.ring(_renderer, victim.center_cell_pos(), 0.9, Color(0.75, 0.35, 0.95), victim.lane.lane_visible)
+		"split":
+			_spawn_slimelings(skill)
 		"execute":
 			for victim in victims:
 				_execute_attacker(victim, float(skill.refund))
@@ -651,12 +674,30 @@ func _spawn_phantoms(skill: Dictionary) -> void:
 			lane.spawn_wave_monster(hp_value, "tank", level, lane.pick_spawn_cell())
 
 
+## 분열: 모든 참여 레인의 출현 칸 하나에서 슬라임 새끼가 촘촘히 연달아 나온다 (웨이브와 같은 방식)
+func _spawn_slimelings(skill: Dictionary) -> void:
+	var wave_type: Dictionary = WaveTypes.TYPES["slimeling"]
+	var hp_value: float = Balance.WAVE_MONSTER_HP * float(wave_type.hp) * float(level_data.wave_hp)
+	var cells := {}
+	for lane in _lanes.values():
+		cells[lane] = lane.pick_spawn_cell()
+		if cells[lane] != Pathfinder.NO_GOAL:
+			Effects.ring(_renderer, Vector2(cells[lane]) + Vector2(0.5, 0.5), 1.0, wave_type.color, lane.lane_visible)
+	for i in range(int(skill.count)):
+		if i > 0:
+			await get_tree().create_timer(Balance.WAVE_SPAWN_GAP).timeout
+			if state != State.RUNNING:
+				return
+		for lane in _lanes.values():
+			lane.spawn_wave_monster(hp_value, "slimeling", level, cells[lane])
+
+
 ## 예고만 하고 발동하지 못한 스킬을 취소한다 (표식도 지운다)
 func _clear_pending_casts() -> void:
 	for cast in _pending_casts:
 		for target in cast.targets:
 			if is_instance_valid(target):
-				target.warn_color = Color(0, 0, 0, 0)
+				target.clear_warn()
 	_pending_casts.clear()
 
 
