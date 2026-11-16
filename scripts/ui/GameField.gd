@@ -25,7 +25,7 @@ var ui_blockers: Array[Control] = []  # 이 영역 위의 클릭은 맵 클릭�
 var is_dragging: bool = false
 var drag_start_position: Vector2
 var drag_start_scroll: Vector2
-var drag_threshold: float = 10.0  # 드래그로 인식할 최소 거리
+var drag_threshold: float = 20.0  # 드래그로 인식할 최소 거리
 
 enum PlacementTool {
 	NONE,
@@ -61,8 +61,14 @@ func setup_game_field():
 
 	# 화면 크기에 맞춰 그리드 조정
 	if grid_renderer:
-		var container_width = get_size().x
+		var container_width = get_viewport_rect().size.x  # 레이아웃이 끝나기 전에도 틀리지 않도록 화면 폭을 직접 쓴다 (이 노드는 화면 폭 전체를 쓴다)
 		grid_renderer.set_container_width(container_width)
+
+	# 창/화면 크기가 나중에 바뀌어도(폰 회전, 시작 직후 창 크기 확정 등) 칸 크기를 화면 폭에 맞춘다
+	get_viewport().size_changed.connect(func():
+		var w := get_viewport_rect().size.x
+		if w > 0.0 and int(w / GridRenderer.GRID_WIDTH) != grid_renderer.CELL_SIZE:
+			grid_renderer.set_container_width(w))
 
 	# PvE 임시: 1번 플레이어만 참여 (나머지 레인은 비어 있음)
 	start_lane(0)
@@ -97,12 +103,18 @@ func setup_scroll_container():
 	# 가로 스크롤 비활성화 (세로 드래그 스크롤만 사용)
 	horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	follow_focus = true
+	# 스크롤은 handle_mouse_input()이 직접 한다. ScrollContainer 자체의 터치 스크롤까지 같이 켜져 있으면
+	# 폰에서 손가락 하나로 두 번 스크롤되어 떨리므로 이 노드는 입력을 직접 받지 않게 한다 (_input은 그대로 받는다).
+	mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 func _input(event):
-	if not get_global_rect().has_point(get_global_mouse_position()):
+	if not (event is InputEventMouseButton or event is InputEventMouseMotion):
+		return
+	var pos: Vector2 = event.position  # 터치도 마우스 이벤트로 바뀌어 들어온다 (project.godot: emulate_mouse_from_touch)
+	if not get_global_rect().has_point(pos):
 		return
 	for blocker in ui_blockers:
-		if blocker.is_visible_in_tree() and blocker.get_global_rect().has_point(get_global_mouse_position()):
+		if blocker.is_visible_in_tree() and blocker.get_global_rect().has_point(pos):
 			return
 
 	handle_mouse_input(event)
@@ -110,6 +122,9 @@ func _input(event):
 
 func handle_mouse_input(event):
 	if event is InputEventMouseButton:
+		if event.pressed and (event.button_index == MOUSE_BUTTON_WHEEL_UP or event.button_index == MOUSE_BUTTON_WHEEL_DOWN):
+			var step := -80 if event.button_index == MOUSE_BUTTON_WHEEL_UP else 80  # PC 휠 스크롤 (이 노드가 입력을 안 받으므로 직접)
+			set_v_scroll(clampi(get_v_scroll() + step, 0, int(get_v_scroll_bar().max_value)))
 		if event.button_index == MOUSE_BUTTON_LEFT:
 			if event.pressed:
 				# 드래그 준비

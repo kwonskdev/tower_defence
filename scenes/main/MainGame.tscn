@@ -21,9 +21,8 @@ grow_horizontal = 2
 grow_vertical = 2
 
 [node name="TopUI" type="Panel" parent="VBoxContainer"]
+custom_minimum_size = Vector2(0, 180)
 layout_mode = 2
-size_flags_vertical = 3
-size_flags_stretch_ratio = 0.25
 
 [node name="HBoxContainer" type="HBoxContainer" parent="VBoxContainer/TopUI"]
 layout_mode = 1
@@ -37,7 +36,6 @@ grow_vertical = 2
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
-size_flags_stretch_ratio = 3.0
 
 [node name="MainView" type="HBoxContainer" parent="VBoxContainer/TopUI/HBoxContainer/LeftPanel"]
 layout_mode = 1
@@ -292,8 +290,9 @@ text = "M27"
 clip_text = true
 
 [node name="RightPanel" type="GridContainer" parent="VBoxContainer/TopUI/HBoxContainer"]
+custom_minimum_size = Vector2(162, 0)
 layout_mode = 2
-size_flags_horizontal = 3
+size_flags_horizontal = 0
 size_flags_vertical = 3
 columns = 3
 

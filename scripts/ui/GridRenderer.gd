@@ -6,7 +6,7 @@ const GRID_HEIGHT = 50
 var CELL_SIZE: int = 40
 
 # 맨 아래 HUD가 마지막 줄들을 덮지 않도록 스크롤 끝에 두는 여백(px)
-const BOTTOM_PADDING := 100
+const BOTTOM_PADDING := 240
 
 var grid_color = Color.WHITE
 

@@ -54,7 +54,7 @@ func _draw() -> void:
 
 	# 레인 번호
 	var label := "B" if is_boss_lane else str(lane_index + 1)
-	draw_string(ThemeDB.fallback_font, Vector2(4, 11), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 10,
+	draw_string(ThemeDB.fallback_font, Vector2(4, 15), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 14,
 		Color(1, 1, 1, 0.9 if participating else 0.35))
 
 	# 지금 보고 있는 레인 표시
