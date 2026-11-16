@@ -39,3 +39,5 @@ error.md
 
 # Documentation (not needed in git)
 Godot_Multiplayer_Tower_Defense_Game_Development_Specification.md
+step.md
+build/

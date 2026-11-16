@@ -1,0 +1,16 @@
+[gd_scene load_steps=2 format=3 uid="uid://c5j8fhrv1vwap"]
+
+[ext_resource type="Script" path="res://scripts/ui/GameField.gd" id="1_x6y7m"]
+
+[node name="GameField" type="ScrollContainer"]
+clip_contents = true
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+follow_focus = true
+scroll_horizontal_custom_step = 40.0
+scroll_vertical_custom_step = 40.0
+script = ExtResource("1_x6y7m")

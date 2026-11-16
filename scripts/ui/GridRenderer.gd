@@ -1,156 +1,75 @@
-extends Node2D
+extends Control
 class_name GridRenderer
 
-var grid_system: GridSystem
-@export var show_grid_lines: bool = true
-@export var highlight_valid_positions: bool = true
+const GRID_WIDTH = 12
+const GRID_HEIGHT = 50
+var CELL_SIZE: int = 40
 
-var grid_line_color = Color.GRAY
-var empty_cell_color = Color.WHITE
-var tower_cell_color = Color.BLUE
-var spawn_cell_color = Color.GREEN
-var goal_cell_color = Color.RED
-var valid_placement_color = Color.YELLOW
-var invalid_placement_color = Color.DARK_RED
+# 맨 아래 HUD가 마지막 줄들을 덮지 않도록 스크롤 끝에 두는 여백(px)
+const BOTTOM_PADDING := 240
 
-var hovering_position: Vector2i = Vector2i(-1, -1)
-var placement_mode: bool = false
-var selected_tower_type: String = ""
+var grid_color = Color.WHITE
 
-signal cell_clicked(grid_position: Vector2i)
-signal cell_hovered(grid_position: Vector2i)
+var highlighted_cells: Dictionary = {}
 
 func _ready():
-	if grid_system == null:
-		grid_system = GridSystem.new()
+	update_grid_size()
+	mouse_filter = Control.MOUSE_FILTER_IGNORE
 
-	grid_system.grid_updated.connect(_on_grid_updated)
+func update_grid_size():
+	custom_minimum_size = Vector2(GRID_WIDTH * CELL_SIZE, GRID_HEIGHT * CELL_SIZE + BOTTOM_PADDING)
 
-	# 그리기를 강제로 호출
+func set_container_width(width: float):
+	CELL_SIZE = int(width / GRID_WIDTH)
+	update_grid_size()
 	queue_redraw()
-	Logger.ui_log("GridRenderer initialized with grid size: %v" % grid_system.get_grid_size())
+	Log.info(Log.Category.UI, "그리드 셀 크기 조정: width=%.0f -> cell=%dpx" % [width, CELL_SIZE])
 
 func _draw():
-	if grid_system == null:
-		return
+	draw_grid_background()
+	draw_cell_highlights()
+	draw_grid_lines()
 
-	_draw_grid()
-	_draw_cells()
-	_draw_hover_highlight()
+func draw_grid_background():
+	var bg_color = Color.BLACK
+	bg_color.a = 0.1
+	draw_rect(Rect2(Vector2.ZERO, Vector2(GRID_WIDTH * CELL_SIZE, GRID_HEIGHT * CELL_SIZE)), bg_color)
 
-func _draw_grid():
-	var grid_size = grid_system.get_grid_size()
-	var total_size = Vector2(grid_size.x * GridSystem.CELL_SIZE, grid_size.y * GridSystem.CELL_SIZE)
-
-	# 배경 그리기 (더 밝게)
-	draw_rect(Rect2(Vector2.ZERO, total_size), Color(0.2, 0.2, 0.2), true)
-
-	if not show_grid_lines:
-		return
-
-	# 세로선 그리기
-	for x in range(grid_size.x + 1):
-		var start_pos = Vector2(x * GridSystem.CELL_SIZE, 0)
-		var end_pos = Vector2(x * GridSystem.CELL_SIZE, grid_size.y * GridSystem.CELL_SIZE)
-		draw_line(start_pos, end_pos, grid_line_color, 1.0)
-
-	# 가로선 그리기
-	for y in range(grid_size.y + 1):
-		var start_pos = Vector2(0, y * GridSystem.CELL_SIZE)
-		var end_pos = Vector2(grid_size.x * GridSystem.CELL_SIZE, y * GridSystem.CELL_SIZE)
-		draw_line(start_pos, end_pos, grid_line_color, 1.0)
-
-func _draw_cells():
-	var grid_size = grid_system.get_grid_size()
-
-	for x in range(grid_size.x):
-		for y in range(grid_size.y):
-			var pos = Vector2i(x, y)
-			var cell_type = grid_system.get_cell_type(pos)
-			var color = _get_cell_color(cell_type)
-
-			if color != Color.TRANSPARENT:
-				var rect = Rect2(
-					Vector2(x * GridSystem.CELL_SIZE, y * GridSystem.CELL_SIZE),
-					Vector2(GridSystem.CELL_SIZE, GridSystem.CELL_SIZE)
-				)
-				draw_rect(rect, color)
-
-func _draw_hover_highlight():
-	if hovering_position.x < 0 or hovering_position.y < 0:
-		return
-
-	var color = Color.TRANSPARENT
-	if placement_mode and selected_tower_type != "":
-		if grid_system.can_place_tower(hovering_position):
-			color = valid_placement_color
-		else:
-			color = invalid_placement_color
-	else:
-		color = Color.CYAN
-
-	if color != Color.TRANSPARENT:
-		color.a = 0.5
-		var rect = Rect2(
-			Vector2(hovering_position.x * GridSystem.CELL_SIZE, hovering_position.y * GridSystem.CELL_SIZE),
-			Vector2(GridSystem.CELL_SIZE, GridSystem.CELL_SIZE)
-		)
+func draw_cell_highlights():
+	for pos in highlighted_cells:
+		var color = highlighted_cells[pos]
+		var rect = Rect2(Vector2(pos.x * CELL_SIZE, pos.y * CELL_SIZE), Vector2(CELL_SIZE, CELL_SIZE))
 		draw_rect(rect, color)
 
-func _get_cell_color(cell_type: GridSystem.CellType) -> Color:
-	match cell_type:
-		GridSystem.CellType.EMPTY:
-			return Color.TRANSPARENT
-		GridSystem.CellType.TOWER:
-			return tower_cell_color
-		GridSystem.CellType.PATH_START:
-			return Color(0.0, 1.0, 0.0, 0.8)  # 더 밝은 녹색
-		GridSystem.CellType.PATH_END:
-			return Color(1.0, 0.0, 0.0, 0.8)  # 더 밝은 빨간색
-		GridSystem.CellType.BLOCKED:
-			return Color.BLACK
-		_:
-			return Color.TRANSPARENT
+func draw_grid_lines():
+	# Vertical lines
+	for x in range(GRID_WIDTH + 1):
+		var start_pos = Vector2(x * CELL_SIZE, 0)
+		var end_pos = Vector2(x * CELL_SIZE, GRID_HEIGHT * CELL_SIZE)
+		draw_line(start_pos, end_pos, grid_color, 1.0)
 
-func _input(event):
-	if event is InputEventMouseMotion:
-		_handle_mouse_motion(event)
-	elif event is InputEventMouseButton and event.pressed:
-		_handle_mouse_click(event)
+	# Horizontal lines
+	for y in range(GRID_HEIGHT + 1):
+		var start_pos = Vector2(0, y * CELL_SIZE)
+		var end_pos = Vector2(GRID_WIDTH * CELL_SIZE, y * CELL_SIZE)
+		draw_line(start_pos, end_pos, grid_color, 1.0)
 
-func _handle_mouse_motion(event: InputEventMouseMotion):
-	var world_pos = to_local(event.global_position)
-	var grid_pos = grid_system.world_to_grid_position(world_pos)
+func screen_to_grid(screen_pos: Vector2) -> Vector2i:
+	return Vector2i(int(screen_pos.x / CELL_SIZE), int(screen_pos.y / CELL_SIZE))
 
-	if grid_pos != hovering_position:
-		hovering_position = grid_pos
-		cell_hovered.emit(grid_pos)
+func is_valid_grid_position(pos: Vector2i) -> bool:
+	return pos.x >= 0 and pos.x < GRID_WIDTH and pos.y >= 0 and pos.y < GRID_HEIGHT
+
+func highlight_cell(grid_pos: Vector2i, color: Color):
+	if is_valid_grid_position(grid_pos):
+		highlighted_cells[grid_pos] = color
 		queue_redraw()
 
-		if grid_system.is_valid_position(grid_pos):
-			Logger.ui_log("Hovering over cell: %v" % grid_pos, Logger.LogLevel.DEBUG)
+func clear_cell_highlight(grid_pos: Vector2i):
+	if grid_pos in highlighted_cells:
+		highlighted_cells.erase(grid_pos)
+		queue_redraw()
 
-func _handle_mouse_click(event: InputEventMouseButton):
-	if event.button_index != MOUSE_BUTTON_LEFT:
-		return
-
-	var world_pos = to_local(event.global_position)
-	var grid_pos = grid_system.world_to_grid_position(world_pos)
-
-	if grid_system.is_valid_position(grid_pos):
-		Logger.ui_log("Cell clicked: %v" % grid_pos)
-		cell_clicked.emit(grid_pos)
-
-func set_placement_mode(enabled: bool, tower_type: String = ""):
-	placement_mode = enabled
-	selected_tower_type = tower_type
+func clear_all_highlights():
+	highlighted_cells.clear()
 	queue_redraw()
-
-	Logger.ui_log("Placement mode: %s, Tower type: %s" % [enabled, tower_type])
-
-func _on_grid_updated():
-	queue_redraw()
-
-func get_grid_world_size() -> Vector2:
-	var grid_size = grid_system.get_grid_size()
-	return Vector2(grid_size.x * GridSystem.CELL_SIZE, grid_size.y * GridSystem.CELL_SIZE)
