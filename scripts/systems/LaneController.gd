@@ -21,11 +21,15 @@ var towers: Array[Tower] = []  # 한 칸에 타워 1개
 # 진화 업그레이드 (레인 전체 공유, 같은 계열의 모든 타워에 적용)
 var stat_levels: Dictionary = {} # "계열.스킬.키" -> 레벨 1~3 (없으면 1). B 스킬은 타워마다 배우지만 항목 레벨은 계열 공통
 
+# 색깔 시스템 (레인 전체 공유)
+var color_levels: Dictionary = {} # "색깔이름" -> 레벨 0~5 (0=업그레이드 안 함, 1~5=업그레이드 레벨)
+
 var _grid: GridSystem
 var _renderer: GridRenderer
 var _pathfinder: Pathfinder
 var _income_timer: Timer
 var _next_monster_id := 1
+var _boss_controller = null  # BossController 참조 (남색 강화 보너스용)
 
 
 func setup(p_player_id: int, grid: GridSystem, renderer: GridRenderer) -> void:
@@ -68,6 +72,21 @@ func build_tower(cell: Vector2i, kind_id: String) -> Tower:
 
 	Log.info(Log.Category.COLOR, "[P%d] 타워 %s 색깔 할당: %s" % [player_id + 1, cell, color_info.name])
 	return tower
+
+
+## 타워 색깔을 다시 뽑는다 (골드). 지금 색을 뺀 나머지 6색 중 랜덤이라 돈을 내면 반드시 색이 바뀐다.
+func recolor_tower(tower: Tower) -> bool:
+	if tower == null or tower.lane != self:
+		return false
+	if not try_spend(Balance.RECOLOR_COST, "타워 색깔 바꾸기 %s" % tower.cell):
+		return false
+	var candidates: Array = Balance.TOWER_COLORS.filter(func(c): return c.name != tower.color_info.name)
+	var old_name: String = tower.color_info.name
+	var new_info: Dictionary = candidates.pick_random()
+	tower.set_color_info(new_info)
+	Effects.ring(_renderer, tower.center_cell_pos(), 0.8, new_info.color, lane_visible)
+	Log.info(Log.Category.COLOR, "[P%d] 타워 %s 색깔 변경: %s -> %s" % [player_id + 1, tower.cell, old_name, new_info.name])
+	return true
 
 
 # --- 진화 / 업그레이드 ---
@@ -306,12 +325,40 @@ func _spread_marks(monster: Monster) -> void:
 func _on_monster_died(monster: Monster) -> void:
 	monsters.erase(monster)
 	_spread_marks(monster)
-	gold += monster.reward
-	Effects.float_text(_renderer, monster.cell_pos, "+%d" % monster.reward, Color(1.0, 0.9, 0.3), lane_visible)
+
+	# 기본 보상
+	var base_reward := monster.reward
+	var actual_reward := base_reward
+
+	# 색깔 보너스 처리
+	if is_instance_valid(monster._killer):
+		var killer_tower = monster._killer
+		match killer_tower.color_info.name:
+			"초록":  # 처치 시 골드 보너스
+				var bonus := color_bonus_value("초록")
+				if bonus > 0.0:
+					actual_reward = roundi(base_reward * (1.0 + bonus))
+
+			"남색":  # 처치 시 보낸 몬스터 N마리 강화
+				var count := int(color_bonus_value("남색"))
+				if count > 0:
+					_empower_sent_monsters(count)
+
+			"보라":  # 처치 시 확률로 체력 +1
+				var chance := color_bonus_value("보라")
+				if lives < Balance.MAX_LIVES and randf() < chance:
+					lives += 1
+					lives_changed.emit(lives)
+					Effects.float_text(_renderer, monster.cell_pos, "+1 생명!", killer_tower.color_info.color, lane_visible)
+					Log.info(Log.Category.GAME, "[P%d] 보라 보너스: 체력 +1 (현재 %d)" % [player_id + 1, lives])
+
+	gold += actual_reward
+	var text := "+%d" % actual_reward if actual_reward == base_reward else "+%d (보너스!)" % actual_reward
+	Effects.float_text(_renderer, monster.cell_pos, text, Color(1.0, 0.9, 0.3), lane_visible)
 	Effects.ring(_renderer, monster.cell_pos, 0.6, monster.body_color, lane_visible)
 	monster.queue_free()
 	Log.debug(Log.Category.ECONOMY, "[P%d] 몬스터#%d 처치 +%d골드 잔액=%d" % [
-		player_id + 1, monster.monster_id, monster.reward, gold])
+		player_id + 1, monster.monster_id, actual_reward, gold])
 
 
 func _on_monster_reached_exit(monster: Monster) -> void:
@@ -354,3 +401,76 @@ func set_lane_visible(is_shown: bool) -> void:
 		m.visible = is_shown
 	for t in towers:
 		t.visible = is_shown
+
+
+# --- 색깔 시스템 ---
+
+## 색깔의 현재 레벨 (0~5). 0=업그레이드 안 함.
+func color_level(color_name: String) -> int:
+	return int(color_levels.get(color_name, 0))
+
+
+## 색깔 업그레이드 비용 (현재 레벨에서 다음 레벨로). 최대 레벨이면 -1.
+func color_upgrade_cost(color_name: String) -> int:
+	var cur := color_level(color_name)
+	if cur >= Balance.COLOR_MAX_LEVEL:
+		return -1
+	return Balance.COLOR_UPGRADE_COSTS[cur]  # 현재 레벨 cur -> cur+1 비용
+
+
+## 색깔을 업그레이드한다 (골드). 성공하면 true.
+func upgrade_color(color_name: String) -> bool:
+	var cost := color_upgrade_cost(color_name)
+	if cost < 0:
+		return false
+	var cur := color_level(color_name)
+	var next := cur + 1
+	if not try_spend(cost, "색깔 업그레이드: %s %d->%d레벨" % [color_name, cur, next]):
+		return false
+	color_levels[color_name] = next
+	Log.info(Log.Category.TOWER, "[P%d] 색깔 업그레이드: %s %d레벨 (비용=%d골드)" % [player_id + 1, color_name, next, cost])
+	return true
+
+
+## 색깔 보너스 타입 가져오기
+func color_bonus_type(color_name: String) -> String:
+	return Balance.COLOR_BONUS_TYPES.get(color_name, "")
+
+
+## 색깔 보너스 값 가져오기 (현재 레벨 기준)
+func color_bonus_value(color_name: String) -> float:
+	var level := color_level(color_name)
+	if level == 0:
+		return 0.0
+	var bonus_type := color_bonus_type(color_name)
+	if bonus_type == "empower":
+		# 강화는 마리수를 반환
+		return float(Balance.COLOR_LEVEL_BONUS["empower_count"][level - 1])
+	else:
+		# 나머지는 비율 반환
+		var key := bonus_type
+		if not Balance.COLOR_LEVEL_BONUS.has(key):
+			return 0.0
+		return Balance.COLOR_LEVEL_BONUS[key][level - 1]
+
+
+## 보스 레인에 보낸 몬스터 중 랜덤 N마리 강화 (남색 색깔 보너스)
+func _empower_sent_monsters(count: int) -> void:
+	if _boss_controller == null:
+		return
+	# 보스 앞에서 싸우는 몬스터 중 이 플레이어가 보낸 것만 (아직 걸어오는 중인 몬스터는 강화해도 의미가 없다)
+	var my_monsters: Array[Monster] = []
+	for m in _boss_controller.get_attackers():
+		if is_instance_valid(m) and m.owner_id == player_id:
+			my_monsters.append(m)
+
+	if my_monsters.is_empty():
+		return
+
+	# 랜덤으로 N마리 선택하여 강화
+	my_monsters.shuffle()
+	var actual_count := mini(count, my_monsters.size())
+	for i in range(actual_count):
+		my_monsters[i].add_empower(Balance.EMPOWER_DURATION, Balance.EMPOWER_BOOST)
+		Effects.float_text(_renderer, my_monsters[i].cell_pos, "강화!", Color(0.5, 0.5, 1.0), _boss_controller._lane_visible)
+	Log.debug(Log.Category.GAME, "[P%d] 남색 보너스: 몬스터 %d마리 강화" % [player_id + 1, actual_count])

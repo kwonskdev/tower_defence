@@ -95,6 +95,10 @@ func start_boss():
 	boss.set_lane_visible(current_player_id == BOSS_LANE_ID)
 	boss_ready.emit(boss)
 
+	# 각 레인에 boss 참조 설정 (남색 색깔 보너스용)
+	for lane in lanes.values():
+		lane._boss_controller = boss
+
 func setup_scroll_container():
 	# 가로 스크롤 비활성화 (세로 드래그 스크롤만 사용)
 	horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -205,6 +209,18 @@ func evolve_selected_tower(evo: String) -> bool:
 func upgrade_stat(evo: String, skill: String, key: String) -> bool:
 	var lane: LaneController = lanes.get(local_player_id)
 	return lane != null and lane.upgrade_stat(evo, skill, key)
+
+
+## 선택한 타워 1기의 색깔을 랜덤으로 바꾼다 (골드)
+func recolor_selected_tower() -> bool:
+	var lane: LaneController = lanes.get(local_player_id)
+	return lane != null and lane.recolor_tower(get_selected_tower())
+
+
+## 색깔 업그레이드 (골드, 그 색 타워 전체에 적용)
+func upgrade_color(color_name: String) -> bool:
+	var lane: LaneController = lanes.get(local_player_id)
+	return lane != null and lane.upgrade_color(color_name)
 
 
 ## 선택한 타워 1기의 B 스킬을 배운다 (골드, 타워마다 따로)

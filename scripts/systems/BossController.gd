@@ -327,7 +327,8 @@ func _recalc_dps() -> void:
 
 	var total := 0.0
 	for m in _attackers:
-		var base := m.dps + minf(m.ramp * m.time_at_boss, m.ramp_cap)
+		# 기본 DPS + 성장(ramp), 둘 다 강화 반영
+		var base := m.get_boosted_dps()
 		var bonus := 0.0
 		for s in supporters:
 			if s != m and s.cell_pos.distance_to(m.cell_pos) <= s.aura_radius:
@@ -818,6 +819,11 @@ func _finish(result: State, reason: String) -> void:
 
 func get_sent_monsters() -> Array[Monster]:
 	return _sent_monsters
+
+
+## 보스 앞에 도착해서 공격 중인 몬스터들
+func get_attackers() -> Array[Monster]:
+	return _attackers
 
 
 func get_attacker_count() -> int:

@@ -99,8 +99,10 @@ var _vision_dirty := true
 var _vision_timer := 0.0
 
 var _poisons: Array = []         # [{src, stacks, dps, time}] 독 (타워별로 따로 집계)
+var _empower_buffs: Array = []   # [{end_time: float, boost: float}] 강화 버프 (시간 순 정렬, 중첩 가능)
 var _consumed_marks: Array = []  # 이번 타격에 터진 표식
 var _captured := false
+var _killer = null               # 이 몬스터를 처치한 타워 (색깔 보너스 처리용)
 
 var _grid: GridSystem
 var _renderer: GridRenderer
@@ -148,17 +150,23 @@ func take_damage(amount: float, source = null) -> void:
 	_consumed_marks = consumed
 	for mk in consumed:  # 표식을 먼저 터뜨린다 (이 타격이 먼저 죽이면 지원 타워의 추가 피해가 낭비되므로)
 		_lose_hp(float(mk.dmg), mk.src, source)
-	# 방어력: 한 발 피해를 평면으로 깎되, 최소 MIN_DAMAGE_RATIO는 들어간다
-	_lose_hp(maxf(amount - effective_armor(), amount * MIN_DAMAGE_RATIO), source, source)
+	# 방어력: 한 발 피해를 평면으로 깎되, 최소 MIN_DAMAGE_RATIO는 들어간다 (파랑 타워는 방어력의 일부를 무시)
+	var pen := 0.0
+	if is_instance_valid(source) and source.has_method("armor_penetration"):
+		pen = source.armor_penetration()
+	_lose_hp(maxf(amount - effective_armor() * (1.0 - pen), amount * MIN_DAMAGE_RATIO), source, source)
 	_hit_flash = 0.1
 	if not _dead:
 		_consumed_marks = []
 
 
 ## 체력을 실제로 깎는다. damage_source: 누적 피해를 올려 줄 타워, kill_source: 죽였을 때 킬을 올려 줄 타워.
-func _lose_hp(amount: float, damage_source, kill_source) -> void:
+## 강화(남색 보너스) 중이면 받는 피해가 1/(1+강화)로 줄어든다 = 체력 +강화%. 처형은 강화를 무시한다 (ignore_empower).
+func _lose_hp(amount: float, damage_source, kill_source, ignore_empower := false) -> void:
 	if _dead:
 		return
+	if not ignore_empower and not _empower_buffs.is_empty():
+		amount /= 1.0 + get_total_empower()
 	var applied := minf(amount, maxf(hp, 0.0))  # 남은 체력을 넘는 초과분은 피해로 치지 않는다
 	hp -= amount
 	if is_instance_valid(damage_source):  # 투사체가 날아가는 사이 타워가 부서졌을 수 있다
@@ -168,6 +176,7 @@ func _lose_hp(amount: float, damage_source, kill_source) -> void:
 			_revive()
 			return
 		if is_instance_valid(kill_source):
+			_killer = kill_source
 			kill_source.record_kill()
 		_die()
 
@@ -191,7 +200,7 @@ func _die() -> void:
 func execute(source) -> void:
 	if _dead:
 		return
-	_lose_hp(maxf(hp, 0.0) + 0.001, source, source)
+	_lose_hp(maxf(hp, 0.0) + 0.001, source, source, true)
 
 
 func is_dead() -> bool:
@@ -245,6 +254,41 @@ func apply_slow(ratio: float, duration: float) -> void:
 
 func apply_stun(duration: float) -> void:
 	stun_time = maxf(stun_time, duration)
+
+
+# --- 강화 시스템 (남색 색깔 보너스) ---
+
+## 강화 버프 추가 (중첩 가능)
+func add_empower(duration: float, boost: float) -> void:
+	var now := Time.get_ticks_msec() / 1000.0
+	_empower_buffs.append({"end_time": now + duration, "boost": boost})
+	# 종료 시간 순으로 정렬
+	_empower_buffs.sort_custom(func(a, b): return a.end_time < b.end_time)
+	while _empower_buffs.size() > Balance.EMPOWER_MAX_STACKS:
+		_empower_buffs.remove_at(0)  # 가장 먼저 끝나는 것을 밀어낸다
+
+
+## 현재 적용 중인 강화 효과 총합 (만료된 버프는 제거)
+func get_total_empower() -> float:
+	var now := Time.get_ticks_msec() / 1000.0
+	var total := 0.0
+	# 만료된 버프 제거 (역순으로)
+	for i in range(_empower_buffs.size() - 1, -1, -1):
+		if _empower_buffs[i].end_time < now:
+			_empower_buffs.remove_at(i)
+		else:
+			total += _empower_buffs[i].boost
+	return total
+
+
+## 강화가 반영된 실질 체력 (UI/계산용). 체력은 받는 피해를 줄이는 방식으로 반영된다 (_lose_hp).
+func get_effective_hp() -> float:
+	return hp * (1.0 + get_total_empower())
+
+
+## 강화가 반영된 DPS (보스 레인 몬스터용). 기본 DPS와 성장(ramp) 증가분 모두 강화를 받는다. 오라는 BossController가 따로 곱한다.
+func get_boosted_dps() -> float:
+	return (dps + minf(ramp * time_at_boss, ramp_cap)) * (1.0 + get_total_empower())
 
 
 ## 공중 몬스터를 지상에 붙잡는다. 그동안 제자리에 정지하고 지상 몬스터로 취급된다 (끝나면 다시 공중).
