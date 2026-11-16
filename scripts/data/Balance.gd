@@ -123,8 +123,8 @@ static func color_tooltip(color_name: String, level: int) -> String:
 
 # 강화 효과 상수
 const EMPOWER_DURATION := 8.0      # 강화 지속시간 (초)
-const EMPOWER_BOOST := 0.1         # 강화 효과 +10% (중첩 가능)
-const EMPOWER_MAX_STACKS := 10     # 한 몬스터에 동시에 쌓이는 최대 중첩 (+100%). 넘으면 가장 먼저 끝날 것이 밀려난다
+const EMPOWER_BOOST := 0.05        # 강화 1회당 +5% (중첩 가능, DPS/성장/체력에 적용)
+const EMPOWER_MAX_STACKS := 10     # 한 몬스터에 동시에 쌓이는 최대 중첩 (+50%). 넘으면 가장 먼저 끝날 것이 밀려난다
 
 # --- 진화 / 스킬 업그레이드 비용 ---
 # 타워 1기를 진화시키는 비용. 선택하는 순간 A 스킬을 배운다 (그 계열을 처음 진화하면 A 스킬 1레벨).
