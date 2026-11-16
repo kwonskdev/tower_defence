@@ -139,9 +139,12 @@ func take_damage(amount: float, source = null) -> void:
 
 
 ## 체력을 실제로 깎는다. damage_source: 누적 피해를 올려 줄 타워, kill_source: 죽였을 때 킬을 올려 줄 타워.
-func _lose_hp(amount: float, damage_source, kill_source) -> void:
+## 강화(남색 보너스) 중이면 받는 피해가 1/(1+강화)로 줄어든다 = 체력 +강화%. 처형은 강화를 무시한다 (ignore_empower).
+func _lose_hp(amount: float, damage_source, kill_source, ignore_empower := false) -> void:
 	if _dead:
 		return
+	if not ignore_empower and not _empower_buffs.is_empty():
+		amount /= 1.0 + get_total_empower()
 	var applied := minf(amount, maxf(hp, 0.0))  # 남은 체력을 넘는 초과분은 피해로 치지 않는다
 	hp -= amount
 	if is_instance_valid(damage_source):  # 투사체가 날아가는 사이 타워가 부서졌을 수 있다
@@ -163,7 +166,7 @@ func _die() -> void:
 func execute(source) -> void:
 	if _dead:
 		return
-	_lose_hp(maxf(hp, 0.0) + 0.001, source, source)
+	_lose_hp(maxf(hp, 0.0) + 0.001, source, source, true)
 
 
 func is_dead() -> bool:
@@ -233,6 +236,11 @@ func get_total_empower() -> float:
 		else:
 			total += _empower_buffs[i].boost
 	return total
+
+
+## 강화가 반영된 실질 체력 (UI/계산용). 체력은 받는 피해를 줄이는 방식으로 반영된다 (_lose_hp).
+func get_effective_hp() -> float:
+	return hp * (1.0 + get_total_empower())
 
 
 ## 강화가 반영된 기본 DPS (보스 레인 몬스터용)
