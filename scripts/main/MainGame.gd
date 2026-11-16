@@ -822,8 +822,8 @@ func _update_hud():
 		BossController.State.VICTORY: lines.append("[전체 승리!]")
 		BossController.State.DEFEAT: lines.append("[패배]")
 	if game_field.current_player_id == GameField.BOSS_LANE_ID:
-		lines.append("BOSS Lv.%d/%d %s  %d/%d  남은 %d초" % [
-			boss.level, BossLevels.COUNT, boss.level_data.name, int(boss.hp), int(boss.max_hp), int(boss.time_left)])
+		lines.append("BOSS Lv.%d/%d %s%s  %d/%d  남은 %d초" % [
+			boss.level, BossLevels.COUNT, boss.level_data.name, boss.phase_text(), int(boss.hp), int(boss.max_hp), int(boss.time_left)])
 		# 보스 공격 현황: 보스 앞에 서 있는 몬스터들이 1초에 주는 피해의 합
 		if boss.total_dps > 0.0:
 			var eta := boss.hp / boss.effective_dps()  # 보호막까지 반영한 실제 피해로 계산

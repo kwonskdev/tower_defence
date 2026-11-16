@@ -12,6 +12,10 @@ class_name BossSkills
 ##   wave_affix + affix_every: N번째 웨이브마다(N, 2N, ...) 그 웨이브에 AFFIXES의 변형을 붙인다. 다음 웨이브 미리보기에 먼저 뜬다.
 ##   guard_per_monster + guard_cap: 비늘 보호막. 필드 위 웨이브 몬스터(참여 레인 평균) 1마리당 보스가 받는 피해가 이만큼 줄고, 최대 guard_cap까지
 ##   chill_start / chill_full / chill_max: 동상. 이 라운드에서 보스 앞에 선 지 chill_start초부터 dps가 줄기 시작해 chill_full초에 chill_max(비율)가 된다
+## 페이즈가 있는 보스(PHASES에 적은 라운드)의 스킬이 쓰는 항목
+##   phase: 이 스킬이 켜져 있는 페이즈 번호(1부터). 숫자 하나 또는 배열. 없으면 모든 페이즈에서 켜져 있다
+##   quiet: true이면 켜질 때 배너를 따로 띄우지 않는다 (페이즈 안내문이 대신 설명한다)
+##   affix_offset: wave_affix가 붙는 웨이브 번호를 밀어 준다. (번호 - offset)이 affix_every의 배수일 때 붙는다 (번갈아 붙일 때 쓴다)
 ## 발동형 스킬(조건이 되면 예고 후 발동)이 쓰는 항목
 ##   trigger: "hp_below"(보스 체력이 hp_ratios의 각 비율 이하가 될 때 한 번씩) / "every"(first초 뒤부터 period초마다)
 ##   delay: 예고 시간(초). 발동 전에 배너와 몬스터 표식으로 알린다
@@ -29,6 +33,19 @@ const AFFIXES := {
 		"text": "이번 웨이브는 부활: 처음 죽으면 체력 50%로 한 번 되살아난다 (골드는 마지막에만)."},
 	"airraid": {"name": "공습", "color": Color(0.5, 0.75, 0.95), "air_only": true,
 		"text": "이번 웨이브는 공습: 전부 공중 몬스터. 대공 타워만 공격할 수 있다."},
+}
+
+## 페이즈: 보스 체력이 내려가면서 단계가 바뀐다. 키는 라운드, 값은 단계 목록 (from: 이 단계가 시작되는 체력 비율)
+## 단계가 바뀌면 그 단계의 스킬만 켜지고 이전 단계의 스킬은 꺼진다 (주기 스킬의 시계도 새로 시작한다).
+const PHASES := {
+	10: [
+		{"from": 1.0, "name": "페이즈 1: 파멸의 압박", "lane": "player",
+			"text": "웨이브가 25초마다 오고 2웨이브마다 돌격합니다. 체력이 66% 아래로 내려가면 페이즈 2."},
+		{"from": 0.66, "name": "페이즈 2: 심판", "lane": "both",
+			"text": "웨이브가 부활과 공습으로 번갈아 오고, 체력 60/40%에서 보스 앞 DPS 1위가 처단됩니다. 체력이 33% 아래로 내려가면 페이즈 3."},
+		{"from": 0.33, "name": "페이즈 3: 종말", "lane": "both",
+			"text": "웨이브가 20초마다 오고, 슬라임 새끼가 분열하고, 공포와 봉인이 이어집니다."},
+	],
 }
 
 const BY_LEVEL := {
@@ -81,11 +98,53 @@ const BY_LEVEL := {
 			"trigger": "every", "first": 27.0, "period": 25.0, "delay": 3.0,
 			"effect": "seal", "count": 3, "duration": 8.0},
 	],
+	# Lv.10 파멸의 왕: 새 스킬 없이 앞 라운드의 스킬을 페이즈별로 조합한다 (설명은 PHASES의 안내문이 대신한다)
+	10: [
+		{"id": "p1_pressure", "name": "파멸의 압박", "lane": "player", "phase": 1, "quiet": true,
+			"text": "웨이브 25초 주기, 2웨이브마다 돌격.",
+			"wave_interval": 25.0, "count_mult": 0.85, "wave_affix": "charge", "affix_every": 2},
+		{"id": "p2_undead", "name": "되살아나는 뼈", "lane": "player", "phase": 2, "quiet": true,
+			"text": "짝수 웨이브는 부활.", "wave_affix": "undead", "affix_every": 2, "affix_offset": 0},
+		{"id": "p2_airraid", "name": "공습", "lane": "player", "phase": 2, "quiet": true,
+			"text": "홀수 웨이브는 공습.", "wave_affix": "airraid", "affix_every": 2, "affix_offset": 1},
+		{"id": "p2_execute", "name": "처단", "lane": "both", "phase": 2, "quiet": true,
+			"text": "보스 앞 DPS 1위 제거 + 환영.",
+			"trigger": "hp_below", "hp_ratios": [0.6, 0.4], "delay": 3.0,
+			"effect": "execute", "refund": 0.5, "phantoms": 1, "phantom_hp": 1.5},
+		{"id": "p3_pressure", "name": "종말의 압박", "lane": "player", "phase": 3, "quiet": true,
+			"text": "웨이브 20초 주기.", "wave_interval": 20.0, "count_mult": 0.75},
+		{"id": "p3_split", "name": "분열", "lane": "player", "phase": 3, "quiet": true,
+			"text": "슬라임 새끼 4마리.",
+			"trigger": "hp_below", "hp_ratios": [0.3], "delay": 3.0, "effect": "split", "count": 4},
+		{"id": "p3_dread", "name": "공포", "lane": "boss", "phase": 3, "quiet": true,
+			"text": "DPS 상위 3마리 DPS 0.",
+			"trigger": "every", "first": 10.0, "period": 25.0, "delay": 3.0,
+			"effect": "dread", "count": 3, "duration": 6.0},
+		{"id": "p3_seal", "name": "봉인", "lane": "player", "phase": 3, "quiet": true,
+			"text": "상위 타워 3기 봉인.",
+			"trigger": "every", "first": 22.0, "period": 25.0, "delay": 3.0,
+			"effect": "seal", "count": 3, "duration": 8.0},
+	],
 }
 
 
 static func of_level(level: int) -> Array:
 	return BY_LEVEL.get(level, [])
+
+
+## 이 라운드의 페이즈 목록 (페이즈가 없는 보스는 빈 배열)
+static func phases_of(level: int) -> Array:
+	return PHASES.get(level, [])
+
+
+## 이 스킬이 phase 페이즈에서 켜져 있는가. phase 키가 없으면 항상 켜져 있다 (페이즈 없는 보스는 phase 0)
+static func in_phase(skill: Dictionary, phase: int) -> bool:
+	if not skill.has("phase"):
+		return true
+	var p = skill.phase
+	if p is Array:
+		return phase in p
+	return int(p) == phase
 
 
 ## 배너에 붙는 레인 표시

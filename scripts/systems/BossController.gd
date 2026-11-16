@@ -10,7 +10,7 @@ class_name BossController
 ## - 제한시간 안에 못 잡으면 패배. 보스는 플레이어 몬스터를 공격하지 않는다 (현재 미정).
 ## - 보스 스킬은 BossSkills.gd에 라운드별로 정의한다. 지금 있는 것: 웨이브 주기/마릿수, 웨이브 변형(돌격/부활/공습), 비늘 보호막,
 ##   동상(Lv.6), 체력 조건/주기 발동형(Lv.5 분열, Lv.7 처단+환영, Lv.9 공포+봉인). 발동형은 예고(배너+표식) 뒤에 발동한다.
-## TODO: Lv.10 페이즈
+## - 페이즈(Lv.10): 보스 체력이 내려가면 단계가 바뀌고, 그 단계의 스킬만 켜진다 (BossSkills.PHASES).
 
 signal level_started(level: int)
 signal level_cleared(level: int)
@@ -24,6 +24,7 @@ const SLOT_RING_GAP := 0.65   # 겹겹이 둘러쌀 때 바깥 고리 간격 (�
 const SLOT_SPACING := 0.85    # 같은 고리에서 몬스터 간 간격 (칸)
 const DPS_RECALC_INTERVAL := 0.25
 const AURA_BONUS_CAP := 1.5   # 지원형 오라는 아무리 겹쳐도 최대 +150%
+const MIN_WAVE_GAP := 10.0    # 웨이브 주기를 수입 시점에 다시 맞출 때, 직전 웨이브와 최소 이만큼은 띄운다 (초)
 
 var state: State = State.WAITING
 var level: int = 1
@@ -62,7 +63,9 @@ var sent_count := 0                   # 지금까지 보낸 몬스터 수 (죽�
 var _chill_start := 0.0               # 동상: 이 라운드에서 선 지 _chill_start초부터 dps가 줄고 _chill_full초에 _chill_max만큼 줄어 있다 (_chill_max가 0이면 없음)
 var _chill_full := 1.0
 var _chill_max := 0.0
-var _triggered: Array = []            # 이번 라운드의 발동형 스킬 [{skill, fired: Array, timer: float}]
+var _since_wave := 999.0              # 마지막 웨이브를 보낸 뒤 지난 시간(초). 아직 안 보냈으면 큰 값
+var _phase := 0                       # 지금 페이즈 (1부터. 페이즈가 없는 보스는 0)
+var _triggered: Array = []            # 지금 페이즈의 발동형 스킬 [{skill, fired: Array, timer: float}]
 var _pending_casts: Array = []        # 예고 중인 발동 [{skill, left, targets: Array}]
 
 
@@ -139,17 +142,26 @@ func _start_level(new_level: int) -> void:
 	level_started.emit(level)
 
 
-## 이번 라운드의 항상 켜져 있는 스킬을 적용한다 (라운드가 바뀔 때마다 기본값에서 다시 계산)
+## 새 보스 라운드가 시작됐다: 웨이브 번호와 예고를 초기화하고 첫 페이즈(페이즈가 없으면 0)의 스킬을 적용한다
 func _apply_level_skills() -> void:
+	_level_wave_no = 0
+	_clear_pending_casts()  # 이전 라운드에서 예고만 하고 발동 못 한 스킬은 취소한다
+	for m in _attackers:
+		m.chill_time = 0.0  # 동상은 이 라운드가 시작된 뒤에 선 시간부터 센다
+	_phase = 1 if not BossSkills.phases_of(level).is_empty() else 0
+	_apply_active_skills()
+
+
+## 지금 켜져 있는 스킬(이 라운드의 스킬 중 현재 페이즈에 해당하는 것)을 적용한다. 페이즈가 바뀔 때도 다시 부른다.
+## 항상 켜져 있는 값(웨이브 주기, 마릿수, 보호막, 동상)은 기본값에서 다시 계산하고, 발동형은 시계를 새로 시작한다.
+func _apply_active_skills() -> void:
 	var interval := Balance.INCOME_INTERVAL
 	_skill_count_mult = 1.0
-	_level_wave_no = 0
 	_guard_per_monster = 0.0
 	_guard_cap = 0.0
 	_chill_max = 0.0
-	_clear_pending_casts()  # 이전 라운드에서 예고만 하고 발동 못 한 스킬은 취소한다
 	_triggered.clear()
-	for skill in BossSkills.of_level(level):
+	for skill in _active_skills():
 		interval = minf(interval, float(skill.get("wave_interval", interval)))
 		_skill_count_mult *= float(skill.get("count_mult", 1.0))
 		_guard_per_monster += float(skill.get("guard_per_monster", 0.0))
@@ -163,21 +175,53 @@ func _apply_level_skills() -> void:
 			for _r in skill.get("hp_ratios", []):
 				fired.append(false)
 			_triggered.append({"skill": skill, "fired": fired, "timer": float(skill.get("first", skill.get("period", 20.0)))})
-	for m in _attackers:
-		m.chill_time = 0.0  # 동상은 이 라운드가 시작된 뒤에 선 시간부터 센다
 	_apply_wave_interval(interval)
-	# 라운드가 바뀌어 다음 웨이브의 변형이 달라지면 다음 웨이브를 다시 정한다 (처음 setup 때는 setup이 정한다)
-	if not _next_types.is_empty() and _affix_for_wave(1) != _next_affix:
+	# 라운드나 페이즈가 바뀌어 다음 웨이브의 변형이 달라지면 다음 웨이브를 다시 정한다 (처음 setup 때는 setup이 정한다)
+	if not _next_types.is_empty() and _affix_for_wave(_level_wave_no + 1) != _next_affix:
 		_plan_next_wave()
-	if not BossSkills.of_level(level).is_empty():
-		Log.info(Log.Category.GAME, "보스 스킬 적용: 웨이브 주기 %.0fs, 마릿수 x%.2f, 보호막 %.0f%%/마리(최대 %.0f%%)" % [
-			interval, _skill_count_mult, _guard_per_monster * 100.0, _guard_cap * 100.0])
+	if not _active_skills().is_empty():
+		Log.info(Log.Category.GAME, "보스 스킬 적용(페이즈 %d): 웨이브 주기 %.0fs, 마릿수 x%.2f, 보호막 %.0f%%/마리(최대 %.0f%%), 발동형 %d개" % [
+			_phase, interval, _skill_count_mult, _guard_per_monster * 100.0, _guard_cap * 100.0, _triggered.size()])
 
 
-## 이번 라운드의 스킬을 배너로 알린다 (시작 버튼을 누를 때와 새 보스가 나올 때)
+## 이번 라운드의 스킬 중 지금 페이즈에 켜져 있는 것
+func _active_skills() -> Array:
+	return BossSkills.of_level(level).filter(func(s: Dictionary): return BossSkills.in_phase(s, _phase))
+
+
+## 보스 체력 비율에 해당하는 페이즈 번호 (페이즈가 없는 보스는 0)
+func _phase_for_ratio(ratio: float) -> int:
+	var phases := BossSkills.phases_of(level)
+	for i in range(phases.size() - 1, -1, -1):
+		if ratio <= float(phases[i].from):
+			return i + 1
+	return 1 if not phases.is_empty() else 0
+
+
+## 다음 페이즈로 넘어간다: 이전 페이즈의 스킬은 꺼지고 새 페이즈의 스킬이 켜진다 (예고 중인 스킬은 그대로 발동한다)
+func _enter_phase(new_phase: int) -> void:
+	_phase = new_phase
+	level_flash = 0.6
+	Log.info(Log.Category.GAME, "보스 Lv.%d 페이즈 %d 돌입 (체력 %.0f%%)" % [level, _phase, hp / max_hp * 100.0])
+	_apply_active_skills()
+	_announce_level_skills()
+
+
+## HUD용: 페이즈가 있는 보스면 "[페이즈 2/3]", 없으면 빈 문자열
+func phase_text() -> String:
+	var count := BossSkills.phases_of(level).size()
+	return "  [페이즈 %d/%d]" % [_phase, count] if count > 0 else ""
+
+
+## 지금 스킬을 배너로 알린다 (시작 버튼을 누를 때, 새 보스가 나올 때, 페이즈가 바뀔 때).
+## 페이즈가 있으면 그 페이즈의 안내문을 먼저, 그다음 quiet가 아닌 스킬을 하나씩.
 func _announce_level_skills() -> void:
-	for skill in BossSkills.of_level(level):
-		skill_announced.emit({"name": skill.name, "text": skill.text, "lane": skill.lane, "delay": 0.0, "boss": level_data.name})
+	if _phase > 0:
+		var info: Dictionary = BossSkills.phases_of(level)[_phase - 1]
+		skill_announced.emit({"name": info.name, "text": info.text, "lane": info.lane, "delay": 0.0, "boss": level_data.name})
+	for skill in _active_skills():
+		if not skill.get("quiet", false):
+			skill_announced.emit({"name": skill.name, "text": skill.text, "lane": skill.lane, "delay": 0.0, "boss": level_data.name})
 
 
 ## 웨이브 주기를 바꾼다. 평소 주기(수입 주기)로 돌아올 때는 다음 수입 시점에 맞춰서 웨이브와 수입이 다시 같이 오게 한다.
@@ -192,6 +236,8 @@ func _apply_wave_interval(interval: float) -> void:
 	if is_equal_approx(interval, Balance.INCOME_INTERVAL):
 		var left := _income_time_left()
 		if left > 0.0:
+			if _since_wave + left < MIN_WAVE_GAP:
+				left += Balance.INCOME_INTERVAL  # 방금 웨이브가 왔는데 곧바로 또 오지 않게 그다음 수입 시점으로 미룬다
 			first_wait = left
 	_dispatch_timer.start(first_wait)     # start(시간)은 wait_time도 그 값으로 바꾼다
 	_dispatch_timer.wait_time = interval  # 그래서 첫 대기가 끝난 뒤부터는 원래 주기로 되돌려 놓는다
@@ -210,6 +256,7 @@ func _process(delta: float) -> void:
 		return
 
 	level_flash = maxf(0.0, level_flash - delta * 1.2)
+	_since_wave += delta
 
 	# 성장형 몬스터는 보스 앞에 서 있는 시간이 길어질수록 강해진다
 	for m in _attackers:
@@ -332,8 +379,11 @@ func _plan_next_wave() -> void:
 
 ## 이번 라운드의 wave_no번째 웨이브에 붙는 변형 (없으면 ""). "N웨이브마다"는 N, 2N, ... 번째에 붙는다.
 func _affix_for_wave(wave_no: int) -> String:
-	for skill in BossSkills.of_level(level):
-		if skill.has("wave_affix") and wave_no % int(skill.affix_every) == 0:
+	for skill in _active_skills():
+		if not skill.has("wave_affix"):
+			continue
+		var k := wave_no - int(skill.get("affix_offset", 0))  # 번갈아 붙일 때는 번호를 밀어서 겹치지 않게 한다
+		if k >= 0 and k % int(skill.affix_every) == 0:
 			return skill.wave_affix
 	return ""
 
@@ -382,6 +432,7 @@ func time_to_next_wave() -> float:
 func _dispatch_wave() -> void:
 	if state != State.RUNNING:
 		return
+	_since_wave = 0.0
 	var types := _next_types.duplicate()
 	var preview := get_next_wave_preview()
 	var affix_id := _next_affix
@@ -544,6 +595,9 @@ func _on_sent_monster_died(monster: Monster) -> void:
 ## 조건이 되면 예고를 시작하고, 예고 시간이 끝나면 발동한다
 func _update_skills(delta: float) -> void:
 	var ratio := hp / max_hp
+	var new_phase := _phase_for_ratio(ratio)
+	if new_phase > _phase:  # 페이즈는 앞으로만 간다 (체력은 줄기만 한다)
+		_enter_phase(new_phase)
 	for entry in _triggered:
 		var skill: Dictionary = entry.skill
 		if skill.trigger == "hp_below":
@@ -837,6 +891,11 @@ class BossBar extends Node2D:
 		draw_rect(Rect2(c.x - bar_w * 0.5 - 3, bar_y - 20, bar_w + 6, 36), Color(0, 0, 0, 0.8))
 		draw_rect(Rect2(c.x - bar_w * 0.5, bar_y, bar_w, 10), Color(0.25, 0.05, 0.05))
 		draw_rect(Rect2(c.x - bar_w * 0.5, bar_y, bar_w * ratio, 10), Color(0.9, 0.15, 0.15))
+		# 페이즈가 있는 보스는 단계가 바뀌는 체력 위치에 흰 눈금을 그린다
+		var phases := BossSkills.phases_of(boss.level)
+		for i in range(1, phases.size()):
+			var tick_x: float = c.x - bar_w * 0.5 + bar_w * float(phases[i].from)
+			draw_line(Vector2(tick_x, bar_y - 2.0), Vector2(tick_x, bar_y + 12.0), Color(1, 1, 1, 0.9), 2.0)
 		var font := ThemeDB.fallback_font
 		draw_string(font, Vector2(c.x - bar_w * 0.5, bar_y - 6), "Lv.%d %s   %d / %d" % [
 			boss.level, boss.level_data.name, int(boss.hp), int(boss.max_hp)],
