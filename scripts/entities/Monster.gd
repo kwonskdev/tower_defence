@@ -128,8 +128,11 @@ func take_damage(amount: float, source = null) -> void:
 	_consumed_marks = consumed
 	for mk in consumed:  # 표식을 먼저 터뜨린다 (이 타격이 먼저 죽이면 지원 타워의 추가 피해가 낭비되므로)
 		_lose_hp(float(mk.dmg), mk.src, source)
-	# 방어력: 한 발 피해를 평면으로 깎되, 최소 MIN_DAMAGE_RATIO는 들어간다
-	_lose_hp(maxf(amount - effective_armor(), amount * MIN_DAMAGE_RATIO), source, source)
+	# 방어력: 한 발 피해를 평면으로 깎되, 최소 MIN_DAMAGE_RATIO는 들어간다 (파랑 타워는 방어력의 일부를 무시)
+	var pen := 0.0
+	if is_instance_valid(source) and source.has_method("armor_penetration"):
+		pen = source.armor_penetration()
+	_lose_hp(maxf(amount - effective_armor() * (1.0 - pen), amount * MIN_DAMAGE_RATIO), source, source)
 	_hit_flash = 0.1
 	if not _dead:
 		_consumed_marks = []
@@ -228,11 +231,6 @@ func get_total_empower() -> float:
 		else:
 			total += _empower_buffs[i].boost
 	return total
-
-
-## 강화가 반영된 최대 체력 (보스 레인 몬스터용)
-func get_boosted_max_hp() -> float:
-	return max_hp * (1.0 + get_total_empower())
 
 
 ## 강화가 반영된 기본 DPS (보스 레인 몬스터용)

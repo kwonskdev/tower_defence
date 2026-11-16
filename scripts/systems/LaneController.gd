@@ -380,11 +380,9 @@ func color_level(color_name: String) -> int:
 ## 색깔 업그레이드 비용 (현재 레벨에서 다음 레벨로). 최대 레벨이면 -1.
 func color_upgrade_cost(color_name: String) -> int:
 	var cur := color_level(color_name)
-	if cur >= 5:
+	if cur >= Balance.COLOR_MAX_LEVEL:
 		return -1
-	if cur == 0:
-		return Balance.COLOR_UPGRADE_COSTS[0]  # 0 -> 1
-	return Balance.COLOR_UPGRADE_COSTS[cur - 1]  # 1->2, 2->3, 3->4, 4->5
+	return Balance.COLOR_UPGRADE_COSTS[cur]  # 현재 레벨 cur -> cur+1 비용
 
 
 ## 색깔을 업그레이드한다 (골드). 성공하면 true.
@@ -441,5 +439,5 @@ func _empower_sent_monsters(count: int) -> void:
 	var actual_count := mini(count, my_monsters.size())
 	for i in range(actual_count):
 		my_monsters[i].add_empower(Balance.EMPOWER_DURATION, Balance.EMPOWER_BOOST)
-		Effects.float_text(_renderer, my_monsters[i].cell_pos, "강화!", Color(0.5, 0.5, 1.0), false)
+		Effects.float_text(_renderer, my_monsters[i].cell_pos, "강화!", Color(0.5, 0.5, 1.0), _boss_controller._lane_visible)
 	Log.debug(Log.Category.GAME, "[P%d] 남색 보너스: 몬스터 %d마리 강화" % [player_id + 1, actual_count])

@@ -713,7 +713,7 @@ func _update_tower_info(lane: LaneController):
 	if t.evolution != "":
 		title += " · " + Evolutions.evo_name(t.evolution)
 	var text := "[%s] 한 발 %.2f / %.2f초 / 사거리 %.1f칸\n누적 피해 %.1f  킬 %d" % [
-		title, t.cur_damage(), t.cur_cooldown(), t.kind.range, t.total_damage, t.kills]
+		title, t.cur_damage(), t.cur_cooldown(), t.cur_range(), t.total_damage, t.kills]
 	match t.evolution:
 		"support":
 			text += "\n공격력 없음: 표식 구름을 깐다"

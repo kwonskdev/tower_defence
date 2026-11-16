@@ -127,6 +127,11 @@ func cur_range() -> float:
 	return r
 
 
+## 방어력 관통 비율 (파랑 색깔 보너스). Monster.take_damage가 맞은 타워에게 물어본다.
+func armor_penetration() -> float:
+	return lane.color_bonus_value("파랑") if color_info.name == "파랑" else 0.0
+
+
 ## 치명타 확률 (성장형: 처치할 때마다 오른다)
 func crit_chance() -> float:
 	if evolution != "growth":
@@ -193,13 +198,6 @@ func _fire(target: Monster) -> void:
 func _shoot(target: Monster, power: float = 1.0) -> void:
 	var dmg: float = cur_damage() * power
 	var fx := {}
-
-	# 파랑 색깔 보너스: 방어력 관통
-	if color_info.name == "파랑":
-		var penetration := lane.color_bonus_value("파랑")
-		if penetration > 0.0:
-			fx.penetration = penetration
-
 	match evolution:
 		"pierce":
 			fx.pierce = int(_p("A", "count"))

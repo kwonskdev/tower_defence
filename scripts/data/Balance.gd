@@ -74,8 +74,9 @@ const COLOR_LEVEL_BONUS := {
 	"lifegain": [0.03, 0.06, 0.10, 0.15, 0.22],    # 체력 획득 확률 3%, 6%, 10%, 15%, 22%
 }
 
-# 색깔 업그레이드 비용 [1→2레벨, 2→3레벨, 3→4레벨, 4→5레벨]
-const COLOR_UPGRADE_COSTS := [20, 40, 70, 110]
+# 색깔 업그레이드 비용: 레벨 N으로 올리는 비용 = COLOR_UPGRADE_COSTS[N-1] (0→1, 1→2, ..., 4→5)
+const COLOR_MAX_LEVEL := 5
+const COLOR_UPGRADE_COSTS := [20, 40, 70, 110, 160]
 
 # 강화 효과 상수
 const EMPOWER_DURATION := 8.0      # 강화 지속시간 (초)
