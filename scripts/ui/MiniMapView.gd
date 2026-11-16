@@ -9,11 +9,21 @@ const MONSTER_COLOR := Color(1.0, 1.0, 1.0)
 
 var game_field: GameField
 var lane_index: int = 0
+## 보스 스킬이 이 레인에 영향을 주는 동안의 남은 시간(초). 0보다 크고 이 레인을 보고 있지 않으면 테두리가 깜빡인다.
+var alert_left := 0.0
+
+const ALERT_COLOR := Color(1.0, 0.45, 0.1)
 
 var _refresh := 0.0
+var _alert_t := 0.0
 
 
 func _process(delta: float) -> void:
+	if alert_left > 0.0:
+		alert_left = maxf(0.0, alert_left - delta)
+		_alert_t += delta
+		queue_redraw()  # 깜빡임이 끊기지 않게 매 프레임 그린다
+		return
 	_refresh -= delta
 	if _refresh <= 0.0:
 		_refresh = 0.15
@@ -65,6 +75,13 @@ func _draw() -> void:
 			var h := minf(game_field.size.y / total_h * area.size.y, area.size.y - top)
 			draw_rect(Rect2(area.position + Vector2(0, top), Vector2(area.size.x, h)), Color.WHITE, false, 1.0)
 		draw_rect(Rect2(Vector2.ZERO, size), Color(1.0, 0.9, 0.2), false, 2.0)
+	elif alert_left > 0.0:
+		# 보고 있지 않은 레인에 보스 스킬이 걸리는 중: 주황 테두리와 느낌표가 깜빡인다
+		var pulse := 0.5 + 0.5 * sin(_alert_t * 10.0)
+		draw_rect(Rect2(Vector2.ZERO, size), Color(ALERT_COLOR, 0.12 + 0.25 * pulse))
+		draw_rect(Rect2(Vector2.ZERO, size), Color(ALERT_COLOR, 0.5 + 0.5 * pulse), false, 3.0)
+		draw_string(ThemeDB.fallback_font, Vector2(size.x - 12.0, 13.0), "!", HORIZONTAL_ALIGNMENT_LEFT, -1, 14,
+			Color(1.0, 0.95, 0.8, 0.6 + 0.4 * pulse))
 
 
 func _dot(area: Rect2, cell_pos: Vector2, sx: float, sy: float, color: Color) -> void:

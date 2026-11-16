@@ -58,6 +58,7 @@ var _banner_queue: Array = []            # 기다리는 알림 [{name, text, lan
 var _banner_info: Dictionary = {}        # 지금 보이는 알림
 var _banner_left := 0.0                  # 지금 알림이 사라질 때까지
 var _banner_delay := 0.0                 # 스킬이 발동할 때까지 (0이면 카운트다운을 안 보인다)
+var minimap_views: Dictionary = {}       # 레인 번호 -> MiniMapView (보스 스킬이 걸리는 레인을 깜빡이려고 모아 둔다)
 
 # 플레이어 버튼들
 @onready var player_buttons: Array[Button] = []
@@ -419,6 +420,7 @@ func _attach_minimap(button: Button, lane_index: int):
 	view.game_field = game_field
 	view.lane_index = lane_index
 	view.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	minimap_views[lane_index] = view
 	button.add_child(view)
 	view.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	button.gui_input.connect(_on_minimap_gui_input.bind(button, lane_index))
@@ -740,6 +742,7 @@ func _show_skill_banner(info: Dictionary) -> void:
 	_banner_left = SKILL_BANNER_SECONDS + _banner_delay
 	skill_banner_title.text = "[%s] %s  -  BOSS %s" % [BossSkills.lane_tag(info.lane), info.name, info.get("boss", "")]
 	_refresh_skill_banner_text()
+	_alert_minimaps(info.lane, _banner_left)
 	# 맵 영역 맨 위, 좌우 8px 안쪽에 맞춘다
 	var rect := game_field.get_global_rect()
 	skill_banner.custom_minimum_size = Vector2(maxf(rect.size.x - 16.0, 200.0), 0.0)
@@ -755,11 +758,27 @@ func _refresh_skill_banner_text() -> void:
 	skill_banner_text.text = text
 
 
+## 이 스킬이 영향을 주는 레인의 미니맵을 알림이 떠 있는 동안 깜빡이게 한다.
+## lane: BossSkills의 lane 값 ("player"=내 레인 / "boss"=보스 레인 / "both"). 지금 보고 있는 레인은 깜빡이지 않는다.
+func _alert_minimaps(lane: String, seconds: float) -> void:
+	var targets: Array[int] = []
+	if lane == "player" or lane == "both":
+		targets.append(game_field.local_player_id)
+	if lane == "boss" or lane == "both":
+		targets.append(GameField.BOSS_LANE_ID)
+	for lane_id in targets:
+		var view: MiniMapView = minimap_views.get(lane_id)
+		if view != null:
+			view.alert_left = seconds
+
+
 ## 게임이 끝나면 남은 알림을 지운다
 func _clear_skill_banner() -> void:
 	_banner_queue.clear()
 	_banner_left = 0.0
 	skill_banner.visible = false
+	for view in minimap_views.values():
+		view.alert_left = 0.0
 
 
 ## 상태 패널용 작은 아이콘 (하트 / 금화 / 점). 글꼴에 이모지가 없어도 보이도록 직접 그린다.
