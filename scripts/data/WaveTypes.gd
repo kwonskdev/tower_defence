@@ -43,21 +43,30 @@ const TYPES := {
 	"juggernaut": {"name": "거신병", "hp": 8.0, "speed": 1.3, "life": 3, "reward": 20, "size": 1.7, "shape": "armor",
 		"color": Color(0.25, 0.28, 0.35), "weight": 1.0, "count": 1, "min_level": 8, "armor": 0.8, "regen": 0.02, "flying": false,
 		"desc": "엄청나게 단단하고 느리다. 기지에 닿으면 생명 -3."},
+	# 보스 스킬로만 나온다 (웨이브에 뽑히지 않는다: summon_only). gnaws: 시야 안의 벽 타워를 찾아가 갉아 먹는다. gnaw: 초당 갉는 양.
+	"slimeling": {"name": "슬라임 새끼", "hp": 0.4, "speed": 3.4, "life": 1, "reward": 1, "size": 0.7, "shape": "spike",
+		"color": Color(0.3, 0.8, 0.35), "weight": 0.0, "count": 1, "min_level": 99, "armor": 0.0, "regen": 0.0, "flying": false,
+		"summon_only": true, "gnaws": true, "gnaw": 1.0,
+		"desc": "슬라임 대장이 분열하면 나온다. 시야 안의 벽 타워를 갉아 먹는다 (트랩 타워는 보지 못한다)."},
 }
 
 
-## 보스 라운드에 맞는 종류를 가중치로 뽑는다
-static func pick(level: int) -> String:
+## 보스 라운드에 맞는 종류를 가중치로 뽑는다. flying_only이면 공중 종류만 (공습 웨이브).
+static func pick(level: int, flying_only: bool = false) -> String:
 	var total := 0.0
 	for id in TYPES:
-		if level >= TYPES[id].min_level:
+		if _can_pick(id, level, flying_only):
 			total += TYPES[id].weight
 	var roll := randf() * total
 	for id in TYPES:
-		var t: Dictionary = TYPES[id]
-		if level < t.min_level:
+		if not _can_pick(id, level, flying_only):
 			continue
-		roll -= t.weight
+		roll -= TYPES[id].weight
 		if roll <= 0.0:
 			return id
-	return "grunt"
+	return "flyer" if flying_only else "grunt"
+
+
+static func _can_pick(id: String, level: int, flying_only: bool) -> bool:
+	var t: Dictionary = TYPES[id]
+	return not t.get("summon_only", false) and level >= t.min_level and (not flying_only or t.flying)

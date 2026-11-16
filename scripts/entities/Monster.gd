@@ -14,6 +14,7 @@ class_name Monster
 
 signal reached_exit(monster: Monster)
 signal died(monster: Monster)
+signal gnawed(cell: Vector2i, amount: float)  # 타워를 갉는 중: 이 칸의 타워 내구도를 amount(초)만큼 깎아 달라 (LaneController가 처리)
 
 const DEFAULT_SPEED := 3.0
 const ARRIVE_DISTANCE := 0.1
@@ -22,6 +23,8 @@ const FLY_LIFT := 0.42                # 공중 몬스터가 몸을 띄우는 높
 const MIN_DAMAGE_RATIO := 0.2         # 방어력이 아무리 높아도 최소한 이 비율만큼은 들어간다
 const VISION_RANGE := 3               # 사방 이 칸 수 안의 타워만 본다
 const VISION_INTERVAL := 0.1          # 시야를 확인하는 주기(초)
+const GNAW_SEEK_RANGE := 4.0          # 갉는 몬스터가 타워를 목표로 삼는 거리 (본 적 있는 타워 중 이 안에 있는 것)
+const GNAW_DISTANCE := 1.15           # 타워 중심까지 이 거리 이하면 멈춰서 갉는다
 
 var monster_id: int = 0
 var owner_id: int = -1           # 보스 레인으로 보낸 플레이어 (보스가 보낸 몬스터는 -1)
@@ -38,6 +41,19 @@ var regen: float = 0.0           # 초당 최대체력 회복 비율
 var flying: bool = false
 var body_color: Color = Color(0.85, 0.2, 0.2)
 
+# 타워를 갉아 먹는 몬스터 (슬라임 새끼). 시야 안의 벽 타워를 찾아가 멈춰서 갉는다. 트랩 타워는 시야에 안 잡혀 목표가 되지 않는다.
+var gnaws_towers: bool = false
+var gnaw_rate: float = 1.0         # 초당 갉는 양 (타워 내구도 Balance.TOWER_DURABILITY 기준)
+var _gnaw_cell: Vector2i = Pathfinder.NO_GOAL   # 지금 노리는 타워 칸 (없으면 NO_GOAL)
+var _gnaw_retarget := 0.0
+var _gnaw_skip: Dictionary = {}    # 곁으로 갈 길이 없어서 포기한 타워 칸
+var _gnawing := false
+
+# 웨이브 변형 (보스 스킬이 웨이브 전체에 붙인다. BossSkills.AFFIXES)
+var speed_boost: float = 1.0     # 이동속도 배율 (돌격)
+var revive_ratio: float = 0.0    # 처음 죽을 때 이 비율의 체력으로 되살아난다 (부활). 0이면 없음
+var _revived := false
+
 # 보스 레인에서 쓰는 값 (내가 보낸 몬스터)
 var dps: float = 0.0             # 기본 초당 피해
 var ramp: float = 0.0            # 보스 앞에 선 뒤 초당 dps 증가량
@@ -46,6 +62,12 @@ var aura_radius: float = 0.0     # 지원형: 주변 아군 dps 증가
 var aura_bonus: float = 0.0
 var time_at_boss: float = 0.0    # 보스 앞에 선 뒤 지난 시간
 var current_dps: float = 0.0     # 성장/오라까지 반영한 실제 dps
+var slot_key: String = ""        # 보스 주변에서 차지한 자리 (죽으면 비운다)
+# 보스 스킬이 거는 상태 (BossController가 관리)
+var chill_time: float = 0.0      # 동상: 이 라운드에서 보스 앞에 서 있던 시간
+var chill: float = 0.0           # 동상: dps가 줄어든 비율 (0~1)
+var dread_time: float = 0.0      # 공포: 남은 시간 동안 dps 0
+var warn_color: Color = Color(0, 0, 0, 0)  # 예고 표식 (처단=빨강, 공포=보라). 알파 0이면 없음
 
 # 목표: goal_cell을 주면 그 칸까지 간 뒤 final_point로 이동, 주지 않으면 맨 아래 EXIT 행
 var goal_cell: Vector2i = Pathfinder.NO_GOAL
@@ -77,8 +99,10 @@ var _vision_dirty := true
 var _vision_timer := 0.0
 
 var _poisons: Array = []         # [{src, stacks, dps, time}] 독 (타워별로 따로 집계)
+var _empower_buffs: Array = []   # [{end_time: float, boost: float}] 강화 버프 (시간 순 정렬, 중첩 가능)
 var _consumed_marks: Array = []  # 이번 타격에 터진 표식
 var _captured := false
+var _killer = null               # 이 몬스터를 처치한 타워 (색깔 보너스 처리용)
 
 var _grid: GridSystem
 var _renderer: GridRenderer
@@ -126,25 +150,44 @@ func take_damage(amount: float, source = null) -> void:
 	_consumed_marks = consumed
 	for mk in consumed:  # 표식을 먼저 터뜨린다 (이 타격이 먼저 죽이면 지원 타워의 추가 피해가 낭비되므로)
 		_lose_hp(float(mk.dmg), mk.src, source)
-	# 방어력: 한 발 피해를 평면으로 깎되, 최소 MIN_DAMAGE_RATIO는 들어간다
-	_lose_hp(maxf(amount - effective_armor(), amount * MIN_DAMAGE_RATIO), source, source)
+	# 방어력: 한 발 피해를 평면으로 깎되, 최소 MIN_DAMAGE_RATIO는 들어간다 (파랑 타워는 방어력의 일부를 무시)
+	var pen := 0.0
+	if is_instance_valid(source) and source.has_method("armor_penetration"):
+		pen = source.armor_penetration()
+	_lose_hp(maxf(amount - effective_armor() * (1.0 - pen), amount * MIN_DAMAGE_RATIO), source, source)
 	_hit_flash = 0.1
 	if not _dead:
 		_consumed_marks = []
 
 
 ## 체력을 실제로 깎는다. damage_source: 누적 피해를 올려 줄 타워, kill_source: 죽였을 때 킬을 올려 줄 타워.
-func _lose_hp(amount: float, damage_source, kill_source) -> void:
+## 강화(남색 보너스) 중이면 받는 피해가 1/(1+강화)로 줄어든다 = 체력 +강화%. 처형은 강화를 무시한다 (ignore_empower).
+func _lose_hp(amount: float, damage_source, kill_source, ignore_empower := false) -> void:
 	if _dead:
 		return
+	if not ignore_empower and not _empower_buffs.is_empty():
+		amount /= 1.0 + get_total_empower()
 	var applied := minf(amount, maxf(hp, 0.0))  # 남은 체력을 넘는 초과분은 피해로 치지 않는다
 	hp -= amount
 	if is_instance_valid(damage_source):  # 투사체가 날아가는 사이 타워가 부서졌을 수 있다
 		damage_source.record_damage(applied)
 	if hp <= 0.0:
+		if revive_ratio > 0.0 and not _revived:  # 처음 죽는 순간: 킬로 치지 않고 되살아난다
+			_revive()
+			return
 		if is_instance_valid(kill_source):
+			_killer = kill_source
 			kill_source.record_kill()
 		_die()
+
+
+## 부활: 체력 일부로 되살아난다 (한 번뿐). 독은 그대로 이어지고, 이번 타격에 터진 표식은 이미 쓰였다.
+func _revive() -> void:
+	_revived = true
+	hp = max_hp * revive_ratio
+	_hit_flash = 0.25
+	Effects.ring(_renderer, cell_pos, 0.8, Color(0.9, 0.9, 0.8), visible)
+	Effects.float_text(_renderer, cell_pos, "부활!", Color(0.9, 0.9, 0.8), visible)
 
 
 func _die() -> void:
@@ -157,11 +200,20 @@ func _die() -> void:
 func execute(source) -> void:
 	if _dead:
 		return
-	_lose_hp(maxf(hp, 0.0) + 0.001, source, source)
+	_lose_hp(maxf(hp, 0.0) + 0.001, source, source, true)
 
 
 func is_dead() -> bool:
 	return _dead
+
+
+## 보스 스킬 예고 표식 (알파 0이면 없음). Tower도 같은 이름으로 받는다.
+func set_warn(color: Color) -> void:
+	warn_color = color
+
+
+func clear_warn() -> void:
+	warn_color = Color(0, 0, 0, 0)
 
 
 func effective_armor() -> float:
@@ -202,6 +254,41 @@ func apply_slow(ratio: float, duration: float) -> void:
 
 func apply_stun(duration: float) -> void:
 	stun_time = maxf(stun_time, duration)
+
+
+# --- 강화 시스템 (남색 색깔 보너스) ---
+
+## 강화 버프 추가 (중첩 가능)
+func add_empower(duration: float, boost: float) -> void:
+	var now := Time.get_ticks_msec() / 1000.0
+	_empower_buffs.append({"end_time": now + duration, "boost": boost})
+	# 종료 시간 순으로 정렬
+	_empower_buffs.sort_custom(func(a, b): return a.end_time < b.end_time)
+	while _empower_buffs.size() > Balance.EMPOWER_MAX_STACKS:
+		_empower_buffs.remove_at(0)  # 가장 먼저 끝나는 것을 밀어낸다
+
+
+## 현재 적용 중인 강화 효과 총합 (만료된 버프는 제거)
+func get_total_empower() -> float:
+	var now := Time.get_ticks_msec() / 1000.0
+	var total := 0.0
+	# 만료된 버프 제거 (역순으로)
+	for i in range(_empower_buffs.size() - 1, -1, -1):
+		if _empower_buffs[i].end_time < now:
+			_empower_buffs.remove_at(i)
+		else:
+			total += _empower_buffs[i].boost
+	return total
+
+
+## 강화가 반영된 실질 체력 (UI/계산용). 체력은 받는 피해를 줄이는 방식으로 반영된다 (_lose_hp).
+func get_effective_hp() -> float:
+	return hp * (1.0 + get_total_empower())
+
+
+## 강화가 반영된 DPS (보스 레인 몬스터용). 기본 DPS와 성장(ramp) 증가분 모두 강화를 받는다. 오라는 BossController가 따로 곱한다.
+func get_boosted_dps() -> float:
+	return (dps + minf(ramp * time_at_boss, ramp_cap)) * (1.0 + get_total_empower())
 
 
 ## 공중 몬스터를 지상에 붙잡는다. 그동안 제자리에 정지하고 지상 몬스터로 취급된다 (끝나면 다시 공중).
@@ -295,6 +382,10 @@ func _repath() -> void:
 		breaching = false
 		return
 
+	# 노리는 타워가 있으면 그 곁으로 간다 (길이 없으면 목표를 버리고 원래 목적지로)
+	if _gnaw_cell != Pathfinder.NO_GOAL and _route_to_gnaw_target():
+		return
+
 	# 지금 서 있는 위치에서 다시 계산하므로 뒤로 되돌아가는 일이 없다.
 	var result := _pathfinder.find_route(cell_pos, goal_cell, known_towers if _uses_vision() else null)
 	waypoints.assign(result.waypoints)
@@ -344,6 +435,8 @@ func _process(delta: float) -> void:
 
 	if stopped:
 		return
+	if gnaws_towers and not flying and _process_gnaw(delta):
+		return  # 타워를 갉는 중이라 제자리에 서 있다
 	if waypoints.is_empty():
 		_check_arrival()
 		return
@@ -359,7 +452,7 @@ func _process(delta: float) -> void:
 		return
 
 	var to_target := target - cell_pos
-	var step := speed * speed_mult() * delta
+	var step := speed * speed_mult() * speed_boost * delta
 	if to_target.length() <= step:
 		cell_pos = target
 		waypoints.pop_front()
@@ -372,6 +465,75 @@ func _process(delta: float) -> void:
 
 	if waypoints.is_empty():
 		_check_arrival()
+
+
+## 타워를 갉아 먹는 몬스터의 행동. 이번 프레임에 제자리에서 갉았으면 true (이동하지 않는다).
+## 시야 안(GNAW_SEEK_RANGE)에서 가장 가까운 벽 타워를 목표로 삼아 곁으로 가고, 가까워지면 멈춰서 갉는다.
+## 기절하면 _process가 먼저 멈추므로 갉지 못한다.
+func _process_gnaw(delta: float) -> bool:
+	_gnawing = false
+	if _gnaw_cell != Pathfinder.NO_GOAL:
+		if _grid.get_cell_state(_gnaw_cell) != GridSystem.CellState.TOWER:
+			_gnaw_cell = Pathfinder.NO_GOAL  # 목표 타워가 사라졌다 (다른 새끼가 부숨)
+			_repath()                        # 원래 목적지로 다시 간다
+			return false
+		var tower_center := Vector2(_gnaw_cell) + Vector2(0.5, 0.5)
+		if cell_pos.distance_to(tower_center) <= GNAW_DISTANCE:
+			facing = (tower_center - cell_pos).normalized()
+			_gnawing = true
+			gnawed.emit(_gnaw_cell, gnaw_rate * delta)
+			return true
+		return false  # 아직 그 곁으로 가는 중
+
+	_gnaw_retarget -= delta
+	if _gnaw_retarget > 0.0:
+		return false
+	_gnaw_retarget = 0.3
+	var found := _nearest_gnaw_target()
+	if found != Pathfinder.NO_GOAL:
+		_gnaw_cell = found
+		_repath()  # 목표가 생겼으니 그 곁으로 가는 길을 짠다 (길이 없으면 목표를 버린다)
+	return false
+
+
+## 본 적 있는 타워(벽 타워만) 중 GNAW_SEEK_RANGE 안에서 가장 가까운 것
+func _nearest_gnaw_target() -> Vector2i:
+	var best := Pathfinder.NO_GOAL
+	var best_d := GNAW_SEEK_RANGE
+	for c in known_towers:
+		if _gnaw_skip.has(c):
+			continue
+		var d := cell_pos.distance_to(Vector2(c) + Vector2(0.5, 0.5))
+		if d <= best_d:
+			best_d = d
+			best = c
+	return best
+
+
+## 노리는 타워의 빈 곁 칸까지 가는 길을 짠다. 곁으로 갈 길이 없으면 그 타워를 포기하고 false.
+func _route_to_gnaw_target() -> bool:
+	var goal := Pathfinder.NO_GOAL
+	var best_d := INF
+	for off in [Vector2i(0, -1), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(1, 0)]:
+		var n: Vector2i = _gnaw_cell + off
+		var state := _grid.get_cell_state(n)  # 격자 밖은 OBSTACLE
+		if state == GridSystem.CellState.TOWER or state == GridSystem.CellState.OBSTACLE:
+			continue
+		var d := cell_pos.distance_to(Vector2(n) + Vector2(0.5, 0.5))
+		if d < best_d:
+			best_d = d
+			goal = n
+	if goal != Pathfinder.NO_GOAL:
+		var result := _pathfinder.find_route(cell_pos, goal)  # known을 안 주면 타워를 전부 아는 길찾기
+		if result.ok:
+			waypoints.assign(result.waypoints)
+			if waypoints.is_empty():  # 이미 그 칸 안이면 칸 중심까지만 간다
+				waypoints.append(Vector2(goal) + Vector2(0.5, 0.5))
+			breaching = false
+			return true
+	_gnaw_skip[_gnaw_cell] = true
+	_gnaw_cell = Pathfinder.NO_GOAL
+	return false
 
 
 func _check_arrival() -> void:
@@ -398,13 +560,15 @@ func _update_position() -> void:
 func _draw() -> void:
 	var cell := _cell_px()
 	var r: float = cell * 0.32 * size_scale
-	var moving := preview or (not stopped and not waypoints.is_empty())
+	var moving := preview or (not stopped and not _gnawing and not waypoints.is_empty())
 
-	# 걷는 동안 통통 튀고, 멈추면 숨쉬듯 흔들림. 보스 앞에서는 보스 쪽으로 달려들었다 물러남.
+	# 걷는 동안 통통 튀고, 멈추면 숨쉬듯 흔들림. 보스 앞에서는 보스 쪽으로 달려들었다 물러남. 타워를 갉을 때도 타워 쪽으로 달려든다.
 	var bob := absf(sin(_anim * speed * 3.0)) * cell * 0.09 if moving else sin(_anim * 3.0) * cell * 0.015
 	var lunge := Vector2.ZERO
 	if stopped:
 		lunge = attack_dir * maxf(0.0, sin(_anim * 9.0)) * cell * 0.14
+	elif _gnawing:
+		lunge = facing * maxf(0.0, sin(_anim * 9.0)) * cell * 0.14
 	var lift := Vector2(0.0, -cell * FLY_LIFT) if flying else Vector2.ZERO
 	var c := Vector2(0, -bob) + lunge + lift
 
@@ -454,6 +618,19 @@ func _draw() -> void:
 			draw_arc(c, rr + 6.0, 0.0, TAU, 20, Color(1.0, 0.9, 0.2, 0.95), 2.5)
 		if armor_break_time > 0.0:
 			draw_arc(c, r * 1.05, PI * 0.1, PI * 0.9, 8, Color(1.0, 0.25, 0.2), 3.0)
+		# 웨이브 변형 표시: 돌격=주황 고리, 부활(아직 안 되살아남)=뼈색 고리
+		if speed_boost > 1.0:
+			draw_arc(c, rr + 9.0, 0.0, TAU, 20, Color(1.0, 0.6, 0.2, 0.9), 2.0)
+		if revive_ratio > 0.0 and not _revived:
+			draw_arc(c, rr + 9.0, 0.0, TAU, 20, Color(0.9, 0.9, 0.8, 0.9), 2.0)
+		# 보스 스킬 표시: 동상=얼음색 고리(짙을수록 많이 얼음), 공포=보라 굵은 고리, 예고 표식=깜빡이는 고리
+		if chill > 0.05:
+			draw_arc(c, rr + 12.0, 0.0, TAU, 20, Color(0.6, 0.85, 1.0, 0.35 + 0.55 * chill), 2.0)
+		if dread_time > 0.0:
+			draw_arc(c, rr + 15.0, 0.0, TAU, 20, Color(0.75, 0.35, 0.95, 0.95), 3.5)
+		if warn_color.a > 0.0:
+			var pulse := 0.55 + 0.45 * sin(_anim * 12.0)
+			draw_arc(c, rr + 15.0, 0.0, TAU, 24, Color(warn_color, pulse), 3.5)
 		for i in range(mini(marks.size(), 8)):
 			var mp := c + Vector2((i - minf(marks.size(), 8.0) * 0.5 + 0.5) * 8.0, -r - cell * 0.38)
 			draw_colored_polygon(PackedVector2Array([

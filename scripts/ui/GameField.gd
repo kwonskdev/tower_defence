@@ -15,6 +15,7 @@ var selected_tower_kind: String = Balance.TOWER_KINDS[0]
 
 var current_tool: PlacementTool = PlacementTool.NONE
 signal path_block_confirm(cell: Vector2i)  # 이 타워를 지으면 길이 막힌다: 사용자에게 확인을 받아야 한다
+signal boss_ready(boss: BossController)    # 보스가 만들어졌다 (한 프레임 기다린 뒤라서 MainGame._ready 시점에는 아직 없다)
 
 var awaiting_confirm: bool = false  # 길 막힘 확인을 기다리는 중 (이 클릭으로는 타워 선택/해제를 하지 않는다)
 var game_started: bool = false  # 시작 버튼을 눌렀는지
@@ -98,6 +99,11 @@ func start_boss():
 	add_child(boss)
 	boss.setup(grid_systems[BOSS_LANE_ID], grid_renderer, lanes)
 	boss.set_lane_visible(current_player_id == BOSS_LANE_ID)
+	boss_ready.emit(boss)
+
+	# 각 레인에 boss 참조 설정 (남색 색깔 보너스용)
+	for lane in lanes.values():
+		lane._boss_controller = boss
 
 func setup_scroll_container():
 	# 가로 스크롤 비활성화 (세로 드래그 스크롤만 사용)
@@ -218,6 +224,18 @@ func evolve_selected_tower(evo: String) -> bool:
 func upgrade_stat(evo: String, skill: String, key: String) -> bool:
 	var lane: LaneController = lanes.get(local_player_id)
 	return lane != null and lane.upgrade_stat(evo, skill, key)
+
+
+## 선택한 타워 1기의 색깔을 랜덤으로 바꾼다 (골드)
+func recolor_selected_tower() -> bool:
+	var lane: LaneController = lanes.get(local_player_id)
+	return lane != null and lane.recolor_tower(get_selected_tower())
+
+
+## 색깔 업그레이드 (골드, 그 색 타워 전체에 적용)
+func upgrade_color(color_name: String) -> bool:
+	var lane: LaneController = lanes.get(local_player_id)
+	return lane != null and lane.upgrade_color(color_name)
 
 
 ## 선택한 타워 1기의 B 스킬을 배운다 (골드, 타워마다 따로)

@@ -20,6 +20,14 @@ var total_damage: float = 0.0  # 누적 피해 (맞은 시점에 오른다. 독/
 var kills: int = 0             # 처치 수 (마지막 한 방을 때린 타워만 오른다. 독으로 죽이면 독을 건 타워)
 var selected: bool = false     # 선택되면 사거리를 보여준다
 
+# 내구도: 슬라임 새끼 같은 몬스터가 갉으면 닳고, 한 번 닳으면 회복되지 않는다. 0이 되면 부서진다 (LaneController가 처리).
+# (길이 막혀서 뚫고 오는 일반 몬스터는 지금처럼 한 번에 부순다)
+var durability: float = Balance.TOWER_DURABILITY
+
+# 보스 스킬 봉인: 남은 시간 동안 조준, 공격, 충전을 못 한다. seal_warn은 봉인 예고 표식.
+var sealed_time: float = 0.0
+var seal_warn: bool = false
+
 # 아이콘 미리보기용
 var preview: bool = false
 var preview_cell: float = 40.0
@@ -67,6 +75,21 @@ func can_evolve() -> bool:
 	return evolution == ""
 
 
+## 몬스터가 amount(초)만큼 갉았다. 내구도가 바닥나서 부서져야 하면 true.
+func gnaw(amount: float) -> bool:
+	durability = maxf(0.0, durability - amount)
+	return durability <= 0.0
+
+
+## 보스 스킬 예고 표식 (알파 0이면 없음). Monster도 같은 이름으로 받는다.
+func set_warn(color: Color) -> void:
+	seal_warn = color.a > 0.0
+
+
+func clear_warn() -> void:
+	seal_warn = false
+
+
 # --- 전적 (Monster가 부른다) ---
 
 func record_damage(applied: float) -> void:
@@ -95,17 +118,61 @@ func evo_color() -> Color:
 	return Evolutions.DATA[evolution].color if evolution != "" else Color(0.9, 0.9, 1.0)
 
 
-## 한 발 피해 (진화하면 계열에 따라 배율이 붙는다)
+## 한 발 피해 (진화하면 계열에 따라 배율이 붙는다 + 색깔 보너스)
 func cur_damage() -> float:
-	return kind.damage * Evolutions.DAMAGE_MULT.get(evolution, 1.0)
+	return kind.damage * Evolutions.DAMAGE_MULT.get(evolution, 1.0) * color_damage_mult()
 
 
-## 다음 공격까지의 시간 (광란 중첩만큼 빨라진다)
+## 빨강 색깔 보너스: 공격력 배율 (다른 색이면 1.0)
+func color_damage_mult() -> float:
+	return 1.0 + lane.color_bonus_value("빨강") if color_info.name == "빨강" else 1.0
+
+
+## 주황 색깔 보너스: 공격속도 배율 (다른 색이면 1.0)
+func color_speed_mult() -> float:
+	return 1.0 + lane.color_bonus_value("주황") if color_info.name == "주황" else 1.0
+
+
+## 다음 공격까지의 시간 (광란 중첩만큼 빨라진다 + 색깔 보너스)
 func cur_cooldown() -> float:
 	var cd: float = Evolutions.COOLDOWN.get(evolution, kind.cooldown)
 	if evolution == "growth" and haste_stacks > 0 and has_skill("B"):
 		cd /= 1.0 + haste_stacks * _p("B", "haste")
-	return cd
+	return cd / color_speed_mult()
+
+
+## 실제 사거리 (색깔 보너스 반영)
+func cur_range() -> float:
+	var r: float = kind.range
+	# 노랑 색깔 보너스: 사거리 증가
+	if color_info.name == "노랑":
+		var bonus := lane.color_bonus_value("노랑")
+		r *= (1.0 + bonus)
+	return r
+
+
+## 색깔을 바꾼다 (LaneController.recolor_tower가 골드 처리를 한 뒤 부른다)
+func set_color_info(info: Dictionary) -> void:
+	color_info = info
+	queue_redraw()
+
+
+## 선택한 타워 정보창에 보여줄 색깔 보너스 한 줄
+func color_bonus_text() -> String:
+	var cname: String = color_info.name
+	var lv := lane.color_level(cname)
+	var type: String = Balance.COLOR_BONUS_TYPES[cname]
+	if lv == 0:
+		return "색깔 %s Lv0: %s -" % [cname, Balance.COLOR_BONUS_LABELS[type]]
+	var text := "색깔 %s Lv%d: %s %s" % [cname, lv, Balance.COLOR_BONUS_LABELS[type], Balance.color_bonus_value_text(cname, lv)]
+	if type == "damage" and evolution == "skill":
+		text += " (스킬형은 공격력이 없어 효과 없음)"
+	return text
+
+
+## 방어력 관통 비율 (파랑 색깔 보너스). Monster.take_damage가 맞은 타워에게 물어본다.
+func armor_penetration() -> float:
+	return lane.color_bonus_value("파랑") if color_info.name == "파랑" else 0.0
 
 
 ## 치명타 확률 (성장형: 처치할 때마다 오른다)
@@ -139,17 +206,20 @@ func _process(delta: float) -> void:
 			_haste_timer -= delta
 			if _haste_timer <= 0.0:
 				haste_stacks = 0  # 치명타가 한동안 안 터지면 광란 초기화
-		var target := lane.find_target(center_cell_pos(), kind.range, kind.anti_air)
-		if target:
-			var want := (target.cell_pos - center_cell_pos()).angle()
-			_aim = lerp_angle(_aim, want, minf(1.0, delta * 14.0))
-
-		if evolution == "charge":
-			_process_charge(delta, target)
+		if sealed_time > 0.0:
+			sealed_time = maxf(0.0, sealed_time - delta)  # 봉인된 동안은 조준도 공격도 충전도 하지 않는다
 		else:
-			_cooldown -= delta
-			if target and _cooldown <= 0.0:
-				_fire(target)
+			var target := lane.find_target(center_cell_pos(), cur_range(), kind.anti_air)
+			if target:
+				var want := (target.cell_pos - center_cell_pos()).angle()
+				_aim = lerp_angle(_aim, want, minf(1.0, delta * 14.0))
+
+			if evolution == "charge":
+				_process_charge(delta, target)
+			else:
+				_cooldown -= delta
+				if target and _cooldown <= 0.0:
+					_fire(target)
 	queue_redraw()
 
 
@@ -218,7 +288,7 @@ func _fire_volley(target: Monster, power: float = 1.0) -> void:
 	if count <= 1:
 		_shoot(target, power)
 		return
-	var targets := lane.find_targets(center_cell_pos(), kind.range, kind.anti_air, count)
+	var targets := lane.find_targets(center_cell_pos(), cur_range(), kind.anti_air, count)
 	if targets.is_empty():
 		targets.append(target)
 	for i in range(count):
@@ -229,7 +299,7 @@ func _second_volley() -> void:
 	await get_tree().create_timer(0.18).timeout
 	if not is_instance_valid(self) or lane == null or not lane.active:
 		return
-	var t := lane.find_target(center_cell_pos(), kind.range, kind.anti_air)
+	var t := lane.find_target(center_cell_pos(), cur_range(), kind.anti_air)
 	if t:
 		_recoil = 1.0
 		_fire_volley(t, _p("A", "second"))
@@ -237,27 +307,28 @@ func _second_volley() -> void:
 
 ## 지원형: 공격 대신 표식 구름을 깐다
 func _fire_cloud(target: Monster) -> void:
-	Effects.spawn_cloud(_renderer, lane, target.cell_pos, _p("A", "radius"), _p("A", "time"), self, _p("A", "dmg"), evo_color())
+	Effects.spawn_cloud(_renderer, lane, target.cell_pos, _p("A", "radius"), _p("A", "time"), self, _p("A", "dmg") * color_damage_mult(), evo_color())
 
 
 ## 충전형: 기본 공격 없음. 에너지를 모으다가 적이 들어오면 부비 트랩 폭발
 func _process_charge(delta: float, target: Monster) -> void:
-	charge = minf(charge_max(), charge + delta * _p("A", "rate"))
+	charge = minf(charge_max(), charge + delta * _p("A", "rate") * color_speed_mult())
 	if target and charge >= Evolutions.CHARGE_MIN:
 		_detonate()
 
 
 func _detonate() -> void:
-	var dmg: float = kind.damage * (1.0 + charge * Evolutions.CHARGE_DMG_PER_SEC)
+	var dmg: float = kind.damage * (1.0 + charge * Evolutions.CHARGE_DMG_PER_SEC) * color_damage_mult()
 	var full := charge >= charge_max() - 0.001
 	var stun := _p("B", "stun") if (full and has_skill("B")) else 0.0
+	var r := cur_range()
 	for m in lane.monsters.duplicate():
 		if is_instance_valid(m) and not m.is_dead() and m.flying == kind.anti_air \
-				and m.cell_pos.distance_to(center_cell_pos()) <= kind.range:
+				and m.cell_pos.distance_to(center_cell_pos()) <= r:
 			m.take_damage(dmg, self)
 			if stun > 0.0 and not m.is_dead():
 				m.apply_stun(stun)
-	Effects.ring(_renderer, center_cell_pos(), kind.range, evo_color(), lane.lane_visible)
+	Effects.ring(_renderer, center_cell_pos(), r, evo_color(), lane.lane_visible)
 	Effects.float_text(_renderer, center_cell_pos(), "과충전!" if stun > 0.0 else "폭발!", evo_color(), lane.lane_visible)
 	charge = 0.0
 	_recoil = 1.0
@@ -280,8 +351,9 @@ func _draw() -> void:
 
 	# 선택됨: 사거리 원 + 선택 테두리
 	if selected and not preview:
-		draw_circle(Vector2.ZERO, kind.range * cell_px, Color(1, 1, 1, 0.07))
-		draw_arc(Vector2.ZERO, kind.range * cell_px, 0.0, TAU, 48, Color(1, 1, 1, 0.5), 2.0)
+		var r := cur_range()
+		draw_circle(Vector2.ZERO, r * cell_px, Color(1, 1, 1, 0.07))
+		draw_arc(Vector2.ZERO, r * cell_px, 0.0, TAU, 48, Color(1, 1, 1, 0.5), 2.0)
 		draw_rect(Rect2(-cell_px * 0.5, -cell_px * 0.5, cell_px, cell_px).grow(-1.0), Color(1, 1, 0.4), false, 2.0)
 
 	# 바닥판 + 색깔 테두리 (테두리 색은 색깔 보너스용으로 건설할 때 랜덤 배정된 색)
@@ -304,6 +376,32 @@ func _draw() -> void:
 
 	if not preview:
 		_draw_evolution_marks(s)
+		_draw_damage_marks(s)
+
+
+## 내구도가 닳은 타워는 아래에 막대와 균열을, 봉인 예고/봉인 중인 타워는 보라색 표식을 그린다
+func _draw_damage_marks(s: float) -> void:
+	var ratio := clampf(durability / Balance.TOWER_DURABILITY, 0.0, 1.0)
+	if ratio < 0.999:
+		var bar_y := s * 0.5 + 2.0
+		draw_rect(Rect2(-s * 0.5, bar_y, s, 4.0), Color(0, 0, 0, 0.75))
+		draw_rect(Rect2(-s * 0.5, bar_y, s * ratio, 4.0), Color(1.0, 0.25 + 0.5 * ratio, 0.1))
+		var cracks := ceili((1.0 - ratio) * 3.0)  # 많이 닳을수록 금이 늘어난다
+		var crack_col := Color(0.04, 0.04, 0.06)
+		if cracks >= 1:
+			draw_polyline(PackedVector2Array([Vector2(-s * 0.35, -s * 0.45), Vector2(-s * 0.15, -s * 0.1), Vector2(-s * 0.3, s * 0.1)]), crack_col, 2.0)
+		if cracks >= 2:
+			draw_polyline(PackedVector2Array([Vector2(s * 0.4, -s * 0.2), Vector2(s * 0.1, 0.0), Vector2(s * 0.25, s * 0.35)]), crack_col, 2.0)
+		if cracks >= 3:
+			draw_polyline(PackedVector2Array([Vector2(-s * 0.1, s * 0.45), Vector2(s * 0.05, s * 0.2), Vector2(-s * 0.05, -s * 0.3)]), crack_col, 2.0)
+	var purple := Color(0.75, 0.35, 0.95)
+	if sealed_time > 0.0:
+		draw_rect(Rect2(-s * 0.5, -s * 0.5, s, s), Color(purple, 0.4))
+		draw_line(Vector2(-s * 0.35, -s * 0.35), Vector2(s * 0.35, s * 0.35), purple, 3.0)
+		draw_line(Vector2(s * 0.35, -s * 0.35), Vector2(-s * 0.35, s * 0.35), purple, 3.0)
+	elif seal_warn:
+		var pulse := 0.55 + 0.45 * sin(_t * 12.0)
+		draw_rect(Rect2(-s * 0.5 - 2.0, -s * 0.5 - 2.0, s + 4.0, s + 4.0), Color(purple, pulse), false, 3.5)
 
 
 ## 진화 표시: 오른쪽 아래 마름모(계열 색), 충전형은 충전 게이지, 성장형은 광란 중첩 점

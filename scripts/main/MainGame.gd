@@ -26,11 +26,14 @@ var status_lives_label: Label
 var status_gold_label: Label
 var status_income_label: Label
 var status_wave_title: Label
+var status_affix_label: Label            # 다음 웨이브에 변형(돌격/부활/공습)이 붙으면 표시
+var status_guard_label: Label            # 비늘 보호막이 보스 피해를 얼마나 줄이는지
 var status_wave_rows: Array = []         # [{dot: StatusIcon, label: Label}]
 var family_frames: Control               # 몬스터 배럭의 계열 묶음 외곽선
 var tower_info_label: Label
 var evolve_buttons: Array[Button] = []   # 선택한 타워가 아직 진화 전이면 계열 2개 중 고르는 버튼
 var learn_button: Button                 # 선택한 타워가 진화했고 B 스킬을 아직 안 배웠으면 나오는 "B 스킬 배우기" 버튼
+var recolor_button: Button               # 선택한 타워의 색깔을 랜덤으로 바꾸는 버튼 (항상 보인다)
 var evolve_ids: Array[String] = ["", ""]
 var skill_hint_label: Label              # 업그레이드 탭에서 마우스를 올린 항목의 설명
 var upgrade_menu: HBoxContainer          # 업그레이드 탭: [←] [타워] [색깔]
@@ -42,6 +45,8 @@ var detail_grid: GridContainer
 var _detail_evo := ""                    # 지금 보고 있는 계열
 var _detail_items: Array = []            # [{btn, stat: Dictionary}]
 var _hover: Array = []                   # 마우스가 올라간 항목: [계열, 종류("evo"/"stat"), 스킬, 키]
+var color_view: HBoxContainer            # 색깔 업그레이드: [←] + 4x2 격자 (7색 중 업그레이드할 색 고르기)
+var color_buttons: Dictionary = {}       # 색깔 이름 -> Button
 var tower_view: GridContainer
 var _hud_timer := 0.0
 var _flash_text := ""                    # 하단에 잠깐 띄우는 설명 (건설할 타워를 고른 직후 등. 폰에는 툴팁이 없다)
@@ -58,7 +63,20 @@ const MIN_TOUCH := 56.0                  # 눌러야 하는 버튼의 최소 높
 var sheet: PanelContainer                # 위쪽 UI 아래로 내려오는 넓은 화면 (몬스터 배럭 / 업그레이드). 맵 위에 겹친다
 var sheet_content: Control               # 그 안의 화면들이 들어가는 자리
 var cancel_build_button: Button          # 건설 모드 취소 (폰에는 우클릭이 없다)
-var restart_button: Button               # 승리/패배 후 다시 시작 (폰에는 R 키가 없다)
+
+var game_over_screen: GameOverScreen     # 승리/패배 화면
+var _play_start_time := 0.0              # 게임 시작 시각 (통계용)
+
+# 보스 스킬 배너: 어느 레인을 보고 있든 맵 위쪽에 뜬다. 여러 개가 겹치면 차례로 보여 준다.
+const SKILL_BANNER_SECONDS := 5.0        # 알림이 떠 있는 시간 (발동까지 예고 시간이 있으면 그만큼 더)
+var skill_banner: PanelContainer
+var skill_banner_title: Label
+var skill_banner_text: Label
+var _banner_queue: Array = []            # 기다리는 알림 [{name, text, lane, delay, boss}]
+var _banner_info: Dictionary = {}        # 지금 보이는 알림
+var _banner_left := 0.0                  # 지금 알림이 사라질 때까지
+var _banner_delay := 0.0                 # 스킬이 발동할 때까지 (0이면 카운트다운을 안 보인다)
+var minimap_views: Dictionary = {}       # 레인 번호 -> MiniMapView (보스 스킬이 걸리는 레인을 깜빡이려고 모아 둔다)
 
 # 플레이어 버튼들
 @onready var player_buttons: Array[Button] = []
@@ -120,6 +138,8 @@ func setup_ui():
 	_create_hud()
 	_create_status_panel()
 	_create_confirm_dialog()
+	_create_skill_banner()
+	_create_game_over_screen()
 
 ## 위쪽 UI 줄 아래로 내려오는 넓은 화면. 몬스터 배럭과 업그레이드 화면이 여기에 뜬다
 ## (좁은 왼쪽 칸에 몰아 넣으면 폰에서 버튼이 너무 작아서, 화면 폭 전체를 쓴다. 맵 위에 겹치고 닫으면 사라진다)
@@ -297,7 +317,8 @@ func _create_tower_view():
 
 ## 업그레이드 탭 (타워 / 색깔).
 ## 타워 탭: 진화 계열 8개 중 하나를 고르면 그 계열의 업그레이드 항목(관통 수, 독 피해 ...)이 나오고,
-## 항목을 올리면 그 계열로 진화한 모든 타워가 강해진다 (계열 공통). 색깔 탭은 아직 기획이 없어서 자리만 만들어 두었다.
+## 항목을 올리면 그 계열로 진화한 모든 타워가 강해진다 (계열 공통).
+## 색깔 탭: 7색 중 하나를 고르면 그 색 타워의 고유 보너스(공격력, 공속 등) 레벨이 오른다 (레인 공유).
 ## (진화와 B 스킬 배우기는 타워마다 개별: 타워를 선택하면 나오는 버튼으로 한다.)
 ## 타워 탭의 두 화면은 모두 [←] 한 칸 + 4x2 격자로 보여준다.
 func _create_upgrade_views():
@@ -314,9 +335,34 @@ func _create_upgrade_views():
 	tower_tab.pressed.connect(_show_view.bind("evos"))
 	upgrade_menu.add_child(tower_tab)
 	var color_tab := _make_view_button("색깔", 26)
-	color_tab.disabled = true
-	color_tab.tooltip_text = "색깔별 업그레이드 (준비 중)"
+	color_tab.tooltip_text = "색깔별 업그레이드: 색을 고르면 그 색 타워의 고유 보너스가 강해진다"
+	color_tab.pressed.connect(_show_view.bind("colors"))
 	upgrade_menu.add_child(color_tab)
+
+	# 색깔 화면: 7색 버튼 (4x2 격자, 마지막 칸은 비워 둔다). 누르면 바로 업그레이드
+	color_view = HBoxContainer.new()
+	color_view.visible = false
+	left_panel.add_child(color_view)
+	color_view.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var color_back := _make_back_column("colors_back")
+	color_back.pressed.connect(_show_view.bind("upgrade"))
+	color_view.add_child(color_back)
+	var color_grid := GridContainer.new()
+	color_grid.columns = 4
+	color_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	color_grid.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	color_view.add_child(color_grid)
+	for info in Balance.TOWER_COLORS:
+		var cname: String = info.name
+		var cb := _make_view_button("", 10)
+		var font_col: Color = info.color.lightened(0.35)  # 남색처럼 어두운 색도 글자가 보이게
+		cb.add_theme_color_override("font_color", font_col)
+		cb.add_theme_color_override("font_disabled_color", Color(font_col, 0.55))
+		cb.pressed.connect(_on_color_pressed.bind(cname))
+		cb.mouse_entered.connect(func(): _hover = [cname, "color", "", ""])
+		cb.mouse_exited.connect(func(): _hover = [])
+		color_grid.add_child(cb)
+		color_buttons[cname] = cb
 
 	# 1단계: 진화 계열 8개 (4x2). 윗줄 = 장거리 2 + 범위 2, 아랫줄 = 대공 2 + 트랩 2
 	evo_view = HBoxContainer.new()
@@ -386,9 +432,9 @@ func _make_back_column(_id: String) -> Button:
 	return b
 
 
-## 왼쪽 패널에 보여줄 화면을 하나만 켠다: main / tower / monster / upgrade / evos / detail
+## 왼쪽 패널에 보여줄 화면을 하나만 켠다: main / tower / monster / upgrade / evos / detail / colors
 func _show_view(view: String) -> void:
-	var in_sheet := view in ["monster", "upgrade", "evos", "detail"]
+	var in_sheet := view in ["monster", "upgrade", "evos", "detail", "colors"]
 	main_view.visible = view == "main" or in_sheet  # 넓은 화면이 열려 있어도 윗줄 버튼으로 바로 다른 화면으로 갈 수 있다
 	tower_view.visible = view == "tower"
 	sheet.visible = in_sheet
@@ -398,6 +444,8 @@ func _show_view(view: String) -> void:
 	evo_view.visible = view == "evos"
 	evo_frames.visible = view == "evos"
 	detail_view.visible = view == "detail"
+	color_view.visible = view == "colors"
+	skill_hint_label.visible = in_sheet  # 폰: 시트 아래 설명 칸은 몬스터/업그레이드 화면 모두에서 쓴다
 	_hover = []
 	if view == "monster":
 		skill_hint_label.text = "몬스터를 누르면 바로 보냅니다.
@@ -437,6 +485,11 @@ func _on_stat_pressed(evo: String, skill: String, key: String) -> void:
 	_refresh_now()
 
 
+func _on_color_pressed(color_name: String) -> void:
+	game_field.upgrade_color(color_name)
+	_refresh_now()
+
+
 func _refresh_now() -> void:
 	var lane: LaneController = game_field.lanes.get(game_field.local_player_id)
 	if lane:
@@ -459,10 +512,23 @@ func _refresh_upgrade_views(lane: LaneController) -> void:
 			var nxt := "최대" if lv >= Evolutions.MAX_LEVEL else "→ %s\n%d골드" % [Evolutions.stat_value_text(evo, stat, lv + 1), cost]
 			b.text = "%s %s\nLv%d  %s\n%s" % [stat.s, stat.name, lv, Evolutions.stat_value_text(evo, stat, lv), nxt]
 			b.disabled = cost < 0 or lane.gold < cost
+	if color_view.visible:
+		for cname in color_buttons:
+			var b: Button = color_buttons[cname]
+			var lv := lane.color_level(cname)
+			var cost := lane.color_upgrade_cost(cname)
+			var type: String = Balance.COLOR_BONUS_TYPES[cname]
+			var nxt := "최대" if cost < 0 else "→ %s\n%d골드" % [Balance.color_bonus_value_text(cname, lv + 1), cost]
+			b.text = "%s\n%s\nLv%d  %s\n%s" % [cname, Balance.COLOR_BONUS_LABELS[type], lv, Balance.color_bonus_value_text(cname, lv), nxt]
+			b.disabled = cost < 0 or lane.gold < cost
 	skill_hint_label.text = _hover_text(lane)
 
 
 func _hover_text(lane: LaneController) -> String:
+	if _hover.size() == 4 and _hover[1] == "color":
+		return Balance.color_tooltip(_hover[0], lane.color_level(_hover[0]))
+	if color_view.visible:
+		return "색을 고르면 그 색 타워의 고유 보너스가 강해집니다 (레인 전체 공유). 마우스를 올리면 설명."
 	if _hover.size() == 4:
 		var evo: String = _hover[0]
 		match _hover[1]:
@@ -491,6 +557,7 @@ func _attach_minimap(button: Button, lane_index: int):
 	view.game_field = game_field
 	view.lane_index = lane_index
 	view.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	minimap_views[lane_index] = view
 	button.add_child(view)
 	view.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	button.gui_input.connect(_on_minimap_gui_input.bind(button, lane_index))
@@ -566,6 +633,11 @@ func _create_hud():
 	learn_button.visible = false
 	learn_button.pressed.connect(_on_learn_selected_pressed)
 	evolve_row.add_child(learn_button)
+	recolor_button = Button.new()
+	recolor_button.add_theme_font_size_override("font_size", 12)
+	recolor_button.clip_text = true
+	recolor_button.pressed.connect(_on_recolor_selected_pressed)
+	tower_info_row.add_child(recolor_button)
 	game_field.ui_blockers.append(tower_info_row)  # 버튼을 눌렀을 때 뒤의 맵이 클릭되지 않도록
 
 	hud_panel = panel
@@ -581,18 +653,6 @@ func _create_hud():
 	start_button.pressed.connect(_on_start_pressed)
 	add_child(start_button)
 	game_field.ui_blockers.append(start_button)
-
-	# 승리/패배 뒤 다시 시작 (폰에는 R 키가 없다)
-	restart_button = Button.new()
-	restart_button.text = "↻ 다시 하기"
-	restart_button.visible = false
-	restart_button.add_theme_font_size_override("font_size", 32)
-	restart_button.z_index = 101
-	restart_button.custom_minimum_size = Vector2(260, 100)
-	_center_button(restart_button)
-	restart_button.pressed.connect(reset_game)
-	add_child(restart_button)
-	game_field.ui_blockers.append(restart_button)
 
 	# 건설 모드 취소 (폰에는 우클릭이 없다). 건설 모드일 때만 위쪽 UI 줄 아래 오른쪽에 뜬다
 	cancel_build_button = Button.new()
@@ -681,6 +741,9 @@ func _create_status_panel() -> void:
 	status_wave_title = _status_label(FONT_TINY)
 	status_wave_title.add_theme_color_override("font_color", Color(0.75, 0.9, 1.0))
 	box.add_child(status_wave_title)
+	status_affix_label = _status_label(11)
+	status_affix_label.visible = false
+	box.add_child(status_affix_label)
 	for i in range(Balance.WAVE_GROUPS):
 		var row := HBoxContainer.new()
 		box.add_child(row)
@@ -689,6 +752,11 @@ func _create_status_panel() -> void:
 		var label := _status_label(FONT_TINY)
 		row.add_child(label)
 		status_wave_rows.append({"row": row, "dot": dot, "label": label})
+
+	status_guard_label = _status_label(10)
+	status_guard_label.add_theme_color_override("font_color", Color(1.0, 0.6, 0.35))
+	status_guard_label.visible = false
+	box.add_child(status_guard_label)
 
 
 func _status_label(size: int) -> Label:
@@ -725,6 +793,16 @@ func _update_status_panel(lane: LaneController, boss: BossController) -> void:
 			r.dot.queue_redraw()
 			r.label.text = "%s x%d%s" % [e.name, e.count, "(공)" if e.flying else ""]
 
+	var affix := boss.get_next_wave_affix()
+	status_affix_label.visible = not affix.is_empty()
+	if not affix.is_empty():
+		status_affix_label.text = "%s 웨이브!" % affix.name
+		status_affix_label.add_theme_color_override("font_color", affix.color)
+
+	status_guard_label.visible = boss.has_guard()
+	if boss.has_guard():
+		status_guard_label.text = "보스 보호막 -%d%%" % roundi((1.0 - boss.damage_mult) * 100.0)
+
 
 ## 타워를 지으면 길이 완전히 막힐 때 한 번 확인하는 창
 func _create_confirm_dialog() -> void:
@@ -753,6 +831,119 @@ func _on_path_block_confirm(cell: Vector2i) -> void:
 
 func _on_path_block_confirmed() -> void:
 	game_field.place_tower(_pending_cell, true)
+
+
+## 승리/패배 화면 생성 (화면의 UI는 GameOverScreen이 스스로 만든다)
+func _create_game_over_screen() -> void:
+	game_over_screen = GameOverScreen.new()
+	add_child(game_over_screen)
+	game_over_screen.restart_requested.connect(_on_game_over_restart)
+	game_over_screen.quit_requested.connect(_on_game_over_quit)
+	game_field.ui_blockers.append(game_over_screen)  # 화면이 떠 있는 동안 뒤의 맵이 클릭되지 않도록
+
+	# 보스는 GameField가 한 프레임 기다린 뒤에 만들어서 지금은 아직 없다: 만들어지는 순간 연결한다
+	if game_field.boss != null:
+		_connect_boss(game_field.boss)
+	else:
+		game_field.boss_ready.connect(_connect_boss)
+
+
+func _connect_boss(boss: BossController) -> void:
+	boss.boss_defeated.connect(_on_boss_defeated)
+	boss.boss_failed.connect(_on_boss_failed)
+	boss.skill_announced.connect(_on_skill_announced)
+
+
+## 보스 스킬 알림 배너 (맵 위에 겹쳐 뜬다. 입력은 통과시킨다)
+func _create_skill_banner() -> void:
+	skill_banner = PanelContainer.new()
+	skill_banner.visible = false
+	skill_banner.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	skill_banner.z_index = 110  # HUD(100), 시작 버튼(101)보다 위, 승리/패배 화면(1000)보다 아래
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.16, 0.05, 0.05, 0.92)
+	style.border_color = Color(1.0, 0.7, 0.2)
+	style.set_border_width_all(2)
+	style.set_corner_radius_all(6)
+	style.content_margin_left = 10
+	style.content_margin_right = 10
+	style.content_margin_top = 6
+	style.content_margin_bottom = 6
+	skill_banner.add_theme_stylebox_override("panel", style)
+
+	var box := VBoxContainer.new()
+	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	skill_banner.add_child(box)
+	skill_banner_title = _status_label(FONT_SMALL)
+	skill_banner_title.add_theme_color_override("font_color", Color(1.0, 0.85, 0.3))
+	box.add_child(skill_banner_title)
+	skill_banner_text = _status_label(FONT_TINY)
+	skill_banner_text.add_theme_color_override("font_color", Color(1.0, 0.95, 0.9))
+	skill_banner_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	box.add_child(skill_banner_text)
+	add_child(skill_banner)
+
+
+func _on_skill_announced(info: Dictionary) -> void:
+	_banner_queue.append(info)
+
+
+## 대기 중인 알림을 하나씩 보여 주고, 예고 시간이 있으면 발동까지 카운트다운을 붙인다
+func _update_skill_banner(delta: float) -> void:
+	if _banner_left > 0.0:
+		_banner_left -= delta
+		_banner_delay = maxf(0.0, _banner_delay - delta)
+		if _banner_left <= 0.0:
+			skill_banner.visible = false
+		else:
+			_refresh_skill_banner_text()
+	if _banner_left <= 0.0 and not _banner_queue.is_empty():
+		_show_skill_banner(_banner_queue.pop_front())
+
+
+func _show_skill_banner(info: Dictionary) -> void:
+	_banner_info = info
+	_banner_delay = float(info.get("delay", 0.0))
+	_banner_left = SKILL_BANNER_SECONDS + _banner_delay
+	skill_banner_title.text = "[%s] %s  -  BOSS %s" % [BossSkills.lane_tag(info.lane), info.name, info.get("boss", "")]
+	_refresh_skill_banner_text()
+	_alert_minimaps(info.lane, _banner_left)
+	# 맵 영역 맨 위, 좌우 8px 안쪽에 맞춘다
+	var rect := game_field.get_global_rect()
+	skill_banner.custom_minimum_size = Vector2(maxf(rect.size.x - 16.0, 200.0), 0.0)
+	skill_banner.size = Vector2(skill_banner.custom_minimum_size.x, 0.0)  # 높이는 글 길이에 맞게 알아서 정해진다
+	skill_banner.global_position = rect.position + Vector2(8.0, 6.0)
+	skill_banner.visible = true
+
+
+func _refresh_skill_banner_text() -> void:
+	var text: String = _banner_info.text
+	if _banner_delay > 0.0:
+		text += "\n%d초 뒤 발동" % ceili(_banner_delay)
+	skill_banner_text.text = text
+
+
+## 이 스킬이 영향을 주는 레인의 미니맵을 알림이 떠 있는 동안 깜빡이게 한다.
+## lane: BossSkills의 lane 값 ("player"=내 레인 / "boss"=보스 레인 / "both"). 지금 보고 있는 레인은 깜빡이지 않는다.
+func _alert_minimaps(lane: String, seconds: float) -> void:
+	var targets: Array[int] = []
+	if lane == "player" or lane == "both":
+		targets.append(game_field.local_player_id)
+	if lane == "boss" or lane == "both":
+		targets.append(GameField.BOSS_LANE_ID)
+	for lane_id in targets:
+		var view: MiniMapView = minimap_views.get(lane_id)
+		if view != null:
+			view.alert_left = seconds
+
+
+## 게임이 끝나면 남은 알림을 지운다
+func _clear_skill_banner() -> void:
+	_banner_queue.clear()
+	_banner_left = 0.0
+	skill_banner.visible = false
+	for view in minimap_views.values():
+		view.alert_left = 0.0
 
 
 ## 상태 패널용 작은 아이콘 (하트 / 금화 / 점). 글꼴에 이모지가 없어도 보이도록 직접 그린다.
@@ -784,9 +975,11 @@ class StatusIcon extends Control:
 func _on_start_pressed():
 	game_field.start_game()
 	start_button.visible = false
+	_play_start_time = Time.get_ticks_msec() / 1000.0
 
 func _process(delta):
 	_flash_time -= delta
+	_update_skill_banner(delta)
 	_hud_timer -= delta
 	if _hud_timer > 0.0:
 		return
@@ -801,7 +994,7 @@ func _update_hud():
 	if lane == null or boss == null:
 		return
 	_update_tower_info(lane)
-	if evo_view.visible or detail_view.visible:
+	if evo_view.visible or detail_view.visible or color_view.visible:
 		_refresh_upgrade_views(lane)
 
 	_update_status_panel(lane, boss)
@@ -814,13 +1007,15 @@ func _update_hud():
 		BossController.State.VICTORY: lines.append("[전체 승리!]")
 		BossController.State.DEFEAT: lines.append("[패배]")
 	if game_field.current_player_id == GameField.BOSS_LANE_ID:
-		lines.append("BOSS Lv.%d/%d %s  %d/%d  남은 %d초" % [
-			boss.level, BossLevels.COUNT, boss.level_data.name, int(boss.hp), int(boss.max_hp), int(boss.time_left)])
+		lines.append("BOSS Lv.%d/%d %s%s  %d/%d  남은 %d초" % [
+			boss.level, BossLevels.COUNT, boss.level_data.name, boss.phase_text(), int(boss.hp), int(boss.max_hp), int(boss.time_left)])
 		# 보스 공격 현황: 보스 앞에 서 있는 몬스터들이 1초에 주는 피해의 합
 		if boss.total_dps > 0.0:
-			var eta := boss.hp / boss.total_dps
+			var eta := boss.hp / boss.effective_dps()  # 보호막까지 반영한 실제 피해로 계산
 			lines.append("보스에게 초당 %.1f 피해 (%d마리) -> %d초 뒤 처치%s" % [
-				boss.total_dps, boss.get_attacker_count(), ceili(eta), " (시간 부족!)" if eta > boss.time_left else ""])
+				boss.effective_dps(), boss.get_attacker_count(), ceili(eta), " (시간 부족!)" if eta > boss.time_left else ""])
+			if boss.has_guard():
+				lines.append("비늘 보호막: 피해 -%d%% (필드 웨이브 몬스터를 잡을수록 약해진다)" % roundi((1.0 - boss.damage_mult) * 100.0))
 		else:
 			lines.append("보스를 공격 중인 몬스터 없음")
 	if _flash_time > 0.0 and game_field.current_tool == GameField.PlacementTool.TOWER:
@@ -829,7 +1024,6 @@ func _update_hud():
 	hud_label.visible = not lines.is_empty()
 	hud_panel.visible = hud_label.visible or tower_info_row.visible
 	cancel_build_button.visible = game_field.current_tool == GameField.PlacementTool.TOWER and not sheet.visible
-	restart_button.visible = boss.state == BossController.State.VICTORY or boss.state == BossController.State.DEFEAT
 
 func _update_tower_info(lane: LaneController):
 	var t := game_field.get_selected_tower()
@@ -841,7 +1035,11 @@ func _update_tower_info(lane: LaneController):
 	if t.evolution != "":
 		title += " · " + Evolutions.evo_name(t.evolution)
 	var text := "[%s] 한 발 %.2f / %.2f초 / 사거리 %.1f칸\n누적 피해 %.1f  킬 %d" % [
-		title, t.cur_damage(), t.cur_cooldown(), t.kind.range, t.total_damage, t.kills]
+		title, t.cur_damage(), t.cur_cooldown(), t.cur_range(), t.total_damage, t.kills]
+	if t.durability < Balance.TOWER_DURABILITY - 0.001:  # 슬라임 새끼에게 갉인 타워 (회복되지 않는다)
+		text += "\n내구도 %.1f / %.1f (회복 안 됨)" % [t.durability, Balance.TOWER_DURABILITY]
+	if t.sealed_time > 0.0:
+		text += "\n봉인됨: %d초 뒤 풀린다" % ceili(t.sealed_time)
 	match t.evolution:
 		"support":
 			text += "\n공격력 없음: 표식 구름을 깐다"
@@ -851,12 +1049,17 @@ func _update_tower_info(lane: LaneController):
 			text += "\n치명타 %.1f%%  광란 x%d" % [t.crit_chance() * 100.0, t.haste_stacks]
 		"charge":
 			text += "\n충전 %.1f / %.0f초 (%.0f초 이상이면 발동)" % [t.charge, t.charge_max(), Evolutions.CHARGE_MIN]
+	text += "\n" + t.color_bonus_text()
 	# 스킬 현황: 진화하면 A 스킬이 붙고, B 스킬은 돈을 내고 배워야 한다 (계열 전체 타워에 적용)
 	var b_known := t.evolution != "" and t.b_learned
 	if t.evolution != "":
 		var evo_data: Dictionary = Evolutions.DATA[t.evolution]
 		text += "\nA %s ✔   B %s %s" % [evo_data.a_name, evo_data.b_name, "✔" if b_known else "(아직 안 배움)"]
 	tower_info_label.text = text
+
+	recolor_button.text = "색깔 바꾸기 (%d골드)" % Balance.RECOLOR_COST
+	recolor_button.tooltip_text = "이 타워의 색깔을 지금 색을 뺀 6색 중 랜덤으로 바꿉니다. 색깔 보너스는 그 색의 업그레이드를 따라갑니다."
+	recolor_button.disabled = t.lane != lane or lane.gold < Balance.RECOLOR_COST
 
 	# 아직 진화 전이면 계열 2개 중 하나를 고른다 (골드). 진화하면 그 계열의 A 스킬이 붙는다.
 	var can_pick := t.can_evolve()
@@ -881,6 +1084,11 @@ func _update_tower_info(lane: LaneController):
 		eb.text = "%s 진화 (%d골드)" % [Evolutions.evo_name(evo), Balance.EVOLVE_COST]
 		eb.tooltip_text = Evolutions.tooltip(evo)
 		eb.disabled = t.lane != lane or lane.gold < Balance.EVOLVE_COST
+
+
+## 선택한 타워의 색깔 바꾸기 (골드, 랜덤)
+func _on_recolor_selected_pressed():
+	game_field.recolor_selected_tower()
 
 
 ## 선택한 타워의 "B 스킬 배우기" (진화처럼 타워마다 개별, 골드)
@@ -1004,3 +1212,89 @@ func _on_monster_selected(button_index: int):
 	skill_hint_label.text = SentMonsters.tooltip(kind_id)
 	Log.info(Log.Category.UI, "몬스터 생산 요청: %s" % kind_id)
 	game_field.send_monster(kind_id)
+
+
+## 보스 전체 승리
+func _on_boss_defeated() -> void:
+	_clear_skill_banner()
+	var stats := _collect_game_stats(true)
+	game_over_screen.show_result(true, stats)
+
+
+## 보스 패배
+func _on_boss_failed(reason: String) -> void:
+	Log.info(Log.Category.GAME, "패배 사유: %s" % reason)
+	_clear_skill_banner()
+	var stats := _collect_game_stats(false)
+	game_over_screen.show_result(false, stats)
+
+
+## 게임 통계 수집
+func _collect_game_stats(is_victory: bool) -> Dictionary:
+	var stats := {}
+	var lane: LaneController = game_field.lanes.get(game_field.local_player_id)
+	var boss: BossController = game_field.boss
+
+	if boss:
+		stats.boss_level = boss.level if is_victory else boss.level
+		stats.total_boss_levels = BossLevels.COUNT
+
+	# 플레이 시간
+	if _play_start_time > 0.0:
+		stats.play_time = Time.get_ticks_msec() / 1000.0 - _play_start_time
+
+	if lane:
+		# 타워 통계
+		var tower_count := 0
+		var total_dmg := 0.0
+		var total_kills := 0
+		for tower in lane.towers:
+			tower_count += 1
+			total_dmg += tower.total_damage
+			total_kills += tower.kills
+		stats.towers_built = tower_count
+		stats.total_tower_damage = total_dmg
+		stats.total_tower_kills = total_kills
+
+		# 경제
+		stats.final_gold = lane.gold
+		stats.final_income = lane.income
+
+	# 몬스터 파견 통계
+	if boss:
+		stats.monsters_sent = boss.sent_count  # 죽은 몬스터도 센다
+
+		# 보스 피해 (내 기여도)
+		if boss.damage_by_player.has(game_field.local_player_id):
+			stats.boss_damage = boss.damage_by_player[game_field.local_player_id]
+		else:
+			stats.boss_damage = 0.0
+
+		# 플레이어별 기여도 (전체)
+		var total_dmg := 0.0
+		for dmg in boss.damage_by_player.values():
+			total_dmg += dmg
+
+		if total_dmg > 0.0:
+			var contributions: Array = []
+			for player_id in boss.damage_by_player:
+				var dmg: float = boss.damage_by_player[player_id]
+				contributions.append({
+					"player_id": player_id,
+					"damage": dmg,
+					"percent": dmg / total_dmg * 100.0
+				})
+			contributions.sort_custom(func(a, b): return a.damage > b.damage)
+			stats.contributions = contributions
+
+	return stats
+
+
+## 재도전 버튼
+func _on_game_over_restart() -> void:
+	reset_game()
+
+
+## 종료 버튼
+func _on_game_over_quit() -> void:
+	get_tree().quit()

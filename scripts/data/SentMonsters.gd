@@ -7,6 +7,10 @@ class_name SentMonsters
 ## ramp, ramp_cap: 보스 앞에 선 뒤 초당 dps가 늘어나는 양과 그 상한 (대기만성형)
 ## aura_radius, aura_bonus: 주변(칸) 몬스터의 dps를 늘려주는 지원형
 
+# 체력: 항목에 hp를 적으면 그 값, 없으면 비용 x HP_PER_COST. 지금은 보스 스킬(처단 등)과 PvP(상대 타워의 공격)에서만 깎인다.
+# 비싼 몬스터가 더 단단하다. 수치는 전부 첫 시도값.
+const HP_PER_COST := 1.5
+
 # 계열 색 (버튼 테두리/이름표). 같은 계열끼리 한눈에 묶여 보이도록 쓴다.
 const FAMILY_COLORS := {
 	"수입": Color(0.95, 0.8, 0.25),
@@ -65,6 +69,12 @@ const DATA := {
 }
 
 
+## 몬스터의 최대 체력
+static func max_hp(kind_id: String) -> float:
+	var d: Dictionary = DATA[kind_id]
+	return float(d.get("hp", float(d.cost) * HP_PER_COST))
+
+
 ## 마우스를 올렸을 때 보여줄 상세 설명
 static func tooltip(kind_id: String) -> String:
 	var d: Dictionary = DATA[kind_id]
@@ -76,7 +86,7 @@ static func tooltip(kind_id: String) -> String:
 		lines.append("수입 증가 없음")
 	if d.dps > 0.0:
 		lines.append("보스 공격력 초당 %.1f" % d.dps)
-	lines.append("이동 속도 %.1f칸/초" % d.speed)
+	lines.append("체력 %d / 이동 속도 %.1f칸/초" % [roundi(max_hp(kind_id)), d.speed])
 	if d.has("ramp"):
 		lines.append("성장: 초당 +%.2f (최대 +%.0f)" % [d.ramp, d.ramp_cap])
 	if d.has("aura_bonus"):
