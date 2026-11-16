@@ -47,6 +47,16 @@ var _hud_timer := 0.0
 var game_over_screen: GameOverScreen     # 승리/패배 화면
 var _play_start_time := 0.0              # 게임 시작 시각 (통계용)
 
+# 보스 스킬 배너: 어느 레인을 보고 있든 맵 위쪽에 뜬다. 여러 개가 겹치면 차례로 보여 준다.
+const SKILL_BANNER_SECONDS := 5.0        # 알림이 떠 있는 시간 (발동까지 예고 시간이 있으면 그만큼 더)
+var skill_banner: PanelContainer
+var skill_banner_title: Label
+var skill_banner_text: Label
+var _banner_queue: Array = []            # 기다리는 알림 [{name, text, lane, delay, boss}]
+var _banner_info: Dictionary = {}        # 지금 보이는 알림
+var _banner_left := 0.0                  # 지금 알림이 사라질 때까지
+var _banner_delay := 0.0                 # 스킬이 발동할 때까지 (0이면 카운트다운을 안 보인다)
+
 # 플레이어 버튼들
 @onready var player_buttons: Array[Button] = []
 @onready var monster_buttons: Array[Button] = []
@@ -79,6 +89,7 @@ func setup_ui():
 	_create_hud()
 	_create_status_panel()
 	_create_confirm_dialog()
+	_create_skill_banner()
 	_create_game_over_screen()
 
 ## 버튼을 "실제 모습 아이콘 + 비용 + 마우스 올리면 상세 설명" 형태로 꾸민다
@@ -653,6 +664,82 @@ func _create_game_over_screen() -> void:
 func _connect_boss(boss: BossController) -> void:
 	boss.boss_defeated.connect(_on_boss_defeated)
 	boss.boss_failed.connect(_on_boss_failed)
+	boss.skill_announced.connect(_on_skill_announced)
+
+
+## 보스 스킬 알림 배너 (맵 위에 겹쳐 뜬다. 입력은 통과시킨다)
+func _create_skill_banner() -> void:
+	skill_banner = PanelContainer.new()
+	skill_banner.visible = false
+	skill_banner.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	skill_banner.z_index = 110  # HUD(100), 시작 버튼(101)보다 위, 승리/패배 화면(1000)보다 아래
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.16, 0.05, 0.05, 0.92)
+	style.border_color = Color(1.0, 0.7, 0.2)
+	style.set_border_width_all(2)
+	style.set_corner_radius_all(6)
+	style.content_margin_left = 10
+	style.content_margin_right = 10
+	style.content_margin_top = 6
+	style.content_margin_bottom = 6
+	skill_banner.add_theme_stylebox_override("panel", style)
+
+	var box := VBoxContainer.new()
+	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	skill_banner.add_child(box)
+	skill_banner_title = _status_label(14)
+	skill_banner_title.add_theme_color_override("font_color", Color(1.0, 0.85, 0.3))
+	box.add_child(skill_banner_title)
+	skill_banner_text = _status_label(12)
+	skill_banner_text.add_theme_color_override("font_color", Color(1.0, 0.95, 0.9))
+	skill_banner_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	box.add_child(skill_banner_text)
+	add_child(skill_banner)
+
+
+func _on_skill_announced(info: Dictionary) -> void:
+	_banner_queue.append(info)
+
+
+## 대기 중인 알림을 하나씩 보여 주고, 예고 시간이 있으면 발동까지 카운트다운을 붙인다
+func _update_skill_banner(delta: float) -> void:
+	if _banner_left > 0.0:
+		_banner_left -= delta
+		_banner_delay = maxf(0.0, _banner_delay - delta)
+		if _banner_left <= 0.0:
+			skill_banner.visible = false
+		else:
+			_refresh_skill_banner_text()
+	if _banner_left <= 0.0 and not _banner_queue.is_empty():
+		_show_skill_banner(_banner_queue.pop_front())
+
+
+func _show_skill_banner(info: Dictionary) -> void:
+	_banner_info = info
+	_banner_delay = float(info.get("delay", 0.0))
+	_banner_left = SKILL_BANNER_SECONDS + _banner_delay
+	skill_banner_title.text = "[%s] %s  -  BOSS %s" % [BossSkills.lane_tag(info.lane), info.name, info.get("boss", "")]
+	_refresh_skill_banner_text()
+	# 맵 영역 맨 위, 좌우 8px 안쪽에 맞춘다
+	var rect := game_field.get_global_rect()
+	skill_banner.custom_minimum_size = Vector2(maxf(rect.size.x - 16.0, 200.0), 0.0)
+	skill_banner.size = Vector2(skill_banner.custom_minimum_size.x, 0.0)  # 높이는 글 길이에 맞게 알아서 정해진다
+	skill_banner.global_position = rect.position + Vector2(8.0, 6.0)
+	skill_banner.visible = true
+
+
+func _refresh_skill_banner_text() -> void:
+	var text: String = _banner_info.text
+	if _banner_delay > 0.0:
+		text += "\n%d초 뒤 발동" % ceili(_banner_delay)
+	skill_banner_text.text = text
+
+
+## 게임이 끝나면 남은 알림을 지운다
+func _clear_skill_banner() -> void:
+	_banner_queue.clear()
+	_banner_left = 0.0
+	skill_banner.visible = false
 
 
 ## 상태 패널용 작은 아이콘 (하트 / 금화 / 점). 글꼴에 이모지가 없어도 보이도록 직접 그린다.
@@ -687,6 +774,7 @@ func _on_start_pressed():
 	_play_start_time = Time.get_ticks_msec() / 1000.0
 
 func _process(delta):
+	_update_skill_banner(delta)
 	_hud_timer -= delta
 	if _hud_timer > 0.0:
 		return
@@ -881,6 +969,7 @@ func _on_monster_selected(button_index: int):
 
 ## 보스 전체 승리
 func _on_boss_defeated() -> void:
+	_clear_skill_banner()
 	var stats := _collect_game_stats(true)
 	game_over_screen.show_result(true, stats)
 
@@ -888,6 +977,7 @@ func _on_boss_defeated() -> void:
 ## 보스 패배
 func _on_boss_failed(reason: String) -> void:
 	Log.info(Log.Category.GAME, "패배 사유: %s" % reason)
+	_clear_skill_banner()
 	var stats := _collect_game_stats(false)
 	game_over_screen.show_result(false, stats)
 

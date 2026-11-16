@@ -8,12 +8,14 @@ class_name BossController
 ##   한 웨이브는 종류가 다른 몬스터 묶음 WAVE_GROUPS개이고, 다음 웨이브에 뭐가 오는지는 미리 정해져서 HUD에 보인다.
 ##   종류마다 이기는 타워가 달라서 그때그때 필요한 타워가 달라진다 (WaveTypes 상성 참고).
 ## - 제한시간 안에 못 잡으면 패배. 보스는 플레이어 몬스터를 공격하지 않는다 (현재 미정).
-## TODO: 보스 스킬
+## - 보스 스킬은 BossSkills.gd에 라운드별로 정의한다. 지금은 항상 켜져 있는 스킬(웨이브 주기/마릿수)만 있다.
+## TODO: 보스 스킬 중 체력 조건/주기 발동형, 웨이브 변형, 보스 레인 보정 (BossSkills.gd 참고)
 
 signal level_started(level: int)
 signal level_cleared(level: int)
 signal boss_defeated        # 마지막 라운드까지 모두 처치
 signal boss_failed(reason: String)
+signal skill_announced(info: Dictionary)  # 스킬을 HUD 배너로 알린다: {name, text, lane, delay, boss}. delay>0이면 그 시간 뒤 발동
 
 enum State { WAITING, RUNNING, VICTORY, DEFEAT }  # WAITING: 시작 버튼을 누르기 전 (시간도 몬스터 파견도 멈춰 있음)
 
@@ -49,6 +51,7 @@ var _dmg_accum := 0.0
 var _dmg_timer := 0.0
 var _dps_timer := 0.0
 var _next_types: Array[String] = []   # 다음 웨이브에 오는 몬스터 묶음 종류 (미리 정해 둔다)
+var _skill_count_mult := 1.0          # 이번 보스 스킬이 정한 웨이브 마릿수 배율
 
 
 func setup(boss_grid: GridSystem, renderer: GridRenderer, lanes: Dictionary) -> void:
@@ -92,6 +95,7 @@ func begin() -> void:
 	level_flash = 1.0
 	_dispatch_timer.start()  # 레인의 수입 타이머와 같은 순간에 돌기 시작해서 첫 수입과 첫 웨이브가 함께 온다
 	Log.info(Log.Category.GAME, "게임 시작: 보스 Lv.%d '%s'" % [level, level_data.name])
+	_announce_level_skills()
 
 
 ## 보스 몸통 자리를 통과 불가 칸으로 만들어서 몬스터가 보스를 뚫고 가지 못하게 한다
@@ -119,7 +123,51 @@ func _start_level(new_level: int) -> void:
 		level_data.wave_hp, level_data.count_mult])
 	Effects.float_text(_renderer, Balance.BOSS_CENTER + Vector2(-1.2, 0.3), "BOSS Lv.%d  %s" % [level, level_data.name],
 		Color(1.0, 0.85, 0.3), _lane_visible)
+	_apply_level_skills()
 	level_started.emit(level)
+
+
+## 이번 라운드의 항상 켜져 있는 스킬을 적용한다 (라운드가 바뀔 때마다 기본값에서 다시 계산)
+func _apply_level_skills() -> void:
+	var interval := Balance.INCOME_INTERVAL
+	_skill_count_mult = 1.0
+	for skill in BossSkills.of_level(level):
+		interval = minf(interval, float(skill.get("wave_interval", interval)))
+		_skill_count_mult *= float(skill.get("count_mult", 1.0))
+	_apply_wave_interval(interval)
+	if interval != Balance.INCOME_INTERVAL or _skill_count_mult != 1.0:
+		Log.info(Log.Category.GAME, "보스 스킬 적용: 웨이브 주기 %.0fs, 마릿수 x%.2f" % [interval, _skill_count_mult])
+
+
+## 이번 라운드의 스킬을 배너로 알린다 (시작 버튼을 누를 때와 새 보스가 나올 때)
+func _announce_level_skills() -> void:
+	for skill in BossSkills.of_level(level):
+		skill_announced.emit({"name": skill.name, "text": skill.text, "lane": skill.lane, "delay": 0.0, "boss": level_data.name})
+
+
+## 웨이브 주기를 바꾼다. 평소 주기(수입 주기)로 돌아올 때는 다음 수입 시점에 맞춰서 웨이브와 수입이 다시 같이 오게 한다.
+func _apply_wave_interval(interval: float) -> void:
+	if is_equal_approx(_dispatch_timer.wait_time, interval):
+		return
+	var running := not _dispatch_timer.is_stopped()
+	_dispatch_timer.wait_time = interval
+	if not running:
+		return  # 시작 전: begin()이 이 주기로 시작한다
+	var first_wait := minf(_dispatch_timer.time_left, interval)  # 주기가 짧아질 때: 곧 올 웨이브를 늦추지 않는다
+	if is_equal_approx(interval, Balance.INCOME_INTERVAL):
+		var left := _income_time_left()
+		if left > 0.0:
+			first_wait = left
+	_dispatch_timer.start(first_wait)     # start(시간)은 wait_time도 그 값으로 바꾼다
+	_dispatch_timer.wait_time = interval  # 그래서 첫 대기가 끝난 뒤부터는 원래 주기로 되돌려 놓는다
+
+
+## 다음 수입까지 남은 시간 (참여 중인 레인 기준, 없으면 -1)
+func _income_time_left() -> float:
+	for lane in _lanes.values():
+		if lane.active:
+			return lane.income_time_left()
+	return -1.0
 
 
 func _process(delta: float) -> void:
@@ -203,6 +251,7 @@ func _on_level_cleared() -> void:
 	Effects.float_text(_renderer, Balance.BOSS_CENTER + Vector2(-1.0, -0.8), "처치! +%d골드" % reward,
 		Color(1.0, 0.9, 0.3), _lane_visible)
 	_start_level(level + 1)
+	_announce_level_skills()
 
 
 ## 다음 웨이브의 몬스터 묶음 종류를 미리 정한다 (HUD 미리보기용). 종류는 라운드에 맞게 가중치로 뽑는다.
@@ -216,7 +265,7 @@ func _plan_next_wave() -> void:
 func _group_count(type_id: String) -> int:
 	var wave_type: Dictionary = WaveTypes.TYPES[type_id]
 	var scale := Balance.INCOME_INTERVAL / float(level_data.interval) / float(Balance.WAVE_GROUPS)
-	return maxi(1, roundi(float(wave_type.count) * float(level_data.count_mult) * scale))
+	return maxi(1, roundi(float(wave_type.count) * float(level_data.count_mult) * scale * _skill_count_mult))
 
 
 ## HUD용: 다음 웨이브에 뭐가 몇 마리 오는지. 같은 종류는 합친다. [{type, name, count, flying, color}]
