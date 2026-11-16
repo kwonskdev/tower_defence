@@ -243,9 +243,9 @@ func get_effective_hp() -> float:
 	return hp * (1.0 + get_total_empower())
 
 
-## 강화가 반영된 기본 DPS (보스 레인 몬스터용)
+## 강화가 반영된 DPS (보스 레인 몬스터용). 기본 DPS와 성장(ramp) 증가분 모두 강화를 받는다. 오라는 BossController가 따로 곱한다.
 func get_boosted_dps() -> float:
-	return dps * (1.0 + get_total_empower())
+	return (dps + minf(ramp * time_at_boss, ramp_cap)) * (1.0 + get_total_empower())
 
 
 ## 공중 몬스터를 지상에 붙잡는다. 그동안 제자리에 정지하고 지상 몬스터로 취급된다 (끝나면 다시 공중).

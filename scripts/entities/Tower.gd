@@ -140,7 +140,7 @@ func color_bonus_text() -> String:
 	var lv := lane.color_level(cname)
 	var type: String = Balance.COLOR_BONUS_TYPES[cname]
 	if lv == 0:
-		return "색깔 %s: %s 보너스 (업그레이드 전)" % [cname, Balance.COLOR_BONUS_LABELS[type]]
+		return "색깔 %s Lv0: %s -" % [cname, Balance.COLOR_BONUS_LABELS[type]]
 	var text := "색깔 %s Lv%d: %s %s" % [cname, lv, Balance.COLOR_BONUS_LABELS[type], Balance.color_bonus_value_text(cname, lv)]
 	if type == "damage" and evolution == "skill":
 		text += " (스킬형은 공격력이 없어 효과 없음)"
