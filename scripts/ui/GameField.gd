@@ -336,9 +336,12 @@ func send_monster(kind_id: String) -> bool:
 	var lane: LaneController = lanes.get(local_player_id)
 	if lane == null or boss == null or boss.state != BossController.State.RUNNING:
 		return false
-	var kind: Dictionary = SentMonsters.DATA.get(kind_id, {})
+	var kind: Dictionary = Monsters.DATA.get(kind_id, {})
 	if kind.is_empty():
 		Log.warn(Log.Category.GAME, "알 수 없는 몬스터 종류: %s" % kind_id)
+		return false
+	if not Monsters.can_send_in_pve(kind_id):  # 협력에서는 공격형만 만들 수 있다
+		Log.warn(Log.Category.GAME, "협력에서는 %s(%s)를 만들 수 없음" % [kind.name, Monsters.CATEGORY_DATA[kind.category].name])
 		return false
 	if not lane.try_spend(kind.cost, "%s 생산" % kind.name):
 		return false

@@ -6,7 +6,7 @@ class_name BossController
 ##   보스 앞에 선 몬스터는 사라지지 않고 다음 라운드 보스도 계속 공격한다 (수 제한 없음).
 ## - 수입이 들어오는 시점(INCOME_INTERVAL)마다 모든 참여 플레이어 레인에 몬스터 웨이브가 한꺼번에 온다 (PvE).
 ##   한 웨이브는 종류가 다른 몬스터 묶음 WAVE_GROUPS개이고, 다음 웨이브에 뭐가 오는지는 미리 정해져서 HUD에 보인다.
-##   종류마다 이기는 타워가 달라서 그때그때 필요한 타워가 달라진다 (WaveTypes 상성 참고).
+##   종류마다 이기는 타워가 달라서 그때그때 필요한 타워가 달라진다 (Monsters.gd 상성 참고).
 ## - 제한시간 안에 못 잡으면 패배. 보스는 플레이어 몬스터를 공격하지 않는다 (현재 미정).
 ## - 보스 스킬은 BossSkills.gd에 라운드별로 정의한다. 지금 있는 것: 웨이브 주기/마릿수, 웨이브 변형(돌격/부활/공습), 비늘 보호막,
 ##   동상(Lv.6), 체력 조건/주기 발동형(Lv.5 분열, Lv.7 처단+환영, Lv.9 공포+봉인). 발동형은 예고(배너+표식) 뒤에 발동한다.
@@ -133,9 +133,9 @@ func _start_level(new_level: int) -> void:
 	level_flash = 1.0
 	current_wave_text = "-"
 
-	Log.info(Log.Category.GAME, "보스 Lv.%d/%d '%s' 등장: hp=%.0f (참여 %d명), 제한시간=%.0fs, 압박 기준 %.1f, 몬스터 체력x%.1f 마릿수x%.1f" % [
+	Log.info(Log.Category.GAME, "보스 Lv.%d/%d '%s' 등장: hp=%.0f (참여 %d명), 제한시간=%.0fs, 압박 기준 %.1f, 마릿수x%.1f" % [
 		level, BossLevels.COUNT, level_data.name, max_hp, _lanes.size(), time_left, level_data.interval,
-		level_data.wave_hp, level_data.count_mult])
+		level_data.count_mult])
 	Effects.float_text(_renderer, Balance.BOSS_CENTER + Vector2(-1.2, 0.3), "BOSS Lv.%d  %s" % [level, level_data.name],
 		Color(1.0, 0.85, 0.3), _lane_visible)
 	_apply_level_skills()
@@ -375,7 +375,7 @@ func _plan_next_wave() -> void:
 	var air_only := _next_affix != "" and bool(BossSkills.AFFIXES[_next_affix].get("air_only", false))
 	_next_types.clear()
 	for i in range(Balance.WAVE_GROUPS):
-		_next_types.append(WaveTypes.pick(level, air_only))
+		_next_types.append(Monsters.pick(level, air_only))
 
 
 ## 이번 라운드의 wave_no번째 웨이브에 붙는 변형 (없으면 ""). "N웨이브마다"는 N, 2N, ... 번째에 붙는다.
@@ -399,9 +399,9 @@ func get_next_wave_affix() -> Dictionary:
 
 ## 묶음 하나의 마릿수. 라운드가 오를수록(파견 압박 interval이 짧아질수록, count_mult가 클수록) 늘어난다.
 func _group_count(type_id: String) -> int:
-	var wave_type: Dictionary = WaveTypes.TYPES[type_id]
+	var wave_type: Dictionary = Monsters.DATA[type_id]
 	var scale := Balance.INCOME_INTERVAL / float(level_data.interval) / float(Balance.WAVE_GROUPS)
-	return maxi(1, roundi(float(wave_type.count) * float(level_data.count_mult) * scale * _skill_count_mult))
+	return maxi(1, roundi(float(wave_type.get("count", 1)) * float(level_data.count_mult) * scale * _skill_count_mult))
 
 
 ## HUD용: 다음 웨이브에 뭐가 몇 마리 오는지. 같은 종류는 합친다. [{type, name, count, flying, color}]
@@ -415,8 +415,8 @@ func get_next_wave_preview() -> Array:
 		counts[t] += _group_count(t)
 	var preview: Array = []
 	for t in order:
-		var wt: Dictionary = WaveTypes.TYPES[t]
-		preview.append({"type": t, "name": wt.name, "count": counts[t], "flying": wt.flying, "color": wt.color})
+		var wt: Dictionary = Monsters.DATA[t]
+		preview.append({"type": t, "name": wt.name, "count": counts[t], "flying": bool(wt.get("flying", false)), "color": wt.color})
 	return preview
 
 
@@ -429,7 +429,7 @@ func time_to_next_wave() -> float:
 
 ## 모든 참여 레인에 웨이브를 보낸다 (수입 시점마다).
 ## 웨이브 = 종류가 다른 묶음 WAVE_GROUPS개. 묶음은 한 칸에서 촘촘히 연달아 나와서 한 덩어리로 온다.
-## 체력은 라운드/보스 체력에 따라 커진다.
+## 체력/공격력은 몬스터마다 고정이다 (Monsters.gd).
 func _dispatch_wave() -> void:
 	if state != State.RUNNING:
 		return
@@ -450,17 +450,13 @@ func _dispatch_wave() -> void:
 		skill_announced.emit({"name": "%s 웨이브" % a.name, "text": a.text, "lane": "player", "delay": 0.0, "boss": level_data.name})
 
 	var dispatch_level := level
-	var ratio := hp / max_hp
 	# 레인마다 이번 웨이브가 나오는 칸을 하나 정해서 한 덩어리로 내보낸다
 	var spawn_cells := {}
 	for lane in _lanes.values():
 		spawn_cells[lane] = lane.pick_spawn_cell()
 	var first := true
 	for type_id in types:
-		var wave_type: Dictionary = WaveTypes.TYPES[type_id]
 		var count := _group_count(type_id)
-		var hp_value: float = Balance.WAVE_MONSTER_HP * float(wave_type.hp) * float(level_data.wave_hp) \
-			* (1.0 + Balance.WAVE_HP_BONUS_AT_LOW_BOSS * (1.0 - ratio))
 		for i in range(count):
 			if not first:
 				var gap := Balance.WAVE_SPAWN_GAP if i > 0 else Balance.WAVE_GROUP_GAP
@@ -469,12 +465,12 @@ func _dispatch_wave() -> void:
 					return
 			first = false
 			for lane in _lanes.values():
-				lane.spawn_wave_monster(hp_value, type_id, dispatch_level, spawn_cells[lane], affix_id)
+				lane.spawn_wave_monster(type_id, dispatch_level, spawn_cells[lane], affix_id)
 
 
 ## 플레이어가 생산한 몬스터를 보스 레인으로 보낸다
 func spawn_player_monster(owner_id: int, kind_id: String) -> void:
-	var data: Dictionary = SentMonsters.DATA[kind_id]
+	var data: Dictionary = Monsters.DATA[kind_id]
 	var spawn_cells := _grid.get_spawn_cells()
 	if spawn_cells.is_empty():
 		Log.error(Log.Category.GAME, "보스 레인 스폰 셀이 없음")
@@ -489,7 +485,7 @@ func spawn_player_monster(owner_id: int, kind_id: String) -> void:
 	monster.apply_look(data)
 	monster.owner_id = owner_id
 	monster.kind_id = kind_id
-	monster.max_hp = SentMonsters.max_hp(kind_id)  # setup()이 hp를 가득 채운다
+	monster.max_hp = Monsters.max_hp(kind_id)  # setup()이 hp를 가득 채운다
 	monster.slot_key = slot_info.key
 	monster.dps = float(data.dps)
 	monster.ramp = float(data.get("ramp", 0.0))
@@ -636,7 +632,7 @@ func _cast_skill(skill: Dictionary) -> void:
 			else:
 				var victim: Monster = targets[0]
 				text = "DPS 1위 %s(P%d)가 제거됩니다 (비용의 %d%% 환급). 동시에 각 레인에 환영이 나타납니다." % [
-					SentMonsters.DATA[victim.kind_id].name, victim.owner_id + 1, roundi(float(skill.refund) * 100.0)]
+					Monsters.DATA[victim.kind_id].name, victim.owner_id + 1, roundi(float(skill.refund) * 100.0)]
 		"dread":
 			targets = _top_dps_attackers(int(skill.count))
 			if targets.is_empty():
@@ -644,7 +640,7 @@ func _cast_skill(skill: Dictionary) -> void:
 			warn = Color(0.75, 0.35, 0.95)
 			var names: Array[String] = []
 			for target in targets:
-				names.append(SentMonsters.DATA[target.kind_id].name)
+				names.append(Monsters.DATA[target.kind_id].name)
 			text = "DPS 상위 %d마리(%s)의 DPS가 %.0f초간 0이 됩니다." % [targets.size(), ", ".join(names), float(skill.duration)]
 		"split":
 			text = "슬라임 대장이 분열합니다! 표시된 칸에 슬라임 새끼 %d마리가 나타나 벽 타워를 갉습니다 (트랩 타워는 못 봅니다)." % int(skill.count)
@@ -719,7 +715,7 @@ func _top_dps_attackers(count: int) -> Array:
 
 ## 처단: 몬스터를 제거하고 비용의 일부를 주인에게 돌려준다
 func _execute_attacker(monster: Monster, refund_ratio: float) -> void:
-	var cost := int(SentMonsters.DATA[monster.kind_id].cost)
+	var cost := int(Monsters.DATA[monster.kind_id].cost)
 	var refund := roundi(float(cost) * refund_ratio)
 	var lane: LaneController = _lanes.get(monster.owner_id)
 	if lane != null and lane.active and refund > 0:
@@ -732,17 +728,14 @@ func _execute_attacker(monster: Monster, refund_ratio: float) -> void:
 
 ## 환영: 모든 참여 레인에 중장갑 몬스터를 보낸다
 func _spawn_phantoms(skill: Dictionary) -> void:
-	var wave_type: Dictionary = WaveTypes.TYPES["tank"]
-	var hp_value: float = Balance.WAVE_MONSTER_HP * float(wave_type.hp) * float(level_data.wave_hp) * float(skill.get("phantom_hp", 1.0))
 	for lane in _lanes.values():
 		for i in range(int(skill.get("phantoms", 1))):
-			lane.spawn_wave_monster(hp_value, "tank", level, lane.pick_spawn_cell())
+			lane.spawn_wave_monster("tank", level, lane.pick_spawn_cell())
 
 
 ## 분열: 모든 참여 레인의, 예고 때 정해 둔 칸(cells)에서 슬라임 새끼가 촘촘히 연달아 나온다 (웨이브와 같은 방식)
 func _spawn_slimelings(skill: Dictionary, cells: Dictionary) -> void:
-	var wave_type: Dictionary = WaveTypes.TYPES["slimeling"]
-	var hp_value: float = Balance.WAVE_MONSTER_HP * float(wave_type.hp) * float(level_data.wave_hp)
+	var wave_type: Dictionary = Monsters.DATA["slimeling"]
 	for lane in _lanes.values():
 		var cell: Vector2i = cells.get(lane, Pathfinder.NO_GOAL)
 		if cell != Pathfinder.NO_GOAL:
@@ -753,7 +746,7 @@ func _spawn_slimelings(skill: Dictionary, cells: Dictionary) -> void:
 			if state != State.RUNNING:
 				return
 		for lane in _lanes.values():
-			lane.spawn_wave_monster(hp_value, "slimeling", level, cells.get(lane, Pathfinder.NO_GOAL))
+			lane.spawn_wave_monster("slimeling", level, cells.get(lane, Pathfinder.NO_GOAL))
 
 
 ## 새끼가 나올 칸에 예고 표식을 띄운다 (그 레인을 보고 있을 때만 보인다). seconds 뒤에 저절로 사라진다.

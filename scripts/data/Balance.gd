@@ -4,8 +4,7 @@ class_name Balance
 ## - Balance.gd     : 경제, 기본 타워 4종, 보스 레인 크기
 ## - Evolutions.gd  : 타워 진화 계열 8종과 스킬 수치 (A/B 스킬, 레벨 1~3)
 ## - BossLevels.gd  : 보스 10라운드
-## - WaveTypes.gd   : 보스가 내 레인으로 보내는 몬스터 종류(상성)
-## - SentMonsters.gd: 내가 보스 레인으로 보내는 몬스터 종류
+## - Monsters.gd     : 모든 몬스터 (공격형/일반형/공중형). 유저가 만드는 것도 보스가 보내는 것도 같은 목록. 비용/수입/체력/공격력 고정
 
 # --- 경제 ---
 const START_GOLD := 150
@@ -40,9 +39,10 @@ const TOWER_DEFS := {
 	},
 }
 
-# 타워 내구도(초): 슬라임 새끼처럼 타워를 갉아 먹는 몬스터 1마리가 이만큼 갉으면 부서진다. 한 번 닳으면 회복되지 않는다.
+# 타워 내구도: 타워를 갉아 먹는 몬스터(공격형, 슬라임 새끼)가 자기 공격력(초당)만큼 깎는다. 0이 되면 부서지고, 한 번 닳으면 회복되지 않는다.
+# 가장 센 공격형(거인, 공격력 95)도 3초 이상 걸리도록 300으로 둔다.
 # (길이 막혀서 뚫고 오는 일반 몬스터는 지금처럼 타워를 한 번에 부순다)
-const TOWER_DURABILITY := 3.0
+const TOWER_DURABILITY := 300.0
 
 # 타워 건설 시 완전 랜덤으로 배정되는 7색
 const TOWER_COLORS := [
@@ -187,8 +187,6 @@ const WAVE_SPAWN_GAP := 0.18       # 같은 묶음 몬스터가 한 마리씩 �
 const WAVE_GROUP_GAP := 0.8        # 묶음과 묶음 사이 간격(초)
 
 # --- 보스 레인 ---
-const WAVE_MONSTER_HP := 10.0      # 일반 몬스터 기준 체력 (종류/라운드별 배율은 WaveTypes, BossLevels)
-const WAVE_HP_BONUS_AT_LOW_BOSS := 1.5   # 보스 체력이 0에 가까울수록 몬스터 체력이 (1 + 이 값)배
 const BOSS_HP_PER_EXTRA_PLAYER := 0.8    # 참여 인원이 1명 늘 때마다 보스 체력 +80%
 const BOSS_CENTER := Vector2(6.0, 25.0)  # 보스 레인 한가운데 (셀 좌표)
 const BOSS_RADIUS := 2.0                 # 칸

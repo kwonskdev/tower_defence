@@ -10,7 +10,7 @@ class_name MainGame
 @onready var empty2_button: Button = $VBoxContainer/TopUI/HBoxContainer/LeftPanel/MainView/Empty2Button
 @onready var boss_button: Button = $VBoxContainer/TopUI/HBoxContainer/RightPanel/BonusButton
 
-# 몬스터 버튼은 monster_buttons[0]이 뒤로 가기, [1]부터 SentMonsters.SLOTS 순서대로 몬스터 종류 (계열별로 묶고 사이에 빈칸).
+# 몬스터 버튼은 monster_buttons[0]이 뒤로 가기, [1]부터 지금 고른 유형의 Monsters.SLOTS 순서대로 몬스터 종류 (계열별로 묶고 사이에 빈칸).
 
 var hud_panel: PanelContainer            # 하단 메시지 영역 (할 말이 있을 때만 보인다)
 var hud_label: Label
@@ -30,6 +30,9 @@ var status_affix_label: Label            # 다음 웨이브에 변형(돌격/부
 var status_guard_label: Label            # 비늘 보호막이 보스 피해를 얼마나 줄이는지
 var status_wave_rows: Array = []         # [{dot: StatusIcon, label: Label}]
 var family_frames: Control               # 몬스터 배럭의 계열 묶음 외곽선
+var monster_type_view: GridContainer     # 몬스터 배럭 1단계: [←] + 유형 버튼들 (공격형/일반형/공중형)
+var _monster_category := ""              # 지금 열려 있는 몬스터 유형
+var _monster_slots: Array = []           # 지금 열려 있는 유형의 칸 배치 (monster_buttons[i+1] = _monster_slots[i])
 var tower_info_label: Label
 var evolve_buttons: Array[Button] = []   # 선택한 타워가 아직 진화 전이면 계열 2개 중 고르는 버튼
 var learn_button: Button                 # 선택한 타워가 진화했고 B 스킬을 아직 안 배웠으면 나오는 "B 스킬 배우기" 버튼
@@ -130,8 +133,8 @@ func setup_ui():
 	for b in [tower_button, monster_button, empty2_button]:
 		b.add_theme_font_size_override("font_size", FONT_BODY)
 	_create_sheet()
-	_setup_monster_buttons()
 	_create_family_frames()
+	_create_monster_type_view()
 	_create_tower_view()
 	_create_upgrade_views()
 	_create_minimaps()
@@ -208,49 +211,109 @@ func _decorate_unit_button(b: Button, icon: UnitIcon, cost: int, tooltip: String
 		tag_label.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
 		tag_label.position += Vector2(3, 0)  # 테두리에 붙지 않게 살짝 안쪽으로
 
-## 몬스터 배럭: 계열(수입/화력/균형/특수/지원)별로 색 테두리 + 이름표를 달고, 계열 사이는 빈칸으로 띄운다
-func _setup_monster_buttons():
+## 몬스터 배럭은 두 단계다. 1단계: 유형 버튼(공격형/일반형/공중형). 2단계: 고른 유형의 몬스터 종류 버튼.
+## 보스가 보내는 몬스터(일반형/공중형)도 여기서 볼 수 있다. 협력(PvE)에서 만들 수 없는 것은 회색이고, 눌러도 설명만 나온다.
+func _create_monster_type_view() -> void:
+	monster_type_view = GridContainer.new()
+	monster_type_view.columns = Monsters.CATEGORIES.size() + 1  # 뒤로 가기 + 유형들
+	monster_type_view.visible = false
+	sheet_content.add_child(monster_type_view)
+	monster_type_view.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	var back := Button.new()
+	back.text = "←"
+	back.add_theme_font_size_override("font_size", 28)
+	back.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	back.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	back.pressed.connect(_show_view.bind("main"))
+	monster_type_view.add_child(back)
+
+	for cat in Monsters.CATEGORIES:
+		var info: Dictionary = Monsters.CATEGORY_DATA[cat]
+		var count := Monsters.slots_of(cat).filter(func(k): return k != "").size()
+		var b := Button.new()
+		b.text = "%s\n%d종" % [info.name, count]
+		if not (cat in Monsters.PVE_SENDABLE):
+			b.text += "\n(협력에서는 보기만)"
+		b.add_theme_font_size_override("font_size", FONT_BODY)
+		b.add_theme_color_override("font_color", info.color)
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		b.tooltip_text = info.desc
+		_apply_family_style(b, info.color)
+		b.pressed.connect(_on_monster_type_selected.bind(cat))
+		monster_type_view.add_child(b)
+
+
+## 고른 유형의 몬스터 종류 버튼들을 채운다 (9열 격자의 monster_buttons를 다시 쓴다: [0]은 뒤로 가기)
+func _populate_monster_buttons(cat: String) -> void:
+	_monster_category = cat
+	_monster_slots = Monsters.slots_of(cat)
+	var cat_color: Color = Monsters.CATEGORY_DATA[cat].color
 	for i in range(1, monster_buttons.size()):
 		var b := monster_buttons[i]
+		for c in b.get_children():  # 이전 유형에서 붙인 아이콘/라벨
+			b.remove_child(c)
+			c.queue_free()
+		b.modulate = Color.WHITE
+		b.text = ""
+		b.tooltip_text = ""
+		b.mouse_filter = Control.MOUSE_FILTER_STOP
 		var slot_idx := i - 1
-		if slot_idx >= SentMonsters.SLOTS.size():
-			b.visible = false  # 쓰지 않는 칸은 숨겨서 격자가 두 줄로 커진다
+		if slot_idx >= _monster_slots.size():
+			b.visible = false  # 쓰지 않는 칸은 숨겨서 격자가 알맞게 줄어든다
 			continue
-		var kind_id: String = SentMonsters.SLOTS[slot_idx]
+		b.visible = true
+		var kind_id: String = _monster_slots[slot_idx]
 		if kind_id == "":
-			b.text = ""
-			b.flat = true  # 계열 사이 빈칸 (보이지 않고 눌리지도 않는다)
-			b.disabled = true
+			b.disabled = true  # 계열 사이 빈칸 (보이지 않고 눌리지도 않는다)
 			b.focus_mode = Control.FOCUS_NONE
+			b.modulate = Color(1, 1, 1, 0)
+			b.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			continue
-		var data: Dictionary = SentMonsters.DATA[kind_id]
-		var fam_color: Color = SentMonsters.FAMILY_COLORS[data.family]
+		b.disabled = false
+		b.focus_mode = Control.FOCUS_ALL
+		var data: Dictionary = Monsters.DATA[kind_id]
+		var fam_color: Color = Monsters.FAMILY_COLORS.get(data.get("family", ""), cat_color)
 		var icon := UnitIcon.new()
 		icon.show_monster(kind_id)
-		_decorate_unit_button(b, icon, data.cost, SentMonsters.tooltip(kind_id), data.family, fam_color)
+		_decorate_unit_button(b, icon, data.cost, Monsters.tooltip(kind_id), data.get("family", ""), fam_color)
 		_apply_family_style(b, fam_color)
+		if not Monsters.can_send_in_pve(kind_id):
+			b.modulate = Color(0.45, 0.45, 0.45)  # 협력에서는 만들 수 없다: 회색 (눌러서 설명은 볼 수 있다)
+	_rebuild_family_frames(cat)
 
 
-## 계열 묶음마다 굵은 외곽선 프레임을 씌운다 (버튼 격자 위에 겹쳐 그리는 안 눌리는 레이어)
+## 같은 계열이 이어진 칸들을 한 묶음으로 굵은 외곽선 프레임을 씌운다 (버튼 격자 위에 겹쳐 그리는 안 눌리는 레이어).
+## 계열이 없는 유형(일반형/공중형)은 유형 전체가 한 묶음이다.
+func _rebuild_family_frames(cat: String) -> void:
+	var frames := family_frames as FamilyFrames
+	frames.groups.clear()
+	var run_key := ""
+	var run_color := Color.WHITE
+	var run_buttons: Array[Button] = []
+	for i in range(_monster_slots.size() + 1):
+		var kind_id: String = _monster_slots[i] if i < _monster_slots.size() else ""
+		var key := ""
+		var color := Color.WHITE
+		if kind_id != "":
+			key = Monsters.DATA[kind_id].get("family", cat)
+			color = Monsters.FAMILY_COLORS.get(key, Monsters.CATEGORY_DATA[cat].color)
+		if key != run_key and not run_buttons.is_empty():
+			frames.groups.append({"buttons": run_buttons, "color": run_color})
+			run_buttons = []
+		run_key = key
+		run_color = color
+		if kind_id != "":
+			run_buttons.append(monster_buttons[i + 1])
+
+
 func _create_family_frames() -> void:
-	var left_panel: Control = sheet_content
 	var frames := FamilyFrames.new()
 	family_frames = frames
 	frames.visible = false
-	left_panel.add_child(frames)
+	sheet_content.add_child(frames)
 	frames.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	# 칸 배치(SLOTS)에서 같은 계열이 이어진 구간을 한 묶음으로 본다
-	var run_family := ""
-	var run_buttons: Array[Button] = []
-	for i in range(SentMonsters.SLOTS.size() + 1):
-		var kind_id: String = SentMonsters.SLOTS[i] if i < SentMonsters.SLOTS.size() else ""
-		var fam: String = SentMonsters.DATA[kind_id].family if kind_id != "" else ""
-		if fam != run_family and not run_buttons.is_empty():
-			frames.groups.append({"buttons": run_buttons, "color": SentMonsters.FAMILY_COLORS[run_family]})
-			run_buttons = []
-		run_family = fam
-		if fam != "":
-			run_buttons.append(monster_buttons[i + 1])
 
 
 ## 버튼 격자 위에 계열 묶음 외곽선만 그린다
@@ -432,14 +495,15 @@ func _make_back_column(_id: String) -> Button:
 	return b
 
 
-## 왼쪽 패널에 보여줄 화면을 하나만 켠다: main / tower / monster / upgrade / evos / detail / colors
+## 왼쪽 패널에 보여줄 화면을 하나만 켠다: main / tower / monster(유형 고르기) / monster_kinds(종류 고르기) / upgrade / evos / detail / colors
 func _show_view(view: String) -> void:
-	var in_sheet := view in ["monster", "upgrade", "evos", "detail", "colors"]
+	var in_sheet := view in ["monster", "monster_kinds", "upgrade", "evos", "detail", "colors"]
 	main_view.visible = view == "main" or in_sheet  # 넓은 화면이 열려 있어도 윗줄 버튼으로 바로 다른 화면으로 갈 수 있다
 	tower_view.visible = view == "tower"
 	sheet.visible = in_sheet
-	monster_view.visible = view == "monster"
-	family_frames.visible = view == "monster"
+	monster_type_view.visible = view == "monster"
+	monster_view.visible = view == "monster_kinds"
+	family_frames.visible = view == "monster_kinds"
 	upgrade_menu.visible = view == "upgrade"
 	evo_view.visible = view == "evos"
 	evo_frames.visible = view == "evos"
@@ -448,8 +512,8 @@ func _show_view(view: String) -> void:
 	skill_hint_label.visible = in_sheet  # 폰: 시트 아래 설명 칸은 몬스터/업그레이드 화면 모두에서 쓴다
 	_hover = []
 	if view == "monster":
-		skill_hint_label.text = "몬스터를 누르면 바로 보냅니다.
-누른 몬스터의 설명이 여기에 나옵니다."
+		skill_hint_label.text = "몬스터 유형을 고르세요.
+보스가 보내는 몬스터도 여기서 볼 수 있습니다."
 	elif view == "upgrade":
 		skill_hint_label.text = "업그레이드 종류를 고르세요."
 
@@ -1141,7 +1205,9 @@ func _input(event):
 func _notification(what: int) -> void:
 	if what != NOTIFICATION_WM_GO_BACK_REQUEST:
 		return
-	if sheet.visible or tower_view.visible:
+	if monster_view.visible:
+		_show_view("monster")
+	elif sheet.visible or tower_view.visible:
 		_show_view("main")
 	elif game_field.current_tool != GameField.PlacementTool.NONE:
 		game_field.set_current_tool(GameField.PlacementTool.NONE)
@@ -1199,17 +1265,32 @@ func _on_boss_button_pressed():
 
 # 뒤로 가기 버튼 핸들러
 func _on_back_button_pressed():
-	# 메인 뷰로 돌아가기
-	Log.info(Log.Category.UI, "몬스터 배럭 닫기")
-	_show_view("main")
+	# 몬스터 종류 화면 -> 유형 화면으로 돌아가기
+	Log.info(Log.Category.UI, "몬스터 유형 화면으로")
+	_show_view("monster")
+
+
+## 몬스터 유형을 골랐다: 그 유형의 몬스터 종류를 보여 준다
+func _on_monster_type_selected(cat: String) -> void:
+	Log.info(Log.Category.UI, "몬스터 유형 선택: %s" % cat)
+	_populate_monster_buttons(cat)
+	_show_view("monster_kinds")
+	if cat in Monsters.PVE_SENDABLE:
+		skill_hint_label.text = "몬스터를 누르면 바로 보냅니다.
+누른 몬스터의 설명이 여기에 나옵니다."
+	else:
+		skill_hint_label.text = "%s: 협력에서는 만들 수 없는 유형입니다 (회색).
+누르면 설명만 나옵니다." % Monsters.CATEGORY_DATA[cat].name
 
 # 몬스터 선택 핸들러
 func _on_monster_selected(button_index: int):
 	var slot_idx := button_index - 1
-	if slot_idx < 0 or slot_idx >= SentMonsters.SLOTS.size() or SentMonsters.SLOTS[slot_idx] == "":
+	if slot_idx < 0 or slot_idx >= _monster_slots.size() or _monster_slots[slot_idx] == "":
 		return  # 쓰지 않는 칸 / 계열 사이 빈칸
-	var kind_id: String = SentMonsters.SLOTS[slot_idx]
-	skill_hint_label.text = SentMonsters.tooltip(kind_id)
+	var kind_id: String = _monster_slots[slot_idx]
+	skill_hint_label.text = Monsters.tooltip(kind_id)
+	if not Monsters.can_send_in_pve(kind_id):
+		return  # 협력에서는 만들 수 없는 몬스터: 설명만 보여 준다
 	Log.info(Log.Category.UI, "몬스터 생산 요청: %s" % kind_id)
 	game_field.send_monster(kind_id)
 

@@ -13,9 +13,9 @@ func _ready() -> void:
 	resized.connect(_layout)
 
 
-## 내가 보스 레인으로 보내는 몬스터의 모습
+## 몬스터의 모습
 func show_monster(kind_id: String) -> void:
-	var data: Dictionary = SentMonsters.DATA[kind_id]
+	var data: Dictionary = Monsters.DATA[kind_id]
 	var m := Monster.new()
 	m.preview = true
 	m.apply_look(data)
