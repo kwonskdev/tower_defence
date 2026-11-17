@@ -26,8 +26,8 @@ var action_buttons: Array[Button] = []   # 미니맵 바로 왼쪽 우하단의 
 var detail_action: Button
 var color_action: Button
 var monster_action: Button
-var start_button: Button                 # 위쪽 메인 줄의 [시작] (누르면 사라진다)
-var pause_button: Button                 # 맵 오른쪽 위의 [일시정지] (시작한 뒤에만 보인다)
+var pause_button: Button                 # 맵 오른쪽 위의 [시작/일시정지] 버튼 (시작 전에는 ▶, 시작한 뒤에는 ⏸ 아이콘)
+var pause_icon: PauseIcon
 const PAUSE_SIZE := 48.0
 var confirm_dialog: ConfirmationDialog   # 타워를 지으면 길이 막힐 때 확인창
 var _pending_cell := Vector2i.ZERO
@@ -162,7 +162,6 @@ func setup_ui():
 	for b in [tower_button, monster_button, empty2_button]:
 		b.add_theme_font_size_override("font_size", FONT_BODY)
 	left_panel = main_view.get_parent()
-	_create_start_button()
 	_create_family_frames()
 	_create_monster_type_view()
 	_create_tower_view()
@@ -176,20 +175,6 @@ func setup_ui():
 	_create_game_over_screen()
 	_create_pause_ui()
 	_create_alerts()
-
-## 위쪽 메인 줄의 네 번째 버튼: 시작 전에는 [시작], 시작한 뒤에는 [일시정지].
-## (예전에는 맵 가운데/오른쪽 위에 겹쳐 있었다. 맵 위에는 상태 표시 말고는 아무것도 올리지 않는다)
-func _create_start_button() -> void:
-	start_button = Button.new()
-	start_button.text = "▶ 시작"
-	start_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	start_button.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	start_button.add_theme_font_size_override("font_size", FONT_BODY)
-	start_button.add_theme_color_override("font_color", Color(0.6, 1.0, 0.65))
-	start_button.focus_mode = Control.FOCUS_NONE  # 스페이스/엔터가 이 버튼을 누르지 않게
-	start_button.pressed.connect(_on_start_button_pressed)
-	main_view.add_child(start_button)
-
 
 ## 미니맵 바로 왼쪽 우하단에 놓는 실행 버튼 ([생성] / [업그레이드]). 고르기만 해서는 아무 일도 일어나지 않고 이 버튼을 눌러야 실행된다.
 func _make_action_button() -> Button:
@@ -1316,13 +1301,12 @@ func _create_pause_ui() -> void:
 	pause_button.z_index = 85  # 상태 표시와 같은 높이: 타워/몬스터(1~4)보다 위
 	pause_button.custom_minimum_size = Vector2(PAUSE_SIZE, PAUSE_SIZE)
 	pause_button.size = Vector2(PAUSE_SIZE, PAUSE_SIZE)
-	pause_button.visible = false
-	pause_button.tooltip_text = "일시정지 (P / Esc)"
+	pause_button.tooltip_text = "시작 / 일시정지 (P / Esc)"
 	pause_button.focus_mode = Control.FOCUS_NONE  # 스페이스/엔터가 이 버튼을 누르지 않게
-	pause_button.pressed.connect(_toggle_pause)
-	var icon := PauseIcon.new()
-	pause_button.add_child(icon)
-	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	pause_button.pressed.connect(_on_pause_button_pressed)
+	pause_icon = PauseIcon.new()
+	pause_button.add_child(pause_icon)
+	pause_icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(pause_button)
 	game_field.ui_blockers.append(pause_button)  # 이 버튼을 눌러도 뒤의 맵이 클릭되지 않게
 
@@ -1353,23 +1337,36 @@ func _set_paused(on: bool) -> void:
 	Log.info(Log.Category.GAME, "일시정지 %s" % ("켬" if on else "끔"))
 
 
-## 시작 전에는 위쪽 메인 줄에 [시작]이 있고, 시작하면 그 버튼은 사라지고 맵 오른쪽 위에 [일시정지]가 나타난다 (게임이 끝나면 숨김)
+## 맵 오른쪽 위 버튼: 시작 전에는 재생(▶) 아이콘으로 [시작], 시작한 뒤에는 막대(⏸) 아이콘으로 [일시정지]. 게임이 끝나면 숨긴다
 func _refresh_start_button() -> void:
-	start_button.visible = not _play_running
-	pause_button.visible = _play_running and not game_over_screen.visible
+	pause_button.visible = not game_over_screen.visible
+	if pause_icon.playing == _play_running:  # 아이콘이 상태와 다르면 갱신
+		pause_icon.playing = not _play_running
+		pause_icon.queue_redraw()
+	pause_button.tooltip_text = "일시정지 (P / Esc)" if _play_running else "시작"
 
 
-func _on_start_button_pressed() -> void:
-	if not _play_running:
+func _on_pause_button_pressed() -> void:
+	if _play_running:
+		_toggle_pause()
+	else:
 		_on_start_pressed()
 
 
-## 일시정지 버튼 아이콘 (막대 두 개. 글꼴에 일시정지 기호가 없을 수 있어 직접 그린다)
+## 시작/일시정지 버튼 아이콘 (재생 삼각형 / 막대 두 개. 글꼴에 기호가 없을 수 있어 직접 그린다)
 class PauseIcon extends Control:
+	var playing := true  # true: 시작 전이라 재생(▶) 모양
+
 	func _init() -> void:
 		mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	func _draw() -> void:
+		if playing:
+			var c := size * 0.5
+			var r := minf(size.x, size.y) * 0.27
+			draw_colored_polygon(PackedVector2Array([
+				c + Vector2(-r * 0.7, -r * 1.1), c + Vector2(-r * 0.7, r * 1.1), c + Vector2(r * 1.15, 0)]), Color(0.6, 1.0, 0.65))
+			return
 		var bar := Vector2(size.x * 0.16, size.y * 0.46)
 		var top := (size.y - bar.y) * 0.5
 		draw_rect(Rect2(Vector2(size.x * 0.5 - bar.x * 1.6, top), bar), Color.WHITE)
@@ -1453,12 +1450,12 @@ class PauseOverlay extends Control:
 		menu_box = VBoxContainer.new()
 		menu_box.add_theme_constant_override("separation", 14)
 		box.add_child(menu_box)
-		var resume := _make_button("계속하기")
-		resume.pressed.connect(func(): resume_requested.emit())
-		menu_box.add_child(resume)
 		var guide := _make_button("설명서")
 		guide.pressed.connect(_show_page.bind("guide"))
 		menu_box.add_child(guide)
+		var resume := _make_button("계속하기")
+		resume.pressed.connect(func(): resume_requested.emit())
+		menu_box.add_child(resume)
 		restart_button = _make_button("다시 시작")
 		restart_button.pressed.connect(_ask.bind("다시 시작하시겠습니까?", restart_requested))
 		menu_box.add_child(restart_button)
