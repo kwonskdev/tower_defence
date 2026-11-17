@@ -965,6 +965,13 @@ func _create_tower_sel_view() -> void:
 	grid.add_child(tower_action)
 
 
+## 맵에서 지어진 타워를 눌렀다: 건설 모드 중이어도 상단이 그 타워 화면으로 바뀌고 건설 모드는 꺼진다.
+## 다시 지으려면 타워를 새로 골라야 하고, 그동안 빈 칸을 눌러도 짓지 않는다.
+func _on_tower_selected(_tower: Tower) -> void:
+	if _view == "main" or _view == "tower":
+		_show_view("tower_sel")
+
+
 func _on_tower_sel_back_pressed() -> void:
 	game_field.select_tower(null)
 	_show_view("main")
@@ -1376,6 +1383,7 @@ func _create_pause_ui() -> void:
 	pause_overlay.restart_requested.connect(reset_game)
 	pause_overlay.quit_requested.connect(func(): get_tree().quit())
 	game_field.ui_blockers.append(pause_overlay)
+	game_field.tower_selected.connect(_on_tower_selected)
 
 
 func _toggle_pause() -> void:
@@ -1768,7 +1776,7 @@ func _update_hud():
 		return
 	# 맵에서 타워를 누르면 상단이 그 타워 화면으로 바뀌고, 선택이 풀리면 메인으로 돌아온다
 	var picked := game_field.get_selected_tower()
-	if picked != null and _view == "main":
+	if picked != null and (_view == "main" or _view == "tower"):
 		_show_view("tower_sel")
 	elif picked == null and _view == "tower_sel":
 		_show_view("main")
