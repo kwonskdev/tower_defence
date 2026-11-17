@@ -86,6 +86,16 @@ var _banner_queue: Array = []            # 기다리는 알림 [{name, text, lan
 var _banner_info: Dictionary = {}        # 지금 보이는 알림
 var _banner_left := 0.0                  # 지금 알림이 사라질 때까지
 var _banner_delay := 0.0                 # 스킬이 발동할 때까지 (0이면 카운트다운을 안 보인다)
+# 경고 연출: 생명이 줄면 화면이 붉게 깜빡이고, 보스 제한시간이 30초 남으면 화면 가운데에 알린다
+const BOSS_TIME_WARNING := 30.0          # 이 시간(초) 이하로 남으면 알린다 (보스 레벨마다 한 번)
+const TIME_WARNING_SECONDS := 3.0        # 가운데 알림이 떠 있는 시간
+var life_flash: ColorRect                # 화면 전체를 덮는 붉은 막 (평소엔 투명)
+var _life_flash_tween: Tween
+var _prev_lives := -1                    # 직전 생명 (줄었을 때만 깜빡이려고)
+var time_warning: PanelContainer
+var time_warning_label: Label
+var _time_warning_tween: Tween
+var _warned_level := -1                  # 30초 경고를 이미 띄운 보스 레벨
 var minimap_views: Dictionary = {}       # 레인 번호 -> MiniMapView (보스 스킬이 걸리는 레인을 깜빡이려고 모아 둔다)
 
 # 플레이어 버튼들
@@ -172,6 +182,7 @@ func setup_ui():
 	_create_skill_banner()
 	_create_game_over_screen()
 	_create_pause_ui()
+	_create_alerts()
 
 ## 위쪽 UI 줄 아래로 내려오는 넓은 화면. 몬스터 배럭과 업그레이드 화면이 여기에 뜬다
 ## (좁은 왼쪽 칸에 몰아 넣으면 폰에서 버튼이 너무 작아서, 화면 폭 전체를 쓴다. 맵 위에 겹치고 닫으면 사라진다)
@@ -888,6 +899,10 @@ func _create_game_over_screen() -> void:
 
 
 func _connect_boss(boss: BossController) -> void:
+	var my_lane: LaneController = game_field.lanes.get(game_field.local_player_id)
+	if my_lane != null:
+		_prev_lives = my_lane.lives
+		my_lane.lives_changed.connect(_on_lives_changed)
 	boss.boss_defeated.connect(_on_boss_defeated)
 	boss.boss_failed.connect(_on_boss_failed)
 	boss.skill_announced.connect(_on_skill_announced)
@@ -921,6 +936,77 @@ func _create_skill_banner() -> void:
 	skill_banner_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	box.add_child(skill_banner_text)
 	add_child(skill_banner)
+
+
+## 경고 연출 노드 만들기 (둘 다 입력을 통과시키고, 평소에는 보이지 않는다)
+func _create_alerts() -> void:
+	life_flash = ColorRect.new()
+	life_flash.color = Color(1.0, 0.1, 0.1, 0.0)
+	life_flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	life_flash.z_index = 120  # 배너(110)보다 위, 일시정지(500)/승패 화면(1000)보다 아래
+	add_child(life_flash)
+	life_flash.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	time_warning = PanelContainer.new()
+	time_warning.visible = false
+	time_warning.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	time_warning.z_index = 115
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.2, 0.03, 0.03, 0.93)
+	style.border_color = Color(1.0, 0.3, 0.2)
+	style.set_border_width_all(4)
+	style.set_corner_radius_all(10)
+	style.set_content_margin_all(18)
+	time_warning.add_theme_stylebox_override("panel", style)
+	time_warning_label = Label.new()
+	time_warning_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	time_warning_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	time_warning_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	time_warning_label.custom_minimum_size = Vector2(380, 0)
+	time_warning_label.add_theme_font_size_override("font_size", 28)
+	time_warning_label.add_theme_color_override("font_color", Color(1.0, 0.85, 0.7))
+	time_warning.add_child(time_warning_label)
+	add_child(time_warning)
+	time_warning.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	time_warning.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	time_warning.grow_vertical = Control.GROW_DIRECTION_BOTH
+
+
+## 내 레인의 생명이 줄면 화면을 붉게 두 번 깜빡인다 (보라 보너스로 늘어날 때는 깜빡이지 않는다)
+func _on_lives_changed(lives: int) -> void:
+	var lost := lives < _prev_lives
+	_prev_lives = lives
+	if lost:
+		_flash_life_loss()
+
+
+func _flash_life_loss() -> void:
+	if _life_flash_tween != null:
+		_life_flash_tween.kill()
+	life_flash.color.a = 0.0
+	_life_flash_tween = create_tween()
+	for i in range(2):
+		_life_flash_tween.tween_property(life_flash, "color:a", 0.4, 0.07)
+		_life_flash_tween.tween_property(life_flash, "color:a", 0.0, 0.2)
+
+
+## 보스 제한시간이 30초 이하로 남으면 레벨마다 한 번 화면 가운데에 알린다
+func _check_boss_time_warning(boss: BossController) -> void:
+	if boss.state != BossController.State.RUNNING or boss.level == _warned_level:
+		return
+	if boss.time_left > BOSS_TIME_WARNING:
+		return
+	_warned_level = boss.level
+	time_warning_label.text = "보스 제한시간 %d초 남았습니다!
+제한시간이 끝나면 패배합니다" % int(BOSS_TIME_WARNING)
+	time_warning.visible = true
+	time_warning.modulate.a = 1.0
+	if _time_warning_tween != null:
+		_time_warning_tween.kill()
+	_time_warning_tween = create_tween()
+	_time_warning_tween.tween_interval(TIME_WARNING_SECONDS - 0.5)
+	_time_warning_tween.tween_property(time_warning, "modulate:a", 0.0, 0.5)
+	_time_warning_tween.tween_callback(func(): time_warning.visible = false)
 
 
 func _on_skill_announced(info: Dictionary) -> void:
@@ -979,6 +1065,7 @@ func _alert_minimaps(lane: String, seconds: float) -> void:
 
 ## 게임이 끝나면 남은 알림을 지운다
 func _clear_skill_banner() -> void:
+	time_warning.visible = false
 	_banner_queue.clear()
 	_banner_left = 0.0
 	skill_banner.visible = false
@@ -1200,6 +1287,7 @@ func _update_hud():
 	_update_status_panel(lane, boss)
 	_refresh_tower_highlight()
 	_refresh_pause_button()
+	_check_boss_time_warning(boss)
 
 	# 하단 메시지: 상태, 그리고 보스 정보는 보스 레인을 보고 있을 때만 (다른 건 왼쪽 위 상태 패널로 옮겼다)
 	var lines: Array[String] = []
