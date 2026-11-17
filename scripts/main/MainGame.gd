@@ -1802,8 +1802,7 @@ func _update_tower_info(lane: LaneController):
 			text += "\n충전 %.1f / %.0f초" % [t.charge, t.charge_max()]
 	text += "\n" + t.color_bonus_text()
 	var b_known := t.evolution != "" and t.b_learned
-	tower_info_label.text = text.get_slice("
-", 0) if _tower_pick != "" else text  # 진화를 고르는 중에는 설명이 잘 보이게 첫 줄만
+	tower_info_label.text = text.get_slice("\n", 0) if _tower_pick != "" else text  # 진화를 고르는 중에는 설명이 잘 보이게 첫 줄만
 
 	recolor_button.text = "색깔 바꾸기 (%d골드)" % Balance.RECOLOR_COST
 	recolor_button.tooltip_text = "이 타워의 색깔을 지금 색을 뺀 6색 중 랜덤으로 바꿉니다. 색깔 보너스는 그 색의 업그레이드를 따라갑니다."
