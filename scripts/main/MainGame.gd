@@ -1377,7 +1377,7 @@ class PauseIcon extends Control:
 
 
 ## 일시정지 화면: 게임이 멈춘 동안에도 눌리고 키를 받아야 하므로 PROCESS_MODE_ALWAYS.
-## 다시 시작/종료는 진행 상황이 사라지므로 한 번 더 눌러야 실행된다.
+## 다시 시작/종료는 진행 상황이 사라지므로 화면 가운데 확인창에서 [확인]을 눌러야 실행된다.
 class PauseOverlay extends Control:
 	signal resume_requested
 	signal restart_requested
@@ -1405,7 +1405,9 @@ class PauseOverlay extends Control:
 
 	var restart_button: Button
 	var quit_button: Button
-	var _armed: Button = null  # 한 번 눌러서 "정말?" 상태인 버튼
+	var confirm_layer: Control      # 다시 시작/종료 확인창 (화면 가운데)
+	var confirm_label: Label
+	var _confirm_signal: Signal     # [확인]을 누르면 보낼 신호
 	var title_label: Label
 	var menu_box: VBoxContainer     # 1단계: 계속하기 / 설명서 / 다시 시작 / 종료
 	var guide_box: VBoxContainer    # 2단계: 설명서 항목 버튼들
@@ -1458,10 +1460,10 @@ class PauseOverlay extends Control:
 		guide.pressed.connect(_show_page.bind("guide"))
 		menu_box.add_child(guide)
 		restart_button = _make_button("다시 시작")
-		restart_button.pressed.connect(_on_confirmable_pressed.bind(restart_button, "다시 시작", restart_requested))
+		restart_button.pressed.connect(_ask.bind("다시 시작하시겠습니까?", restart_requested))
 		menu_box.add_child(restart_button)
 		quit_button = _make_button("종료")
-		quit_button.pressed.connect(_on_confirmable_pressed.bind(quit_button, "종료", quit_requested))
+		quit_button.pressed.connect(_ask.bind("종료하시겠습니까?", quit_requested))
 		menu_box.add_child(quit_button)
 
 		# 설명서 항목 버튼 (2열)
@@ -1499,6 +1501,65 @@ class PauseOverlay extends Control:
 		page_back.pressed.connect(_show_page.bind("guide"))
 		page_box.add_child(page_back)
 		_show_page("menu")
+		_create_confirm()
+
+	## 확인창: 화면 정가운데에 질문 한 줄과 [확인] [취소]
+	func _create_confirm() -> void:
+		confirm_layer = Control.new()
+		confirm_layer.visible = false
+		confirm_layer.mouse_filter = Control.MOUSE_FILTER_STOP  # 뒤의 일시정지 버튼이 눌리지 않게
+		add_child(confirm_layer)
+		confirm_layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		var dim := ColorRect.new()
+		dim.color = Color(0, 0, 0, 0.5)
+		dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		confirm_layer.add_child(dim)
+		dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		var center := CenterContainer.new()
+		center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		confirm_layer.add_child(center)
+		center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		var panel := PanelContainer.new()
+		var style := StyleBoxFlat.new()
+		style.bg_color = Color(0.12, 0.12, 0.18, 1.0)
+		style.border_color = Color(0.5, 0.5, 0.65)
+		style.set_border_width_all(3)
+		style.set_corner_radius_all(8)
+		style.set_content_margin_all(24)
+		panel.add_theme_stylebox_override("panel", style)
+		panel.custom_minimum_size = Vector2(420, 0)
+		center.add_child(panel)
+		var box := VBoxContainer.new()
+		box.add_theme_constant_override("separation", 20)
+		panel.add_child(box)
+		confirm_label = Label.new()
+		confirm_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		confirm_label.add_theme_font_size_override("font_size", 26)
+		box.add_child(confirm_label)
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 14)
+		box.add_child(row)
+		var ok := _make_button("확인")
+		ok.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		ok.pressed.connect(_on_confirm_ok)
+		row.add_child(ok)
+		var cancel := _make_button("취소")
+		cancel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		cancel.pressed.connect(_close_confirm)
+		row.add_child(cancel)
+
+	func _ask(question: String, sig: Signal) -> void:
+		confirm_label.text = question
+		_confirm_signal = sig
+		confirm_layer.visible = true
+
+	func _on_confirm_ok() -> void:
+		var sig := _confirm_signal
+		_close_confirm()
+		sig.emit()
+
+	func _close_confirm() -> void:
+		confirm_layer.visible = false
 
 	## 단계 전환: menu(일시정지) / guide(설명서 항목 목록) / page(항목 하나)
 	func _show_page(page: String) -> void:
@@ -1507,10 +1568,11 @@ class PauseOverlay extends Control:
 		menu_box.visible = page == "menu"
 		guide_box.visible = page == "guide"
 		page_box.visible = page == "page"
+		if confirm_layer != null:
+			_close_confirm()
 		match page:
 			"menu": title_label.text = "일시정지"
 			"guide": title_label.text = "설명서"
-		_disarm()
 
 	func _show_topic(index: int) -> void:
 		var topic: Array = GUIDE_TOPICS[index]
@@ -1524,6 +1586,9 @@ class PauseOverlay extends Control:
 
 	## 뒤로: 항목 -> 목록 -> 일시정지 -> 계속하기
 	func go_back() -> void:
+		if confirm_layer.visible:  # 확인창이 떠 있으면 취소
+			_close_confirm()
+			return
 		match _page:
 			"page": _show_page("guide")
 			"guide": _show_page("menu")
@@ -1535,22 +1600,6 @@ class PauseOverlay extends Control:
 		b.custom_minimum_size = Vector2(0, 56)  # 폰: 터치하기 쉬운 높이
 		b.add_theme_font_size_override("font_size", 22)
 		return b
-
-	func _on_confirmable_pressed(b: Button, label: String, sig: Signal) -> void:
-		if _armed == b:
-			_disarm()
-			sig.emit()
-			return
-		_disarm()
-		_armed = b
-		b.text = "%s? 한 번 더 누르세요" % label
-
-	func _disarm() -> void:
-		if _armed == restart_button:
-			restart_button.text = "다시 시작"
-		elif _armed == quit_button:
-			quit_button.text = "종료"
-		_armed = null
 
 	func show_menu(on: bool) -> void:
 		_show_page("menu")
