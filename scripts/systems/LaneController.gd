@@ -139,11 +139,11 @@ func learn_tower_skill(tower: Tower) -> bool:
 	if cost < 0:
 		return false
 	var evo := tower.evolution
-	if not try_spend(cost, "타워 %s(%s) B 스킬 배우기: %s" % [tower.cell, Evolutions.evo_name(evo), Evolutions.skill_name(evo, "B")]):
+	if not try_spend(cost, "타워 %s(%s) B 진화: %s" % [tower.cell, Evolutions.evo_name(evo), Evolutions.skill_name(evo, "B")]):
 		return false
 	tower.b_learned = true
 	Effects.ring(_renderer, tower.center_cell_pos(), 0.8, Evolutions.DATA[evo].color, lane_visible)
-	Log.info(Log.Category.TOWER, "[P%d] B 스킬 습득 %s: %s %s" % [player_id + 1, tower.cell, Evolutions.evo_name(evo), Evolutions.skill_name(evo, "B")])
+	Log.info(Log.Category.TOWER, "[P%d] B 진화 %s: %s %s" % [player_id + 1, tower.cell, Evolutions.evo_name(evo), Evolutions.skill_name(evo, "B")])
 	return true
 
 

@@ -44,10 +44,12 @@ var monster_type_view: GridContainer     # 몬스터 배럭 1단계: [←] + 유
 var _monster_category := ""              # 지금 열려 있는 몬스터 유형
 var _monster_slots: Array = []           # 지금 열려 있는 유형의 칸 배치 (monster_buttons[i+1] = _monster_slots[i])
 var tower_info_label: Label
-var evolve_buttons: Array[Button] = []   # 선택한 타워가 아직 진화 전이면 계열 2개 중 고르는 버튼
-var learn_button: Button                 # 선택한 타워가 진화했고 B 스킬을 아직 안 배웠으면 나오는 "B 스킬 배우기" 버튼
+var evolve_buttons: Array[Button] = []   # 선택한 타워의 진화 선택 버튼 2개 (진화 전: 계열 2개 / 진화 후 B가 남았으면: B 진화 1개)
+var tower_action: Button                 # 오른쪽 아래 [진화] 버튼 (고른 진화를 실행)
+var _tower_pick := ""                    # 고른 진화: 계열 이름 또는 "B"
+var _pick_tower: Tower = null            # _tower_pick을 고른 타워 (다른 타워를 누르면 선택을 지운다)
 var recolor_button: Button               # 선택한 타워의 색깔을 랜덤으로 바꾸는 버튼 (항상 보인다)
-var evolve_ids: Array[String] = ["", ""]
+var evolve_ids: Array[String] = ["", ""]     # 진화 선택 버튼이 가리키는 값 ("" = 안 쓰는 칸)
 var upgrade_menu: HBoxContainer          # 업그레이드 탭: [←] [타워] [색깔]
 var evo_view: HBoxContainer              # 타워 업그레이드 1단계: [←] + 4x2 격자 (진화 계열 8개 중 고르기)
 var evo_buttons: Dictionary = {}         # 계열 -> Button
@@ -575,6 +577,7 @@ func _show_view(view: String) -> void:
 	detail_view.visible = view == "detail"
 	color_view.visible = view == "colors"
 	_sel = []
+	_tower_pick = ""
 	if view != "monster_kinds":
 		_sel_monster = ""
 		_refresh_monster_highlight()
@@ -704,6 +707,14 @@ func _explain_text(lane: LaneController) -> String:
 			if Monsters.can_send_in_pve(_sel_monster):
 				return text + "\n[생성] 버튼을 누를 때마다 1마리씩 보냅니다 (%d골드)." % Monsters.DATA[_sel_monster].cost
 			return text + "\n(협력에서는 만들 수 없는 몬스터입니다)"
+		"tower_sel":
+			var t := game_field.get_selected_tower()
+			if t == null or _tower_pick == "":
+				return "진화를 고르세요." if t != null and (t.can_evolve() or (t.evolution != "" and not t.b_learned)) else ""
+			if _tower_pick == "B":
+				return "B 진화 - %s" % Evolutions.skill_text(t.evolution, "B", lane.levels_of(t.evolution))
+			var bonus := "한 발 피해 x%.1f. " % Evolutions.DAMAGE_MULT[_tower_pick] if Evolutions.DAMAGE_MULT.has(_tower_pick) else ""
+			return "%s 진화 - %s%s" % [Evolutions.evo_name(_tower_pick), bonus, Evolutions.skill_text(_tower_pick, "A", lane.levels_of(_tower_pick))]
 		"upgrade":
 			return "업그레이드 종류를 고르세요."
 		"evos":
@@ -764,6 +775,14 @@ func _refresh_action_buttons(lane: LaneController, boss: BossController) -> void
 				enabled = cost >= 0 and lane.gold >= cost
 			else:
 				text = "업그레이드\n(항목을 고르세요)"
+		"tower_sel":
+			var t := game_field.get_selected_tower()
+			var cost := _pick_cost(t, lane)
+			if cost < 0:
+				text = "진화\n(고르세요)"
+			else:
+				text = "진화\n%d골드" % cost
+				enabled = t.lane == lane and lane.gold >= cost
 		"colors":
 			if _sel.size() == 4 and _sel[1] == "color":
 				var cost := lane.color_upgrade_cost(_sel[0])
@@ -791,6 +810,12 @@ func _on_action_pressed() -> void:
 		"colors":
 			if _sel.size() == 4 and _sel[1] == "color":
 				game_field.upgrade_color(_sel[0])
+		"tower_sel":
+			if _tower_pick == "B":
+				game_field.learn_selected_tower_skill()
+			elif _tower_pick != "":
+				game_field.evolve_selected_tower(_tower_pick)
+			_tower_pick = ""
 	_refresh_now()
 
 
@@ -896,18 +921,16 @@ func _create_tower_sel_view() -> void:
 	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	grid.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	tower_sel_view.add_child(grid)
-	for i in range(2):
+	for i in range(2):  # 윗줄: 진화 선택 (누르면 하단에 설명만 나온다)
 		var eb := _make_view_button("", FONT_SMALL)
 		eb.pressed.connect(_on_evolve_pressed.bind(i))
 		grid.add_child(eb)
 		evolve_buttons.append(eb)
-	learn_button = _make_view_button("", FONT_SMALL)
-	learn_button.visible = false
-	learn_button.pressed.connect(_on_learn_selected_pressed)
-	grid.add_child(learn_button)
-	recolor_button = _make_view_button("", FONT_SMALL)
+	recolor_button = _make_view_button("", FONT_SMALL)  # 아랫줄 왼쪽: 색깔 바꾸기 (바로 실행)
 	recolor_button.pressed.connect(_on_recolor_selected_pressed)
 	grid.add_child(recolor_button)
+	tower_action = _make_action_button()  # 아랫줄 오른쪽: [진화]
+	grid.add_child(tower_action)
 
 
 func _on_tower_sel_back_pressed() -> void:
@@ -1528,28 +1551,41 @@ func _update_tower_info(lane: LaneController):
 	recolor_button.tooltip_text = "이 타워의 색깔을 지금 색을 뺀 6색 중 랜덤으로 바꿉니다. 색깔 보너스는 그 색의 업그레이드를 따라갑니다."
 	recolor_button.disabled = t.lane != lane or lane.gold < Balance.RECOLOR_COST
 
-	# 아직 진화 전이면 계열 2개 중 하나를 고른다 (골드). 진화하면 그 계열의 A 스킬이 붙는다.
+	# 진화 선택: 진화 전이면 계열 2개 중 하나, 진화했는데 B가 남았으면 B 진화 하나. 고르면 하단에 설명이 나오고 [진화]를 눌러야 진화한다.
+	if _pick_tower != t:
+		_tower_pick = ""
+		_pick_tower = t
 	var can_pick := t.can_evolve()
-	# 진화했는데 B 스킬을 안 배웠으면 여기서 바로 배울 수 있다 (업그레이드 탭에서도 가능)
-	var can_learn := t.evolution != "" and not b_known
-	learn_button.visible = can_learn
-	if can_learn:
-		var lc := lane.learn_cost(t)
-		learn_button.text = "B %s 배우기 (%d골드)" % [Evolutions.skill_name(t.evolution, "B"), lc]
-		learn_button.tooltip_text = "B %s: %s\n이 타워만 배웁니다 (타워마다 따로). 항목 업그레이드는 계열 공통." % [
-			Evolutions.skill_name(t.evolution, "B"), Evolutions.skill_text(t.evolution, "B", lane.levels_of(t.evolution))]
-		learn_button.disabled = t.lane != lane or lane.gold < lc
+	var can_b := t.evolution != "" and not b_known
 	var choices: Array = Evolutions.TREE[t.kind.id]
 	for i in range(evolve_buttons.size()):
 		var eb := evolve_buttons[i]
-		eb.visible = can_pick
-		if not can_pick:
-			continue
-		var evo: String = choices[i]
-		evolve_ids[i] = evo
-		eb.text = "%s 진화 (%d골드)" % [Evolutions.evo_name(evo), Balance.EVOLVE_COST]
-		eb.tooltip_text = Evolutions.tooltip(evo)
-		eb.disabled = t.lane != lane or lane.gold < Balance.EVOLVE_COST
+		var id := ""
+		if can_pick:
+			id = choices[i]
+			eb.text = "%s 진화" % Evolutions.evo_name(id)
+			eb.add_theme_color_override("font_color", Evolutions.DATA[id].color)
+		elif can_b and i == 0:
+			id = "B"
+			eb.text = "B 진화\n%s" % Evolutions.skill_name(t.evolution, "B")
+			eb.add_theme_color_override("font_color", Evolutions.DATA[t.evolution].color)
+		evolve_ids[i] = id
+		eb.modulate = Color.WHITE if id != "" else Color(1, 1, 1, 0)  # 안 쓰는 칸은 투명하게 (격자 배치 유지)
+		eb.mouse_filter = Control.MOUSE_FILTER_STOP if id != "" else Control.MOUSE_FILTER_IGNORE
+		eb.disabled = id == ""
+		if id != "" and id == _tower_pick:
+			_style_selected(eb)
+		else:
+			_clear_selected_style(eb)
+	if _tower_pick != "" and not (_tower_pick in evolve_ids):
+		_tower_pick = ""  # 진화가 끝나서 고른 것이 사라졌다
+
+
+## 고른 진화의 비용 (-1: 고른 것 없음)
+func _pick_cost(t: Tower, lane: LaneController) -> int:
+	if t == null or _tower_pick == "":
+		return -1
+	return lane.learn_cost(t) if _tower_pick == "B" else Balance.EVOLVE_COST
 
 
 ## 선택한 타워의 색깔 바꾸기 (골드, 랜덤)
@@ -1557,13 +1593,11 @@ func _on_recolor_selected_pressed():
 	game_field.recolor_selected_tower()
 
 
-## 선택한 타워의 "B 스킬 배우기" (진화처럼 타워마다 개별, 골드)
-func _on_learn_selected_pressed():
-	game_field.learn_selected_tower_skill()
-
-
+## 진화 선택 버튼: 고르기만 한다 (하단에 설명). 실제 진화는 오른쪽 아래 [진화] 버튼
 func _on_evolve_pressed(index: int):
-	game_field.evolve_selected_tower(evolve_ids[index])
+	if evolve_ids[index] != "":
+		_tower_pick = evolve_ids[index]
+	_request_refresh()
 
 
 func connect_signals():
