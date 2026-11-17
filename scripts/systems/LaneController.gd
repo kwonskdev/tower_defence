@@ -251,7 +251,7 @@ func pick_spawn_cell() -> Vector2i:
 
 ## 보스의 자동 파견: 이 레인에 몬스터를 보낸다 (level: 보스 라운드. 보상/방어력이 라운드에 따라 오른다)
 ## affix: 웨이브 변형 (BossSkills.AFFIXES 키, 없으면 "")
-func spawn_wave_monster(hp_value: float, type_id: String = "grunt", level: int = 1, spawn_cell: Vector2i = Pathfinder.NO_GOAL, affix: String = "") -> void:
+func spawn_wave_monster(type_id: String = "grunt", level: int = 1, spawn_cell: Vector2i = Pathfinder.NO_GOAL, affix: String = "") -> void:
 	if not active:
 		return
 	if spawn_cell == Pathfinder.NO_GOAL:
@@ -260,18 +260,20 @@ func spawn_wave_monster(hp_value: float, type_id: String = "grunt", level: int =
 		Log.error(Log.Category.GAME, "[P%d] 스폰 셀이 없음" % (player_id + 1))
 		return
 
-	var wave_type: Dictionary = WaveTypes.TYPES[type_id]
+	# 체력/공격력은 몬스터마다 고정 (Monsters.gd). 공격형(또는 gnaws)은 시야 안의 벽 타워를 dps만큼 갉는다.
+	var wave_type: Dictionary = Monsters.DATA[type_id]
 	var monster := Monster.new()
 	monster.apply_look(wave_type)
 	monster.kind_id = type_id
-	monster.max_hp = hp_value
-	monster.life_damage = wave_type.life
-	monster.armor = wave_type.armor
-	monster.regen = wave_type.regen
-	monster.flying = wave_type.flying
-	monster.reward = roundi(wave_type.reward * (1.0 + 0.15 * (level - 1)))
-	monster.gnaws_towers = bool(wave_type.get("gnaws", false))
-	monster.gnaw_rate = float(wave_type.get("gnaw", 1.0))
+	monster.max_hp = Monsters.max_hp(type_id)
+	monster.life_damage = int(wave_type.get("life", 1))
+	monster.armor = float(wave_type.get("armor", 0.0))
+	monster.regen = float(wave_type.get("regen", 0.0))
+	monster.flying = bool(wave_type.get("flying", false))
+	monster.reward = roundi(Monsters.reward(type_id) * (1.0 + 0.15 * (level - 1)))
+	monster.dps = float(wave_type.dps)
+	monster.gnaws_towers = monster.dps > 0.0 and (bool(wave_type.get("gnaws", false)) or wave_type.category == "attack")  # 공격력 0(응원단 등)은 갉을 게 없다
+	monster.gnaw_rate = float(wave_type.dps)
 	monster.gnawed.connect(_on_tower_gnawed)
 	if affix != "":
 		var affix_data: Dictionary = BossSkills.AFFIXES[affix]
@@ -285,7 +287,7 @@ func spawn_wave_monster(hp_value: float, type_id: String = "grunt", level: int =
 	_renderer.add_child(monster)
 	monsters.append(monster)
 	Log.debug(Log.Category.GAME, "[P%d] 몬스터#%d(%s) 스폰 hp=%.1f 방어=%.2f (필드 위 %d마리)" % [
-		player_id + 1, _next_monster_id, wave_type.name, hp_value, monster.armor, monsters.size()])
+		player_id + 1, _next_monster_id, wave_type.name, monster.max_hp, monster.armor, monsters.size()])
 	_next_monster_id += 1
 
 

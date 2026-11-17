@@ -114,7 +114,7 @@ var _hit_flash := 0.0
 var _anim := 0.0
 
 
-## 데이터 딕셔너리(WaveTypes / SentMonsters 항목)의 공통 외형 값을 적용한다
+## 데이터 딕셔너리(Monsters.DATA 항목)의 공통 외형 값을 적용한다
 func apply_look(data: Dictionary) -> void:
 	shape = data.shape
 	body_color = data.color

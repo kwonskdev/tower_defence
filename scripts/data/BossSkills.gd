@@ -21,7 +21,7 @@ class_name BossSkills
 ##   delay: 예고 시간(초). 발동 전에 배너와 몬스터 표식으로 알린다
 ##   effect: "execute"(보스 앞 DPS 1위 제거 + 환영) / "dread"(보스 앞 DPS 상위 count마리의 dps를 duration초 동안 0)
 ##           "split"(각 레인에 슬라임 새끼 count마리) / "seal"(각 레인에서 누적 피해 상위 타워 count기를 duration초 동안 사격 불가)
-##   execute: refund(비용 환급 비율), phantoms(레인마다 나오는 환영 수), phantom_hp(환영 체력 배율)
+##   execute: refund(비용 환급 비율), phantoms(레인마다 나오는 환영 수)
 ##   dread, seal: count, duration / split: count
 
 ## 웨이브 변형. 웨이브 전체에 붙는다.
@@ -78,7 +78,7 @@ const BY_LEVEL := {
 		{"id": "execute", "name": "처단", "lane": "both",
 			"text": "체력 75/50/25%에서 보스 앞 DPS 1위 몬스터가 3초 예고 뒤 제거됩니다 (비용의 50% 환급). 동시에 각 레인에 환영(중장갑)이 나타납니다.",
 			"trigger": "hp_below", "hp_ratios": [0.75, 0.5, 0.25], "delay": 3.0,
-			"effect": "execute", "refund": 0.5, "phantoms": 1, "phantom_hp": 1.5},
+			"effect": "execute", "refund": 0.5, "phantoms": 1},
 	],
 	8: [
 		{"id": "airraid", "name": "공습", "lane": "player",
@@ -110,7 +110,7 @@ const BY_LEVEL := {
 		{"id": "p2_execute", "name": "처단", "lane": "both", "phase": 2, "quiet": true,
 			"text": "보스 앞 DPS 1위 제거 + 환영.",
 			"trigger": "hp_below", "hp_ratios": [0.6, 0.4], "delay": 3.0,
-			"effect": "execute", "refund": 0.5, "phantoms": 1, "phantom_hp": 1.5},
+			"effect": "execute", "refund": 0.5, "phantoms": 1},
 		{"id": "p3_pressure", "name": "종말의 압박", "lane": "player", "phase": 3, "quiet": true,
 			"text": "웨이브 20초 주기.", "wave_interval": 20.0, "count_mult": 0.75},
 		{"id": "p3_split", "name": "분열", "lane": "player", "phase": 3, "quiet": true,
