@@ -50,11 +50,11 @@ const FAMILY_COLORS := {
 	"특수": Color(0.7, 0.45, 0.95),
 }
 
-# 유형 화면의 칸 배치 (9열 격자의 두 번째 칸부터: 첫 칸은 뒤로 가기). ""는 계열 사이를 띄우는 빈칸.
-# 공격형: 윗줄 = 수입 4 + 화력 4 / 아랫줄 = 균형 2, 빈칸, 특수 3
+# 유형 화면의 칸 배치 (9열 격자를 왼쪽 위부터 차례대로 채운다). ""는 계열 사이를 띄우는 빈칸.
+# 공격형: 윗줄 = 수입 4 + 화력 4 + 빈칸 / 아랫줄 = 균형 2, 빈칸, 특수 3
 const SLOTS := {
 	"attack": [
-		"worker", "miner", "vault", "banker", "warrior", "knight", "crusher", "giant",
+		"worker", "miner", "vault", "banker", "warrior", "knight", "crusher", "giant", "",
 		"scout", "mercenary", "", "berserker", "rusher", "sprout",
 	],
 	"support": ["cheer", "banner"],

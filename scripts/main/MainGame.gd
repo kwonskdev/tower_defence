@@ -162,6 +162,7 @@ func setup_ui():
 	for b in [tower_button, monster_button, empty2_button]:
 		b.add_theme_font_size_override("font_size", FONT_BODY)
 	left_panel = main_view.get_parent()
+	monster_view.move_child(monster_buttons[0], BACK_CELL)  # 뒤로 가기는 왼쪽 아래 칸
 	_create_family_frames()
 	_create_monster_type_view()
 	_create_tower_view()
@@ -220,39 +221,63 @@ func _decorate_unit_button(b: Button, icon: UnitIcon, cost: int, tooltip: String
 ## 몬스터 배럭은 두 단계다. 1단계: 유형 버튼(공격형/일반형/공중형). 2단계: 고른 유형의 몬스터 종류 버튼.
 ## 보스가 보내는 몬스터(일반형/공중형)도 여기서 볼 수 있다. 협력(PvE)에서 만들 수 없는 것은 회색이고, 눌러도 설명만 나온다.
 func _create_monster_type_view() -> void:
-	monster_type_view = GridContainer.new()
-	monster_type_view.columns = Monsters.CATEGORIES.size() + 1  # 뒤로 가기 + 유형들
-	monster_type_view.visible = false
-	left_panel.add_child(monster_type_view)
-	monster_type_view.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-
-	var back := Button.new()
-	back.text = "←"
-	back.add_theme_font_size_override("font_size", 28)
-	back.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	back.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	back.pressed.connect(_show_view.bind("main"))
-	monster_type_view.add_child(back)
-
-	for cat in Monsters.CATEGORIES:
+	monster_type_view = _make_tile_grid(_show_view.bind("main"))
+	var cats := Monsters.CATEGORIES
+	for i in range(cats.size()):  # 왼쪽 위부터 차례대로
+		var cat: String = cats[i]
 		var info: Dictionary = Monsters.CATEGORY_DATA[cat]
-		var count := Monsters.slots_of(cat).filter(func(k): return k != "").size()
 		var b := Button.new()
-		b.text = "%s\n%d종" % [info.name, count]
-		if not (cat in Monsters.PVE_SENDABLE):
-			b.text += "\n(보기만)"
-		b.clip_text = true  # 글자가 길어도 칸 폭을 넘겨서 미니맵을 밀어내지 않게 한다
-		b.add_theme_font_size_override("font_size", FONT_SMALL)
+		b.text = info.name
+		b.clip_text = true  # 글자가 길어도 칸 폭을 넘겨서 옆 칸을 밀어내지 않게 한다
+		b.add_theme_font_size_override("font_size", FONT_TINY)
 		b.add_theme_color_override("font_color", info.color)
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		b.size_flags_vertical = Control.SIZE_EXPAND_FILL
-		b.tooltip_text = info.desc
 		_apply_family_style(b, info.color)
 		b.pressed.connect(_on_monster_type_selected.bind(cat))
-		monster_type_view.add_child(b)
+		_set_tile(monster_type_view, _slot_cell(i), b)
 
 
-const MONSTER_GRID_CELLS := 17           # 9열 x 2줄 = 뒤로 가기 1 + 몬스터 칸 17. 칸이 모자라는 유형은 빈칸으로 채워 늘 2줄로 둔다 (오른쪽 아래는 [생성] 버튼 자리)
+const TILE_COLS := 9
+const TILE_CELLS := 27                   # 9열 x 3줄
+const BACK_CELL := 18                    # 뒤로 가기: 왼쪽 아래 1칸
+
+## 타워/몬스터 화면의 9x3 타일 격자: 빈 칸으로 채워 두고, 왼쪽 아래(18번)에 [←]를 놓는다. 나머지 칸은 _set_tile로 채운다.
+func _make_tile_grid(on_back: Callable) -> GridContainer:
+	var grid := GridContainer.new()
+	grid.columns = TILE_COLS
+	grid.visible = false
+	left_panel.add_child(grid)
+	grid.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	for c in range(TILE_CELLS):
+		var spacer := Control.new()
+		spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		grid.add_child(spacer)
+	var back := Button.new()
+	back.text = "←"
+	back.add_theme_font_size_override("font_size", 24)
+	back.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	back.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	back.pressed.connect(on_back)
+	_set_tile(grid, BACK_CELL, back)
+	return grid
+
+
+## 격자의 cell번 칸에 노드를 놓는다 (원래 있던 빈 칸은 지운다)
+func _set_tile(grid: GridContainer, cell: int, node: Control) -> void:
+	var old := grid.get_child(cell)
+	grid.remove_child(old)
+	old.queue_free()
+	grid.add_child(node)
+	grid.move_child(node, cell)
+
+
+## 내용 번호 -> 격자 칸 번호 (뒤로 가기 칸을 건너뜀)
+func _slot_cell(slot_idx: int) -> int:
+	return slot_idx if slot_idx < BACK_CELL else slot_idx + 1
+
 
 ## 고른 유형의 몬스터 종류 버튼들을 채운다 (9열 격자의 monster_buttons를 다시 쓴다: [0]은 뒤로 가기)
 func _populate_monster_buttons(cat: String) -> void:
@@ -269,9 +294,6 @@ func _populate_monster_buttons(cat: String) -> void:
 		b.tooltip_text = ""
 		b.mouse_filter = Control.MOUSE_FILTER_STOP
 		var slot_idx := i - 1
-		if slot_idx >= MONSTER_GRID_CELLS:
-			b.visible = false
-			continue
 		b.visible = true
 		var kind_id: String = _monster_slots[slot_idx] if slot_idx < _monster_slots.size() else ""
 		if kind_id == "":
@@ -332,6 +354,7 @@ func _rebuild_family_frames(cat: String) -> void:
 	var run_key := ""
 	var run_color := Color.WHITE
 	var run_buttons: Array[Button] = []
+	var run_row := 0
 	for i in range(_monster_slots.size() + 1):
 		var kind_id: String = _monster_slots[i] if i < _monster_slots.size() else ""
 		var key := ""
@@ -339,12 +362,14 @@ func _rebuild_family_frames(cat: String) -> void:
 		if kind_id != "":
 			key = Monsters.DATA[kind_id].get("family", cat)
 			color = Monsters.FAMILY_COLORS.get(key, Monsters.CATEGORY_DATA[cat].color)
-		if key != run_key and not run_buttons.is_empty():
+		var row := floori(_slot_cell(i) / float(TILE_COLS))
+		if (key != run_key or (kind_id != "" and row != run_row)) and not run_buttons.is_empty():  # 줄이 바뀌면 묶음 외곽선도 끊는다
 			frames.groups.append({"buttons": run_buttons, "color": run_color})
 			run_buttons = []
 		run_key = key
 		run_color = color
 		if kind_id != "":
+			run_row = row
 			run_buttons.append(monster_buttons[i + 1])
 
 
@@ -390,32 +415,22 @@ func _apply_family_style(b: Button, fam_color: Color) -> void:
 		b.add_theme_stylebox_override(state, sb)
 
 func _create_tower_view():
-	# 타워 배럭: 속성 2개 조합 타워 선택 (코드로 생성, 몬스터 뷰와 같은 자리를 쓴다)
-	tower_view = GridContainer.new()
-	tower_view.columns = 5  # 뒤로 가기 + 기본 타워 4종
-	tower_view.visible = false
-	left_panel.add_child(tower_view)
-	tower_view.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-
-	var back := Button.new()
-	back.text = "←"
-	back.add_theme_font_size_override("font_size", 28)
-	back.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	back.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	back.pressed.connect(_on_tower_back_pressed)
-	tower_view.add_child(back)
-
+	# 타워 배럭: 9x3 타일. 기본 타워를 왼쪽 위부터 차례대로, 뒤로 가기는 왼쪽 아래
+	tower_view = _make_tile_grid(_on_tower_back_pressed)
+	var i := 0
 	for kind_id in Balance.TOWER_KINDS:
 		var kind := Balance.tower_kind(kind_id)
 		var b := Button.new()
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		b.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		b.pressed.connect(_on_tower_kind_selected.bind(kind_id))
-		tower_view.add_child(b)
+		_set_tile(tower_view, _slot_cell(i), b)
+		i += 1
 		tower_buttons[kind_id] = b
 		var icon := UnitIcon.new()
 		icon.show_tower(kind)
-		_decorate_unit_button(b, icon, kind.cost, Balance.tower_tooltip(kind))
+		_decorate_unit_button(b, icon, kind.cost, "")  # 설명은 하단 메시지 칸에 나온다
+
 
 ## 업그레이드 탭 (타워 / 색깔).
 ## 타워 탭: 진화 계열 8개 중 하나를 고르면 그 계열의 업그레이드 항목(관통 수, 독 피해 ...)이 나온다.
@@ -515,9 +530,9 @@ func _create_upgrade_views():
 	monster_action = _make_action_button()
 	left_panel.add_child(monster_action)
 	monster_action.visible = false
-	monster_action.anchor_left = 6.0 / 9.0
+	monster_action.anchor_left = 7.0 / 9.0  # 9x3 격자의 오른쪽 아래 2칸
 	monster_action.anchor_right = 1.0
-	monster_action.anchor_top = 0.5
+	monster_action.anchor_top = 2.0 / 3.0
 	monster_action.anchor_bottom = 1.0
 	monster_action.offset_left = 0.0
 	monster_action.offset_right = 0.0
