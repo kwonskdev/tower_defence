@@ -5,8 +5,8 @@ const GRID_WIDTH = 12
 const GRID_HEIGHT = 50
 var CELL_SIZE: int = 40
 
-# 맨 아래 HUD가 마지막 줄들을 덮지 않도록 스크롤 끝에 두는 여백(px)
-const BOTTOM_PADDING := 240
+# 스크롤 끝에 두는 여백(px). 메시지 영역이 맵 밖 별도 공간이라 더는 마지막 줄을 가리지 않는다
+const BOTTOM_PADDING := 0
 
 var grid_color = Color.WHITE
 

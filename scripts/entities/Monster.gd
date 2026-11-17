@@ -258,9 +258,17 @@ func apply_stun(duration: float) -> void:
 
 # --- 강화 시스템 (남색 색깔 보너스) ---
 
+## 일시정지로 멈춰 있던 시간(ms)의 합. 강화 버프가 실제 시계로 만료되므로, 멈춘 동안은 시간이 흐르지 않은 것으로 친다.
+static var pause_offset_ms: int = 0
+
+
+static func _game_now() -> float:
+	return float(Time.get_ticks_msec() - pause_offset_ms) / 1000.0
+
+
 ## 강화 버프 추가 (중첩 가능)
 func add_empower(duration: float, boost: float) -> void:
-	var now := Time.get_ticks_msec() / 1000.0
+	var now := _game_now()
 	_empower_buffs.append({"end_time": now + duration, "boost": boost})
 	# 종료 시간 순으로 정렬
 	_empower_buffs.sort_custom(func(a, b): return a.end_time < b.end_time)
@@ -270,7 +278,7 @@ func add_empower(duration: float, boost: float) -> void:
 
 ## 현재 적용 중인 강화 효과 총합 (만료된 버프는 제거)
 func get_total_empower() -> float:
-	var now := Time.get_ticks_msec() / 1000.0
+	var now := _game_now()
 	var total := 0.0
 	# 만료된 버프 제거 (역순으로)
 	for i in range(_empower_buffs.size() - 1, -1, -1):

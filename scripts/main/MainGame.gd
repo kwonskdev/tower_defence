@@ -12,7 +12,7 @@ class_name MainGame
 
 # 몬스터 버튼은 monster_buttons[0]이 뒤로 가기, [1]부터 지금 고른 유형의 Monsters.SLOTS 순서대로 몬스터 종류 (계열별로 묶고 사이에 빈칸).
 
-var hud_panel: PanelContainer            # 하단 메시지 영역 (할 말이 있을 때만 보인다)
+var hud_panel: PanelContainer            # 맵 아래 별도 메시지 영역 (항상 보이고, 높이는 BOTTOM_HEIGHT로 고정)
 var hud_label: Label
 var tower_info_row: VBoxContainer        # 선택한 타워 정보 + (진화 전이면) 진화 버튼 줄
 var evolve_row: HBoxContainer
@@ -62,13 +62,23 @@ const FONT_TINY := 14
 const TOP_HEIGHT := 180.0                # 위쪽 UI 줄 높이 (MainGame.tscn의 TopUI와 같아야 한다)
 const SHEET_HEIGHT := 390.0              # 몬스터/업그레이드 화면 높이
 const MIN_TOUCH := 56.0                  # 눌러야 하는 버튼의 최소 높이
+const CORNER_MARGIN := 10.0              # 폰 화면 모서리가 둥글게 잘려도 UI가 가리지 않는 최소 여백
+const BOTTOM_HEIGHT := 200.0             # 맵 아래 메시지 영역 높이 (맵은 그만큼 줄어든다)
+const CANCEL_WIDTH := 182.0              # 건설 취소 버튼 폭
 
 var sheet: PanelContainer                # 위쪽 UI 아래로 내려오는 넓은 화면 (몬스터 배럭 / 업그레이드). 맵 위에 겹친다
 var sheet_content: Control               # 그 안의 화면들이 들어가는 자리
 var cancel_build_button: Button          # 건설 모드 취소 (폰에는 우클릭이 없다)
 
 var game_over_screen: GameOverScreen     # 승리/패배 화면
-var _play_start_time := 0.0              # 게임 시작 시각 (통계용)
+var _play_time := 0.0                    # 실제로 플레이한 시간(초). 일시정지 중에는 흐르지 않는다 (통계용)
+var _play_running := false               # 시작 버튼을 눌렀는지
+
+# 일시정지: get_tree().paused로 게임 전체를 멈추고, 항상 동작하는 PauseOverlay를 위에 띄운다
+const PAUSE_SIZE := 56.0
+var pause_button: Button
+var pause_overlay: PauseOverlay
+var _paused_at_ms := 0                   # 멈춘 시각 (Monster의 강화 버프 시계 보정용)
 
 # 보스 스킬 배너: 어느 레인을 보고 있든 맵 위쪽에 뜬다. 여러 개가 겹치면 차례로 보여 준다.
 const SKILL_BANNER_SECONDS := 5.0        # 알림이 떠 있는 시간 (발동까지 예고 시간이 있으면 그만큼 더)
@@ -79,6 +89,16 @@ var _banner_queue: Array = []            # 기다리는 알림 [{name, text, lan
 var _banner_info: Dictionary = {}        # 지금 보이는 알림
 var _banner_left := 0.0                  # 지금 알림이 사라질 때까지
 var _banner_delay := 0.0                 # 스킬이 발동할 때까지 (0이면 카운트다운을 안 보인다)
+# 경고 연출: 생명이 줄면 화면이 붉게 깜빡이고, 보스 제한시간이 30초 남으면 화면 가운데에 알린다
+const BOSS_TIME_WARNING := 30.0          # 이 시간(초) 이하로 남으면 알린다 (보스 레벨마다 한 번)
+const TIME_WARNING_SECONDS := 3.0        # 가운데 알림이 떠 있는 시간
+var life_flash: ColorRect                # 화면 전체를 덮는 붉은 막 (평소엔 투명)
+var _life_flash_tween: Tween
+var _prev_lives := -1                    # 직전 생명 (줄었을 때만 깜빡이려고)
+var time_warning: PanelContainer
+var time_warning_label: Label
+var _time_warning_tween: Tween
+var _warned_level := -1                  # 30초 경고를 이미 띄운 보스 레벨
 var minimap_views: Dictionary = {}       # 레인 번호 -> MiniMapView (보스 스킬이 걸리는 레인을 깜빡이려고 모아 둔다)
 
 # 플레이어 버튼들
@@ -96,7 +116,8 @@ func _ready():
 	get_viewport().size_changed.connect(_apply_safe_area)
 
 
-## 폰의 노치/상태바/제스처 바에 UI가 가리지 않도록 위아래에 안전 여백을 둔다 (폰에서만)
+## 폰의 노치/상태바/제스처 바/둥근 모서리에 UI가 가리지 않도록 네 변 모두에 안전 여백을 둔다 (폰에서만).
+## 시스템이 알려 주는 안전 영역(노치 등)에, 화면 모서리가 둥글게 잘리는 폰을 위한 최소 여백(CORNER_MARGIN)을 더한다.
 func _apply_safe_area() -> void:
 	if not OS.has_feature("mobile"):
 		return
@@ -105,15 +126,35 @@ func _apply_safe_area() -> void:
 	if win.x <= 0.0 or win.y <= 0.0 or safe.size.x <= 0:
 		return
 	var s := get_viewport_rect().size.x / win.x  # 화면 픽셀 -> 가상 화면 좌표
-	var top := maxf(0.0, safe.position.y * s)
-	var bottom := maxf(0.0, (win.y - safe.end.y) * s)
-	$VBoxContainer.offset_top = top
-	$VBoxContainer.offset_bottom = -bottom
+	apply_insets(
+		maxf(CORNER_MARGIN, safe.position.x * s),
+		maxf(CORNER_MARGIN, safe.position.y * s),
+		maxf(CORNER_MARGIN, (win.x - safe.end.x) * s),
+		maxf(CORNER_MARGIN, (win.y - safe.end.y) * s))
+
+
+## 화면 가장자리에서 left/top/right/bottom 만큼 안쪽에 UI를 배치한다 (가상 화면 좌표)
+func apply_insets(left: float, top: float, right: float, bottom: float) -> void:
+	var box: Control = $VBoxContainer
+	box.offset_left = left
+	box.offset_top = top
+	box.offset_right = -right
+	box.offset_bottom = -bottom
+	game_field.set_side_inset(left + right)  # 칸 크기는 맵이 실제로 쓰는 폭으로 정한다
+	sheet.offset_left = left
+	sheet.offset_right = -right
 	sheet.offset_top = top + TOP_HEIGHT
 	sheet.offset_bottom = top + TOP_HEIGHT + SHEET_HEIGHT
-	cancel_build_button.offset_top = top + TOP_HEIGHT + 8.0
-	cancel_build_button.offset_bottom = top + TOP_HEIGHT + 8.0 + MIN_TOUCH
-	hud_panel.offset_bottom = -bottom
+	# 맵 오른쪽 위 버튼들: [건설 취소] [일시정지] 순으로 오른쪽 끝에서부터
+	var btn_top := top + TOP_HEIGHT + 8.0
+	pause_button.offset_right = -right - 8.0
+	pause_button.offset_left = pause_button.offset_right - PAUSE_SIZE
+	pause_button.offset_top = btn_top
+	pause_button.offset_bottom = btn_top + PAUSE_SIZE
+	cancel_build_button.offset_right = pause_button.offset_left - 8.0
+	cancel_build_button.offset_left = cancel_build_button.offset_right - CANCEL_WIDTH
+	cancel_build_button.offset_top = btn_top
+	cancel_build_button.offset_bottom = btn_top + MIN_TOUCH
 
 func setup_ui():
 	# RightPanel 플레이어 버튼들 초기화 (고정 미니맵)
@@ -143,6 +184,8 @@ func setup_ui():
 	_create_confirm_dialog()
 	_create_skill_banner()
 	_create_game_over_screen()
+	_create_pause_ui()
+	_create_alerts()
 
 ## 위쪽 UI 줄 아래로 내려오는 넓은 화면. 몬스터 배럭과 업그레이드 화면이 여기에 뜬다
 ## (좁은 왼쪽 칸에 몰아 넣으면 폰에서 버튼이 너무 작아서, 화면 폭 전체를 쓴다. 맵 위에 겹치고 닫으면 사라진다)
@@ -648,20 +691,28 @@ func _on_minimap_gui_input(event: InputEvent, button: Button, lane_index: int):
 	game_field.scroll_to_row(row)
 
 func _create_hud():
-	# 하단 상태 표시줄 (골드/생명/보스). 입력은 통과시킨다.
+	# 맵 아래의 별도 메시지 영역 (골드/생명/보스는 위쪽 상태 패널). 맵은 이 영역만큼 줄어들어서 맵을 가리지 않는다.
+	# 높이가 고정이라 타워를 고르거나 풀어도 맵 크기가 바뀌지 않는다. 내용이 넘치면 위아래로 밀어서 본다.
 	var panel := PanelContainer.new()
-	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	panel.z_index = 100  # 타워/몬스터/이펙트(z_index 1~4)보다 항상 위에 그린다
-	panel.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
-	panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	panel.custom_minimum_size = Vector2(0, BOTTOM_HEIGHT)
+	var hud_style := StyleBoxFlat.new()
+	hud_style.bg_color = Color(0.1, 0.1, 0.14)
+	hud_style.border_color = Color(0.35, 0.35, 0.45)
+	hud_style.border_width_top = 2
+	hud_style.set_content_margin_all(6)
+	panel.add_theme_stylebox_override("panel", hud_style)
+	$VBoxContainer.add_child(panel)  # GameField 다음 = 맨 아래 줄
+	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	panel.add_child(scroll)
 	hud_label = Label.new()
 	hud_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hud_label.add_theme_font_size_override("font_size", FONT_SMALL)
 	hud_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	hud_label.custom_minimum_size = Vector2(540, 0)
+	hud_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var box := VBoxContainer.new()
-	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	panel.add_child(box)
+	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(box)
 	box.add_child(hud_label)
 
 	# 선택한 타워 정보 (타워를 선택했을 때만 보인다). 진화 버튼 2개는 정보 아래 별도 줄에 반반씩 놓는다
@@ -675,7 +726,7 @@ func _create_hud():
 	tower_info_label.add_theme_font_size_override("font_size", FONT_SMALL)
 	tower_info_label.add_theme_color_override("font_color", Color(1.0, 1.0, 0.6))
 	tower_info_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	tower_info_label.custom_minimum_size = Vector2(540, 0)
+	tower_info_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	tower_info_row.add_child(tower_info_label)
 	evolve_row = HBoxContainer.new()
 	evolve_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -705,7 +756,6 @@ func _create_hud():
 	game_field.ui_blockers.append(tower_info_row)  # 버튼을 눌렀을 때 뒤의 맵이 클릭되지 않도록
 
 	hud_panel = panel
-	add_child(panel)
 
 	# 시작 버튼: 누르기 전에는 시간도 수입도 몬스터도 멈춰 있어서 미리 타워를 지어 둘 수 있다
 	start_button = Button.new()
@@ -726,8 +776,8 @@ func _create_hud():
 	cancel_build_button.z_index = 95
 	cancel_build_button.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
 	cancel_build_button.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	cancel_build_button.offset_left = -190
-	cancel_build_button.offset_right = -8
+	cancel_build_button.offset_left = -190 - PAUSE_SIZE - 8.0  # 오른쪽 끝은 일시정지 버튼 자리
+	cancel_build_button.offset_right = -8.0 - PAUSE_SIZE - 8.0
 	cancel_build_button.offset_top = TOP_HEIGHT + 8.0
 	cancel_build_button.offset_bottom = TOP_HEIGHT + 8.0 + MIN_TOUCH
 	cancel_build_button.pressed.connect(func(): game_field.set_current_tool(GameField.PlacementTool.NONE))
@@ -913,6 +963,10 @@ func _create_game_over_screen() -> void:
 
 
 func _connect_boss(boss: BossController) -> void:
+	var my_lane: LaneController = game_field.lanes.get(game_field.local_player_id)
+	if my_lane != null:
+		_prev_lives = my_lane.lives
+		my_lane.lives_changed.connect(_on_lives_changed)
 	boss.boss_defeated.connect(_on_boss_defeated)
 	boss.boss_failed.connect(_on_boss_failed)
 	boss.skill_announced.connect(_on_skill_announced)
@@ -948,6 +1002,77 @@ func _create_skill_banner() -> void:
 	add_child(skill_banner)
 
 
+## 경고 연출 노드 만들기 (둘 다 입력을 통과시키고, 평소에는 보이지 않는다)
+func _create_alerts() -> void:
+	life_flash = ColorRect.new()
+	life_flash.color = Color(1.0, 0.1, 0.1, 0.0)
+	life_flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	life_flash.z_index = 120  # 배너(110)보다 위, 일시정지(500)/승패 화면(1000)보다 아래
+	add_child(life_flash)
+	life_flash.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	time_warning = PanelContainer.new()
+	time_warning.visible = false
+	time_warning.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	time_warning.z_index = 115
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.2, 0.03, 0.03, 0.93)
+	style.border_color = Color(1.0, 0.3, 0.2)
+	style.set_border_width_all(4)
+	style.set_corner_radius_all(10)
+	style.set_content_margin_all(18)
+	time_warning.add_theme_stylebox_override("panel", style)
+	time_warning_label = Label.new()
+	time_warning_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	time_warning_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	time_warning_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	time_warning_label.custom_minimum_size = Vector2(380, 0)
+	time_warning_label.add_theme_font_size_override("font_size", 28)
+	time_warning_label.add_theme_color_override("font_color", Color(1.0, 0.85, 0.7))
+	time_warning.add_child(time_warning_label)
+	add_child(time_warning)
+	time_warning.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	time_warning.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	time_warning.grow_vertical = Control.GROW_DIRECTION_BOTH
+
+
+## 내 레인의 생명이 줄면 화면을 붉게 두 번 깜빡인다 (보라 보너스로 늘어날 때는 깜빡이지 않는다)
+func _on_lives_changed(lives: int) -> void:
+	var lost := lives < _prev_lives
+	_prev_lives = lives
+	if lost:
+		_flash_life_loss()
+
+
+func _flash_life_loss() -> void:
+	if _life_flash_tween != null:
+		_life_flash_tween.kill()
+	life_flash.color.a = 0.0
+	_life_flash_tween = create_tween()
+	for i in range(2):
+		_life_flash_tween.tween_property(life_flash, "color:a", 0.4, 0.07)
+		_life_flash_tween.tween_property(life_flash, "color:a", 0.0, 0.2)
+
+
+## 보스 제한시간이 30초 이하로 남으면 레벨마다 한 번 화면 가운데에 알린다
+func _check_boss_time_warning(boss: BossController) -> void:
+	if boss.state != BossController.State.RUNNING or boss.level == _warned_level:
+		return
+	if boss.time_left > BOSS_TIME_WARNING:
+		return
+	_warned_level = boss.level
+	time_warning_label.text = "보스 제한시간 %d초 남았습니다!
+제한시간이 끝나면 패배합니다" % int(BOSS_TIME_WARNING)
+	time_warning.visible = true
+	time_warning.modulate.a = 1.0
+	if _time_warning_tween != null:
+		_time_warning_tween.kill()
+	_time_warning_tween = create_tween()
+	_time_warning_tween.tween_interval(TIME_WARNING_SECONDS - 0.5)
+	_time_warning_tween.tween_property(time_warning, "modulate:a", 0.0, 0.5)
+	_time_warning_tween.tween_callback(func(): time_warning.visible = false)
+
+
 func _on_skill_announced(info: Dictionary) -> void:
 	_banner_queue.append(info)
 
@@ -974,7 +1099,8 @@ func _show_skill_banner(info: Dictionary) -> void:
 	_alert_minimaps(info.lane, _banner_left)
 	# 맵 영역 맨 위, 좌우 8px 안쪽에 맞춘다
 	var rect := game_field.get_global_rect()
-	skill_banner.custom_minimum_size = Vector2(maxf(rect.size.x - 16.0, 200.0), 0.0)
+	var right_gap := PAUSE_SIZE + 8.0  # 오른쪽 위 일시정지 버튼을 가리지 않게 그만큼 비킨다
+	skill_banner.custom_minimum_size = Vector2(maxf(rect.size.x - 16.0 - right_gap, 200.0), 0.0)
 	skill_banner.size = Vector2(skill_banner.custom_minimum_size.x, 0.0)  # 높이는 글 길이에 맞게 알아서 정해진다
 	skill_banner.global_position = rect.position + Vector2(8.0, 6.0)
 	skill_banner.visible = true
@@ -1003,6 +1129,7 @@ func _alert_minimaps(lane: String, seconds: float) -> void:
 
 ## 게임이 끝나면 남은 알림을 지운다
 func _clear_skill_banner() -> void:
+	time_warning.visible = false
 	_banner_queue.clear()
 	_banner_left = 0.0
 	skill_banner.visible = false
@@ -1039,9 +1166,169 @@ class StatusIcon extends Control:
 func _on_start_pressed():
 	game_field.start_game()
 	start_button.visible = false
-	_play_start_time = Time.get_ticks_msec() / 1000.0
+	_play_running = true
+
+
+## 일시정지 버튼(맵 왼쪽 위)과 일시정지 화면
+func _create_pause_ui() -> void:
+	pause_button = Button.new()
+	pause_button.z_index = 85  # 몬스터/업그레이드 화면(90)에는 가려지고, 타워/몬스터(1~4)보다는 위
+	pause_button.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)  # 오른쪽 위 미니맵 바로 아래
+	pause_button.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	pause_button.offset_left = -8.0 - PAUSE_SIZE
+	pause_button.offset_right = -8.0
+	pause_button.offset_top = TOP_HEIGHT + 8.0
+	pause_button.offset_bottom = TOP_HEIGHT + 8.0 + PAUSE_SIZE
+	pause_button.tooltip_text = "일시정지 (P / Esc)"
+	pause_button.focus_mode = Control.FOCUS_NONE  # 스페이스/엔터가 이 버튼을 누르지 않게
+	pause_button.pressed.connect(_toggle_pause)
+	var icon := PauseIcon.new()
+	pause_button.add_child(icon)
+	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	add_child(pause_button)
+	game_field.ui_blockers.append(pause_button)
+
+	pause_overlay = PauseOverlay.new()
+	add_child(pause_overlay)
+	pause_overlay.resume_requested.connect(func(): _set_paused(false))
+	pause_overlay.restart_requested.connect(reset_game)
+	pause_overlay.quit_requested.connect(func(): get_tree().quit())
+	game_field.ui_blockers.append(pause_overlay)
+
+
+func _toggle_pause() -> void:
+	_set_paused(not get_tree().paused)
+
+
+func _set_paused(on: bool) -> void:
+	if on == get_tree().paused:
+		return
+	if on:
+		# 끝난 게임, 길 막힘 확인창이 떠 있을 때는 멈추지 않는다 (확인창은 멈춘 화면에서 눌리지 않아 갇힌다)
+		if game_over_screen.visible or confirm_dialog.visible:
+			return
+		_paused_at_ms = Time.get_ticks_msec()
+	else:
+		Monster.pause_offset_ms += Time.get_ticks_msec() - _paused_at_ms
+	get_tree().paused = on
+	pause_overlay.show_menu(on)
+	Log.info(Log.Category.GAME, "일시정지 %s" % ("켬" if on else "끔"))
+
+
+## 승리/패배 화면이 아니고 시작 버튼도 눌렀을 때만 일시정지 버튼을 보인다 (시작 전에는 시간이 안 흐른다)
+func _refresh_pause_button() -> void:
+	pause_button.visible = _play_running and not game_over_screen.visible
+
+
+## 일시정지 버튼 아이콘 (막대 두 개. 글꼴에 일시정지 기호가 없을 수 있어 직접 그린다)
+class PauseIcon extends Control:
+	func _init() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	func _draw() -> void:
+		var bar := Vector2(size.x * 0.16, size.y * 0.46)
+		var top := (size.y - bar.y) * 0.5
+		draw_rect(Rect2(Vector2(size.x * 0.5 - bar.x * 1.6, top), bar), Color.WHITE)
+		draw_rect(Rect2(Vector2(size.x * 0.5 + bar.x * 0.6, top), bar), Color.WHITE)
+
+
+## 일시정지 화면: 게임이 멈춘 동안에도 눌리고 키를 받아야 하므로 PROCESS_MODE_ALWAYS.
+## 다시 시작/종료는 진행 상황이 사라지므로 한 번 더 눌러야 실행된다.
+class PauseOverlay extends Control:
+	signal resume_requested
+	signal restart_requested
+	signal quit_requested
+
+	var restart_button: Button
+	var quit_button: Button
+	var _armed: Button = null  # 한 번 눌러서 "정말?" 상태인 버튼
+
+	func _init() -> void:
+		process_mode = Node.PROCESS_MODE_ALWAYS
+		visible = false
+		z_index = 500  # 시작 버튼(101)·배너(110)보다 위, 승리/패배 화면(1000)보다 아래
+		mouse_filter = Control.MOUSE_FILTER_STOP  # 뒤의 맵/버튼이 눌리지 않게
+
+	func _ready() -> void:
+		set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		var dim := ColorRect.new()
+		dim.color = Color(0, 0, 0, 0.65)
+		dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(dim)
+		dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		var center := CenterContainer.new()
+		center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(center)
+		center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		var panel := PanelContainer.new()
+		var style := StyleBoxFlat.new()
+		style.bg_color = Color(0.1, 0.1, 0.15, 0.95)
+		style.border_color = Color(0.4, 0.4, 0.5)
+		style.set_border_width_all(3)
+		style.set_corner_radius_all(8)
+		style.set_content_margin_all(24)
+		panel.add_theme_stylebox_override("panel", style)
+		panel.custom_minimum_size = Vector2(340, 0)
+		center.add_child(panel)
+		var box := VBoxContainer.new()
+		box.add_theme_constant_override("separation", 14)
+		panel.add_child(box)
+		var title := Label.new()
+		title.text = "일시정지"
+		title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		title.add_theme_font_size_override("font_size", 32)
+		box.add_child(title)
+		var resume := _make_button("계속하기")
+		resume.pressed.connect(func(): resume_requested.emit())
+		box.add_child(resume)
+		restart_button = _make_button("다시 시작")
+		restart_button.pressed.connect(_on_confirmable_pressed.bind(restart_button, "다시 시작", restart_requested))
+		box.add_child(restart_button)
+		quit_button = _make_button("종료")
+		quit_button.pressed.connect(_on_confirmable_pressed.bind(quit_button, "종료", quit_requested))
+		box.add_child(quit_button)
+
+	func _make_button(text: String) -> Button:
+		var b := Button.new()
+		b.text = text
+		b.custom_minimum_size = Vector2(0, 60)  # 폰: 터치하기 쉬운 높이
+		b.add_theme_font_size_override("font_size", 22)
+		return b
+
+	func _on_confirmable_pressed(b: Button, label: String, sig: Signal) -> void:
+		if _armed == b:
+			_disarm()
+			sig.emit()
+			return
+		_disarm()
+		_armed = b
+		b.text = "%s? 한 번 더 누르세요" % label
+
+	func _disarm() -> void:
+		if _armed == restart_button:
+			restart_button.text = "다시 시작"
+		elif _armed == quit_button:
+			quit_button.text = "종료"
+		_armed = null
+
+	func show_menu(on: bool) -> void:
+		_disarm()
+		visible = on
+
+	func _input(event: InputEvent) -> void:
+		if visible and event is InputEventKey and event.pressed and not event.echo \
+				and (event.keycode == KEY_ESCAPE or event.keycode == KEY_P):
+			resume_requested.emit()
+			get_viewport().set_input_as_handled()
+
+	func _notification(what: int) -> void:
+		if what == NOTIFICATION_WM_GO_BACK_REQUEST and visible:  # 폰의 뒤로 가기 = 계속하기
+			resume_requested.emit()
+
 
 func _process(delta):
+	if _play_running and not game_over_screen.visible:
+		_play_time += delta
 	_flash_time -= delta
 	_update_skill_banner(delta)
 	_hud_timer -= delta
@@ -1063,6 +1350,8 @@ func _update_hud():
 
 	_update_status_panel(lane, boss)
 	_refresh_tower_highlight()
+	_refresh_pause_button()
+	_check_boss_time_warning(boss)
 
 	# 하단 메시지: 상태, 그리고 보스 정보는 보스 레인을 보고 있을 때만 (다른 건 왼쪽 위 상태 패널로 옮겼다)
 	var lines: Array[String] = []
@@ -1086,7 +1375,6 @@ func _update_hud():
 		lines.append(_flash_text)
 	hud_label.text = "\n".join(lines)
 	hud_label.visible = not lines.is_empty()
-	hud_panel.visible = hud_label.visible or tower_info_row.visible
 	cancel_build_button.visible = game_field.current_tool == GameField.PlacementTool.TOWER and not sheet.visible
 
 func _update_tower_info(lane: LaneController):
@@ -1198,12 +1486,18 @@ func _input(event):
 		match event.keycode:
 			KEY_R:
 				reset_game()
-			KEY_ESCAPE:
-				get_tree().quit()
+			KEY_ESCAPE, KEY_P:
+				_toggle_pause()  # 종료는 일시정지 화면의 [종료] 버튼으로
 
-## 폰의 뒤로 가기: 열린 화면 닫기 -> 건설 모드 끄기 -> 타워 선택 해제 -> 그래도 없으면 종료
+## 폰의 뒤로 가기: 열린 화면 닫기 -> 건설 모드 끄기 -> 타워 선택 해제 -> 그래도 없으면 일시정지 화면
+## (일시정지 중의 뒤로 가기는 PauseOverlay가 "계속하기"로 처리한다)
+## 앱이 백그라운드로 가거나 창이 포커스를 잃으면 진행 중인 게임을 자동으로 멈춘다.
 func _notification(what: int) -> void:
-	if what != NOTIFICATION_WM_GO_BACK_REQUEST:
+	if what == NOTIFICATION_APPLICATION_PAUSED or what == NOTIFICATION_WM_WINDOW_FOCUS_OUT:
+		if _play_running and pause_overlay != null:
+			_set_paused(true)
+		return
+	if what != NOTIFICATION_WM_GO_BACK_REQUEST or get_tree().paused:
 		return
 	if monster_view.visible:
 		_show_view("monster")
@@ -1213,12 +1507,16 @@ func _notification(what: int) -> void:
 		game_field.set_current_tool(GameField.PlacementTool.NONE)
 	elif game_field.get_selected_tower() != null:
 		game_field.select_tower(null)
+	elif _play_running:
+		_set_paused(true)
 	else:
-		get_tree().quit()
+		get_tree().quit()  # 시작 전에는 바로 종료
 
 
 func reset_game():
 	Log.info(Log.Category.GAME, "게임 리셋")
+	if get_tree().paused:
+		_set_paused(false)  # 멈춘 채로 다시 불러오면 새 장면도 멈춰 있다
 	get_tree().reload_current_scene()
 
 # 버튼 클릭 이벤트 핸들러들
@@ -1321,8 +1619,8 @@ func _collect_game_stats(is_victory: bool) -> Dictionary:
 		stats.total_boss_levels = BossLevels.COUNT
 
 	# 플레이 시간
-	if _play_start_time > 0.0:
-		stats.play_time = Time.get_ticks_msec() / 1000.0 - _play_start_time
+	if _play_running:
+		stats.play_time = _play_time
 
 	if lane:
 		# 타워 통계

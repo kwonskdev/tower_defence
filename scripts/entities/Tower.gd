@@ -296,7 +296,7 @@ func _fire_volley(target: Monster, power: float = 1.0) -> void:
 
 
 func _second_volley() -> void:
-	await get_tree().create_timer(0.18).timeout
+	await get_tree().create_timer(0.18, false).timeout  # false: 일시정지 중에는 멈춘다
 	if not is_instance_valid(self) or lane == null or not lane.active:
 		return
 	var t := lane.find_target(center_cell_pos(), cur_range(), kind.anti_air)
