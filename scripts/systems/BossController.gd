@@ -464,7 +464,7 @@ func _dispatch_wave() -> void:
 		for i in range(count):
 			if not first:
 				var gap := Balance.WAVE_SPAWN_GAP if i > 0 else Balance.WAVE_GROUP_GAP
-				await get_tree().create_timer(gap).timeout  # 촘촘하게 연달아 나온다 (묶음 사이는 조금 더 띄운다)
+				await get_tree().create_timer(gap, false).timeout  # (false: 일시정지 중에는 멈춘다) 촘촘하게 연달아 나온다 (묶음 사이는 조금 더 띄운다)
 				if state != State.RUNNING:
 					return
 			first = false
@@ -749,7 +749,7 @@ func _spawn_slimelings(skill: Dictionary, cells: Dictionary) -> void:
 			Effects.ring(_renderer, Vector2(cell) + Vector2(0.5, 0.5), 1.0, wave_type.color, lane.lane_visible)
 	for i in range(int(skill.count)):
 		if i > 0:
-			await get_tree().create_timer(Balance.WAVE_SPAWN_GAP).timeout
+			await get_tree().create_timer(Balance.WAVE_SPAWN_GAP, false).timeout  # false: 일시정지 중에는 멈춘다
 			if state != State.RUNNING:
 				return
 		for lane in _lanes.values():
