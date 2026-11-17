@@ -229,7 +229,7 @@ func _create_monster_type_view() -> void:
 		var b := Button.new()
 		b.text = info.name
 		b.clip_text = true  # 글자가 길어도 칸 폭을 넘겨서 옆 칸을 밀어내지 않게 한다
-		b.add_theme_font_size_override("font_size", FONT_TINY)
+		b.add_theme_font_size_override("font_size", 13)  # 600px 화면에서 칸 폭이 약 45px라 14px(글자 폭 42)는 좌우가 잘린다
 		b.add_theme_color_override("font_color", info.color)
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		b.size_flags_vertical = Control.SIZE_EXPAND_FILL
