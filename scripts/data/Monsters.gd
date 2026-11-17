@@ -184,41 +184,21 @@ static func _can_pick(id: String, level: int, flying_only: bool) -> bool:
 		and (not flying_only or bool(d.get("flying", false)))
 
 
-## 마우스를 올렸을 때 / 누른 뒤 보여줄 상세 설명
+## 몬스터를 골랐을 때 하단에 보여줄 설명: 이름 / 한 줄 설명(이동 속도·공중 여부 포함) / 수치 한 줄
 static func tooltip(kind_id: String) -> String:
 	var d: Dictionary = DATA[kind_id]
 	var cat: Dictionary = CATEGORY_DATA[d.category]
-	var lines: Array[String] = []
-	lines.append("%s (%s%s)   [%d골드]" % [d.name, cat.name, " · " + d.family if d.has("family") else "", d.cost])
-	if d.income > 0:
-		lines.append("수입 +%d / %.0f초  (본전 회수 약 %d초)" % [d.income, Balance.INCOME_INTERVAL, ceili(float(d.cost) / d.income * Balance.INCOME_INTERVAL)])
-	else:
-		lines.append("수입 증가 없음")
-	var stat := "체력 %s / 이동 속도 %.1f칸/초" % [_num(max_hp(kind_id)), d.speed]
-	if d.dps > 0.0:
-		stat += " / 공격력 초당 %s (보스·타워 공통)" % _num(d.dps)
-	else:
-		stat += " / 공격 안 함"
-	lines.append(stat)
-	var extra: Array[String] = []
-	if d.get("armor", 0.0) > 0.0:
-		extra.append("방어력 %.2f (한 발 피해 감소)" % d.armor)
-	if d.get("regen", 0.0) > 0.0:
-		extra.append("재생 초당 %d%%" % roundi(d.regen * 100.0))
-	if d.get("flying", false):
-		extra.append("공중")
-	if d.get("life", 1) > 1:
-		extra.append("기지 생명 -%d" % d.life)
-	if not extra.is_empty():
-		lines.append(" / ".join(extra))
-	if d.has("ramp"):
-		lines.append("성장: 초당 +%.2f (최대 +%.0f)" % [d.ramp, d.ramp_cap])
-	if d.has("aura_bonus"):
-		lines.append("지원: 반경 %.1f칸 아군 +%d%%" % [d.aura_radius, int(d.aura_bonus * 100.0)])
-	lines.append(d.desc)
+	var desc: String = d.desc
+	if d.get("flying", false) and not desc.contains("공중") and not desc.contains("비행"):
+		desc += " 공중으로 온다."
+	if not (desc.contains("빠") or desc.contains("느리") or desc.contains("도착")):
+		desc += " 이동 %s." % ("빠름" if d.speed >= 4.0 else ("느림" if d.speed <= 2.0 else "보통"))
+	var atk := "공격 %s" % _num(d.dps) if d.dps > 0.0 else "공격 없음"
+	var text := "%s (%s%s)\n%s\n비용 %d · 수입 +%d · %s · 체력 %s" % [
+		d.name, cat.name, " · " + d.family if d.has("family") else "", desc, d.cost, d.income, atk, _num(max_hp(kind_id))]
 	if not can_send_in_pve(kind_id):
-		lines.append("※ 협력(PvE)에서는 만들 수 없음 (보스가 보낸다)")
-	return "\n".join(lines)
+		text += "\n협력에서는 만들 수 없음"
+	return text
 
 
 static func _num(v: float) -> String:

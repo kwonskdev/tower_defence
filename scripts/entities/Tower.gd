@@ -163,16 +163,13 @@ func color_bonus_text() -> String:
 	var lv := lane.color_level(cname)
 	var type: String = Balance.COLOR_BONUS_TYPES[cname]
 	if lv == 0:
-		return "색깔 %s Lv0: %s -" % [cname, Balance.COLOR_BONUS_LABELS[type]]
-	var text := "색깔 %s Lv%d: %s %s" % [cname, lv, Balance.COLOR_BONUS_LABELS[type], Balance.color_bonus_value_text(cname, lv)]
-	var label := "같은 색 연결 %d개" if kind.blocks else "옆 같은 색 군집 %d개"
-	text += "\n" + label % lane.cluster_size(self) + ": 효과 +%s%%" % String.num((lane.cluster_multiplier(self) - 1.0) * 100.0, 2)
+		return "%s Lv0" % cname
+	var text := "%s Lv%d · %s %s" % [cname, lv, Balance.COLOR_BONUS_LABELS[type], Balance.color_bonus_value_text(cname, lv)]
+	text += " · 군집 %d개 +%s%%" % [lane.cluster_size(self), String.num((lane.cluster_multiplier(self) - 1.0) * 100.0, 2)]
 	if type == "damage" and evolution == "skill":
-		text += " (스킬형은 공격력이 없어 효과 없음)"
+		text += " (스킬형은 효과 없음)"
 	return text
 
-
-## 방어력 관통 비율 (파랑 색깔 보너스). Monster.take_damage가 맞은 타워에게 물어본다.
 func armor_penetration() -> float:
 	return minf(lane.color_bonus_value("파랑", self), 0.95) if color_info.name == "파랑" else 0.0
 

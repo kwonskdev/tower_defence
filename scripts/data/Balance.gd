@@ -20,22 +20,22 @@ const TOWER_DEFS := {
 	"long": {
 		"name": "장거리", "cost": 4, "range": 5.5, "damage": 0.2, "cooldown": 1.4, "splash": 0.0,
 		"blocks": true, "anti_air": false, "color": Color(0.35, 0.75, 1.0),
-		"desc": "사정거리가 길지만 공격속도가 느리다. 진화 전에는 거의 못 잡는다: 미로를 만드는 벽 용도. 적을 잡는 건 범위/트랩 몫이고, 진화하면 한 발이 훨씬 강해진다.",
+		"desc": "사거리가 길고 느리다. 진화 전엔 길을 막는 벽, 진화하면 한 발이 강해진다.",
 	},
 	"splash": {
 		"name": "범위", "cost": 7, "range": 3.0, "damage": 0.4, "cooldown": 0.7, "splash": 1.5,
 		"blocks": true, "anti_air": false, "color": Color(0.45, 0.9, 0.45),
-		"desc": "나머지는 평범하지만 공격이 폭발해서 주변 적에게 모두 들어간다.",
+		"desc": "공격이 폭발해서 주변 적에게 모두 들어간다.",
 	},
 	"air": {
 		"name": "대공", "cost": 6, "range": 3.5, "damage": 0.7, "cooldown": 0.7, "splash": 0.0,
 		"blocks": true, "anti_air": true, "color": Color(1.0, 0.55, 0.85),
-		"desc": "지상을 공격하지 못하는 대신 공중 몬스터를 공격한다.",
+		"desc": "공중 몬스터만 공격한다 (지상은 못 때림).",
 	},
 	"trap": {
 		"name": "트랩", "cost": 5, "range": 1.8, "damage": 0.7, "cooldown": 0.4, "splash": 0.0,
 		"blocks": false, "anti_air": false, "color": Color(0.9, 0.85, 0.3),
-		"desc": "길을 막지 못하고 사거리도 짧지만, 한 발이 강력하고 공격이 빠르다.",
+		"desc": "길을 막지 못하고 사거리가 짧지만 강하고 빠르다.",
 	},
 }
 
@@ -116,22 +116,19 @@ static func color_bonus_value_text(color_name: String, level: int) -> String:
 ## 색깔 보너스 설명 (마우스를 올렸을 때)
 static func color_tooltip(color_name: String, level: int) -> String:
 	var type: String = COLOR_BONUS_TYPES[color_name]
-	var text := "%s: %s (이 색 타워에 적용, 레인 전체 공유)\n" % [color_name, COLOR_BONUS_LABELS[type]]
-	text += "같은 색 타워가 상하좌우로 N개 이어지면 효과 +%s%% (곱연산). 군집 옆의 같은 색 트랩도 같은 효과를 받는다.\n" % String.num(CLUSTER_BONUS_PER_TOWER * 100.0, 2)
-	if type == "lifegain":
-		text += "성공하면 생명을 1이 아니라 군집 배율만큼 얻는다 (소수로 쌓이고 화면엔 내림).\n"
+	var effect := ""
 	match type:
-		"damage": text += "이 색 타워의 공격력이 오른다."
-		"cooldown": text += "이 색 타워의 공격 간격이 짧아진다."
-		"range": text += "이 색 타워의 사거리가 늘어난다."
-		"income": text += "이 색 타워가 처치한 몬스터의 골드 보상이 늘어난다."
-		"penetration": text += "이 색 타워의 공격이 적 방어력의 일부를 무시한다."
-		"empower": text += "이 색 타워가 적을 처치하면 내가 보낸 몬스터 N마리가 %d초간 공격력 +%d%% (같은 몬스터에게 겹치면 효과가 쌓인다)." % [
-			roundi(EMPOWER_DURATION), roundi(EMPOWER_BOOST * 100.0)]
-		"lifegain": text += "이 색 타워가 적을 처치하면 확률로 생명 +1."
-	text += "\n현재 %s" % color_bonus_value_text(color_name, level)
+		"damage": effect = "공격력이 오른다."
+		"cooldown": effect = "공격 간격이 짧아진다."
+		"range": effect = "사거리가 늘어난다."
+		"income": effect = "처치 골드가 늘어난다."
+		"penetration": effect = "적 방어력을 일부 무시한다."
+		"empower": effect = "처치하면 내 몬스터 몇 마리가 %d초간 공격력 +%d%%." % [roundi(EMPOWER_DURATION), roundi(EMPOWER_BOOST * 100.0)]
+		"lifegain": effect = "처치하면 확률로 생명 +1."
+	var text := "%s · %s\n이 색 타워는 %s 같은 색이 붙을수록 더 강해진다.\n현재 %s" % [
+		color_name, COLOR_BONUS_LABELS[type], effect, color_bonus_value_text(color_name, level)]
 	if level < COLOR_MAX_LEVEL:
-		text += " -> 다음 %s" % color_bonus_value_text(color_name, level + 1)
+		text += " → 다음 %s" % color_bonus_value_text(color_name, level + 1)
 	return text
 
 
@@ -169,22 +166,8 @@ static func tower_kind(kind_id: String) -> Dictionary:
 
 ## 마우스를 올렸을 때 보여줄 타워 상세 설명
 static func tower_tooltip(kind: Dictionary) -> String:
-	var lines: Array[String] = []
-	lines.append("%s 타워   [%d골드]" % [kind.name, kind.cost])
-	lines.append(kind.desc)
-	lines.append("사거리 %.1f칸 / 한 발 %.2f / %.2f초마다 발사 (초당 %.2f)" % [
-		kind.range, kind.damage, kind.cooldown, kind.damage / kind.cooldown])
-	if kind.splash > 0.0:
-		lines.append("- 폭발 범위 %.1f칸 안의 적을 모두 공격" % kind.splash)
-	if not kind.blocks:
-		lines.append("- 길을 막지 못함 (몬스터가 위로 지나감)")
-	if kind.anti_air:
-		lines.append("- 공중 몬스터만 공격 (지상 몬스터는 공격 불가)")
-	else:
-		lines.append("- 지상 몬스터만 공격 (공중 몬스터는 공격 불가)")
-	lines.append("지은 뒤 클릭해서 진화 계열을 고를 수 있다: %s" % " / ".join(
-		Evolutions.TREE[kind.id].map(func(e): return Evolutions.DATA[e].name)))
-	return "\n".join(lines)
+	return "%s 타워 · %d골드\n%s\n사거리 %.1f · 피해 %.1f · %.2f초마다" % [
+		kind.name, kind.cost, kind.desc, kind.range, kind.damage, kind.cooldown]
 
 
 # --- 웨이브 ---

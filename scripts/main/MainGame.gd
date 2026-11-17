@@ -694,56 +694,41 @@ func _explain_text(lane: LaneController) -> String:
 	match _view:
 		"tower":
 			if game_field.current_tool == GameField.PlacementTool.TOWER:
-				return "%s\n맵의 빈 타일을 누르면 이 타워를 짓습니다. 다시 누르거나 ← 를 누르면 건설을 끝냅니다." % Balance.tower_tooltip(Balance.tower_kind(game_field.selected_tower_kind))
-			return "지을 타워를 고르세요. 고른 뒤 맵의 빈 타일을 누르면 지어집니다."
+				return "%s\n맵의 빈 타일을 눌러 건설" % Balance.tower_tooltip(Balance.tower_kind(game_field.selected_tower_kind))
+			return "지을 타워를 고르세요."
 		"monster":
-			return "몬스터 유형을 고르세요.\n보스가 보내는 몬스터도 여기서 볼 수 있습니다."
+			return "몬스터 유형을 고르세요."
 		"monster_kinds":
 			if _sel_monster == "":
-				if _monster_category in Monsters.PVE_SENDABLE:
-					return "몬스터를 고르면 설명이 나옵니다.\n오른쪽 아래 [생성] 버튼을 누를 때마다 1마리씩 보냅니다."
-				return "%s: 협력에서는 만들 수 없는 유형입니다 (회색).\n고르면 설명만 나옵니다." % Monsters.CATEGORY_DATA[_monster_category].name
-			var text := Monsters.tooltip(_sel_monster)
-			if Monsters.can_send_in_pve(_sel_monster):
-				return text + "\n[생성] 버튼을 누를 때마다 1마리씩 보냅니다 (%d골드)." % Monsters.DATA[_sel_monster].cost
-			return text + "\n(협력에서는 만들 수 없는 몬스터입니다)"
+				return "몬스터를 고르세요." if _monster_category in Monsters.PVE_SENDABLE else "협력에서는 볼 수만 있는 유형입니다."
+			return Monsters.tooltip(_sel_monster)
 		"tower_sel":
 			var t := game_field.get_selected_tower()
 			if t == null or _tower_pick == "":
 				return "진화를 고르세요." if t != null and (t.can_evolve() or (t.evolution != "" and not t.b_learned)) else ""
 			if _tower_pick == "B":
-				return "B 진화 - %s" % Evolutions.skill_text(t.evolution, "B", lane.levels_of(t.evolution))
-			var bonus := "한 발 피해 x%.1f. " % Evolutions.DAMAGE_MULT[_tower_pick] if Evolutions.DAMAGE_MULT.has(_tower_pick) else ""
-			return "%s 진화 - %s%s" % [Evolutions.evo_name(_tower_pick), bonus, Evolutions.skill_text(_tower_pick, "A", lane.levels_of(_tower_pick))]
+				return "B 진화\n%s" % Evolutions.skill_text(t.evolution, "B", lane.levels_of(t.evolution))
+			var bonus := " · 한 발 피해 x%.1f" % Evolutions.DAMAGE_MULT[_tower_pick] if Evolutions.DAMAGE_MULT.has(_tower_pick) else ""
+			return "%s 진화%s\n%s" % [Evolutions.evo_name(_tower_pick), bonus, Evolutions.skill_text(_tower_pick, "A", lane.levels_of(_tower_pick))]
 		"upgrade":
-			return "업그레이드 종류를 고르세요."
+			return "종류를 고르세요."
 		"evos":
-			return "계열을 고르면 그 계열의 업그레이드 항목이 나옵니다."
+			return "계열을 고르세요."
 		"detail":
 			if _sel.size() == 4 and _sel[1] == "stat":
 				var evo: String = _sel[0]
 				var stat := _find_stat(evo, _sel[2], _sel[3])
 				var lv := lane.stat_level(evo, stat.s, stat.k)
-				var text := "%s - %s: %s" % [Evolutions.evo_name(evo), _sel[2], Evolutions.skill_text(evo, _sel[2], lane.levels_of(evo))]
-				if _sel[2] == "B":
-					text += "\n(B 스킬을 배운 타워에만 효과가 있다)"
+				var text := Evolutions.skill_text(evo, _sel[2], lane.levels_of(evo))
 				if lv >= Evolutions.MAX_LEVEL:
-					text += "\n[%s] 이미 최대 레벨입니다." % stat.name
-				else:
-					text += "\n[%s] Lv%d → Lv%d: %s → %s (%d골드)\n[업그레이드] 버튼을 누르면 이 계열 모든 타워가 강해집니다." % [
-						stat.name, lv, lv + 1, Evolutions.stat_value_text(evo, stat, lv), Evolutions.stat_value_text(evo, stat, lv + 1),
-						lane.stat_upgrade_cost(evo, stat.s, stat.k)]
-				return text
-			return "%s\n항목을 고르면 자세한 설명이 나옵니다." % Evolutions.tooltip(_detail_evo)
+					return "%s\n%s 최대 레벨" % [text, stat.name]
+				return "%s\n%s Lv%d → Lv%d: %s → %s" % [text, stat.name, lv, lv + 1,
+					Evolutions.stat_value_text(evo, stat, lv), Evolutions.stat_value_text(evo, stat, lv + 1)]
+			return Evolutions.tooltip(_detail_evo)
 		"colors":
 			if _sel.size() == 4 and _sel[1] == "color":
-				var cname: String = _sel[0]
-				var cost := lane.color_upgrade_cost(cname)
-				var text := Balance.color_tooltip(cname, lane.color_level(cname))
-				if cost < 0:
-					return text + "\n이미 최대 레벨입니다."
-				return text + "\n[업그레이드] 버튼을 누르면 Lv%d → Lv%d (%d골드)." % [lane.color_level(cname), lane.color_level(cname) + 1, cost]
-			return "색을 고르면 그 색 타워의 고유 보너스 설명이 나옵니다 (레인 전체 공유)."
+				return Balance.color_tooltip(_sel[0], lane.color_level(_sel[0]))
+			return "색을 고르세요."
 	return ""
 
 
@@ -1372,6 +1357,36 @@ class PauseOverlay extends Control:
 	signal restart_requested
 	signal quit_requested
 
+	const GUIDE_TEXT := """[color=#ffd966][b]목표[/b][/color]
+보스 %d단계를 제한시간 안에 쓰러뜨리면 승리!
+생명이 0이 되거나 시간이 끝나면 패배예요.
+
+[color=#ffd966][b]진행[/b][/color]
+[시작]을 누르면 수입과 웨이브가 시작돼요 (%d초마다).
+시작 전에 타워를 미리 지어 둘 수 있어요.
+
+[color=#7fd8ff][b]타워[/b][/color]
+타워 → 종류 고르기 → 맵의 빈 타일 클릭.
+지은 타워를 누르면 진화와 색깔 바꾸기.
+길을 완전히 막으면 몬스터가 타워를 부수며 와요.
+
+[color=#ff9a8a][b]몬스터[/b][/color]
+몬스터 → 유형 → 고르고 [생성].
+보스를 공격하고, 수입도 늘어요.
+
+[color=#b6e88a][b]업그레이드[/b][/color]
+항목을 고르고 [업그레이드].
+같은 계열 타워 전체가 강해져요.
+
+[color=#d9a8ff][b]색깔 보너스[/b][/color]
+같은 색 타워가 붙어 있을수록 더 강해져요.
+
+[color=#9aa8ff][b]미니맵[/b][/color]
+1~8은 각자의 레인, B는 보스 레인.
+누르면 이동, 누른 채 끌면 스크롤.
+
+[color=#aaaaaa]P / Esc: 일시정지[/color]"""
+
 	var restart_button: Button
 	var quit_button: Button
 	var _armed: Button = null  # 한 번 눌러서 "정말?" 상태인 버튼
@@ -1401,7 +1416,7 @@ class PauseOverlay extends Control:
 		style.set_corner_radius_all(8)
 		style.set_content_margin_all(24)
 		panel.add_theme_stylebox_override("panel", style)
-		panel.custom_minimum_size = Vector2(340, 0)
+		panel.custom_minimum_size = Vector2(540, 0)
 		center.add_child(panel)
 		var box := VBoxContainer.new()
 		box.add_theme_constant_override("separation", 14)
@@ -1411,6 +1426,7 @@ class PauseOverlay extends Control:
 		title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		title.add_theme_font_size_override("font_size", 32)
 		box.add_child(title)
+		box.add_child(_make_guide())
 		var resume := _make_button("계속하기")
 		resume.pressed.connect(func(): resume_requested.emit())
 		box.add_child(resume)
@@ -1421,10 +1437,27 @@ class PauseOverlay extends Control:
 		quit_button.pressed.connect(_on_confirmable_pressed.bind(quit_button, "종료", quit_requested))
 		box.add_child(quit_button)
 
+	## 설명서: 제목은 색을 입히고 한 줄씩 짧게. 길면 위아래로 밀어서 본다.
+	func _make_guide() -> Control:
+		var scroll := ScrollContainer.new()
+		scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+		scroll.custom_minimum_size = Vector2(0, 300)
+		var text := RichTextLabel.new()
+		text.bbcode_enabled = true
+		text.fit_content = true
+		text.scroll_active = false
+		text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		text.add_theme_font_size_override("normal_font_size", 18)
+		text.add_theme_font_size_override("bold_font_size", 20)
+		text.add_theme_constant_override("line_separation", 3)
+		text.text = GUIDE_TEXT % [BossLevels.COUNT, int(Balance.INCOME_INTERVAL)]
+		scroll.add_child(text)
+		return scroll
+
 	func _make_button(text: String) -> Button:
 		var b := Button.new()
 		b.text = text
-		b.custom_minimum_size = Vector2(0, 60)  # 폰: 터치하기 쉬운 높이
+		b.custom_minimum_size = Vector2(0, 56)  # 폰: 터치하기 쉬운 높이
 		b.add_theme_font_size_override("font_size", 22)
 		return b
 
@@ -1503,13 +1536,10 @@ func _update_hud():
 	if game_field.current_player_id == GameField.BOSS_LANE_ID:
 		lines.append("BOSS Lv.%d/%d %s%s  %d/%d  남은 %d초" % [
 			boss.level, BossLevels.COUNT, boss.level_data.name, boss.phase_text(), int(boss.hp), int(boss.max_hp), int(boss.time_left)])
-		# 보스 공격 현황: 보스 앞에 서 있는 몬스터들이 1초에 주는 피해의 합
-		if boss.total_dps > 0.0:
-			var eta := boss.hp / boss.effective_dps()  # 보호막까지 반영한 실제 피해로 계산
-			lines.append("보스에게 초당 %.1f 피해 (%d마리) -> %d초 뒤 처치%s" % [
+		if boss.total_dps > 0.0:  # 보스 앞에 서 있는 몬스터들이 1초에 주는 피해
+			var eta := boss.hp / boss.effective_dps()
+			lines.append("초당 %.1f 피해 (%d마리) → %d초 뒤 처치%s" % [
 				boss.effective_dps(), boss.get_attacker_count(), ceili(eta), " (시간 부족!)" if eta > boss.time_left else ""])
-			if boss.has_guard():
-				lines.append("비늘 보호막: 피해 -%d%% (필드 웨이브 몬스터를 잡을수록 약해진다)" % roundi((1.0 - boss.damage_mult) * 100.0))
 		else:
 			lines.append("보스를 공격 중인 몬스터 없음")
 	hud_label.text = "\n".join(lines)
@@ -1524,27 +1554,19 @@ func _update_tower_info(lane: LaneController):
 	var title: String = t.kind.name
 	if t.evolution != "":
 		title += " · " + Evolutions.evo_name(t.evolution)
-	var text := "[%s] 한 발 %.2f / %.2f초 / 사거리 %.1f칸\n누적 피해 %.1f  킬 %d" % [
-		title, t.cur_damage(), t.cur_cooldown(), t.cur_range(), t.total_damage, t.kills]
+	var text := "%s\n피해 %.2f · %.2f초 · 사거리 %.1f   처치 %d · 누적 %.0f" % [
+		title, t.cur_damage(), t.cur_cooldown(), t.cur_range(), t.kills, t.total_damage]
 	if t.durability < Balance.TOWER_DURABILITY - 0.001:  # 슬라임 새끼에게 갉인 타워 (회복되지 않는다)
-		text += "\n내구도 %.1f / %.1f (회복 안 됨)" % [t.durability, Balance.TOWER_DURABILITY]
+		text += "\n내구도 %d / %d" % [roundi(t.durability), roundi(Balance.TOWER_DURABILITY)]
 	if t.sealed_time > 0.0:
-		text += "\n봉인됨: %d초 뒤 풀린다" % ceili(t.sealed_time)
+		text += "\n봉인 %d초" % ceili(t.sealed_time)
 	match t.evolution:
-		"support":
-			text += "\n공격력 없음: 표식 구름을 깐다"
-		"skill":
-			text += "\n공격력 없음: 공격이 맞으면 확률로 스킬 발동"
 		"growth":
-			text += "\n치명타 %.1f%%  광란 x%d" % [t.crit_chance() * 100.0, t.haste_stacks]
+			text += "\n치명타 %.1f%% · 광란 x%d" % [t.crit_chance() * 100.0, t.haste_stacks]
 		"charge":
-			text += "\n충전 %.1f / %.0f초 (%.0f초 이상이면 발동)" % [t.charge, t.charge_max(), Evolutions.CHARGE_MIN]
+			text += "\n충전 %.1f / %.0f초" % [t.charge, t.charge_max()]
 	text += "\n" + t.color_bonus_text()
-	# 스킬 현황: 진화하면 A 스킬이 붙고, B 스킬은 돈을 내고 배워야 한다 (계열 전체 타워에 적용)
 	var b_known := t.evolution != "" and t.b_learned
-	if t.evolution != "":
-		var evo_data: Dictionary = Evolutions.DATA[t.evolution]
-		text += "\nA %s ✔   B %s %s" % [evo_data.a_name, evo_data.b_name, "✔" if b_known else "(아직 안 배움)"]
 	tower_info_label.text = text
 
 	recolor_button.text = "색깔 바꾸기 (%d골드)" % Balance.RECOLOR_COST
