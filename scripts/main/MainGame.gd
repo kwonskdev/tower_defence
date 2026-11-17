@@ -71,7 +71,7 @@ const FONT_SMALL := 16
 const FONT_TINY := 14
 const TOP_HEIGHT := 180.0                # 위쪽 UI 줄 높이 (MainGame.tscn의 TopUI와 같아야 한다). 타워/몬스터/업그레이드 화면은 모두 이 안에서 해결한다
 const CORNER_MARGIN := 10.0              # 폰 화면 모서리가 둥글게 잘려도 UI가 가리지 않는 최소 여백
-const BOTTOM_HEIGHT := 200.0             # 맵 아래 메시지 영역 높이 (맵은 그만큼 줄어든다)
+const BOTTOM_HEIGHT := 170.0             # 맵 아래 메시지 영역 높이 (맵은 그만큼 줄어든다)
 const OVERLAY_MARGIN := 6.0              # 맵 왼쪽 위 상태 표시와 맵 가장자리 사이 간격
 
 var game_over_screen: GameOverScreen     # 승리/패배 화면
@@ -1785,11 +1785,11 @@ func _update_tower_info(lane: LaneController):
 	if t == null:
 		tower_info_label.visible = false
 		return
-	tower_info_label.visible = true
+	tower_info_label.visible = _view == "tower_sel"  # 타워 화면일 때만 (몬스터/업그레이드 화면에서는 하단을 비운다)
 	var title: String = t.kind.name
 	if t.evolution != "":
 		title += " · " + Evolutions.evo_name(t.evolution)
-	var text := "%s\n피해 %.2f · %.2f초 · 사거리 %.1f   처치 %d · 누적 %.0f" % [
+	var text := "%s · 피해 %.2f · %.2f초 · 사거리 %.1f\n처치 %d · 누적 %.0f" % [
 		title, t.cur_damage(), t.cur_cooldown(), t.cur_range(), t.kills, t.total_damage]
 	if t.durability < Balance.TOWER_DURABILITY - 0.001:  # 슬라임 새끼에게 갉인 타워 (회복되지 않는다)
 		text += "\n내구도 %d / %d" % [roundi(t.durability), roundi(Balance.TOWER_DURABILITY)]
@@ -1802,7 +1802,8 @@ func _update_tower_info(lane: LaneController):
 			text += "\n충전 %.1f / %.0f초" % [t.charge, t.charge_max()]
 	text += "\n" + t.color_bonus_text()
 	var b_known := t.evolution != "" and t.b_learned
-	tower_info_label.text = text
+	tower_info_label.text = text.get_slice("
+", 0) if _tower_pick != "" else text  # 진화를 고르는 중에는 설명이 잘 보이게 첫 줄만
 
 	recolor_button.text = "색깔 바꾸기 (%d골드)" % Balance.RECOLOR_COST
 	recolor_button.tooltip_text = "이 타워의 색깔을 지금 색을 뺀 6색 중 랜덤으로 바꿉니다. 색깔 보너스는 그 색의 업그레이드를 따라갑니다."
