@@ -66,6 +66,6 @@ func _layout() -> void:
 		center.y += s * (0.12 if _tall_decor else 0.02)
 	elif _node is Tower:
 		var t: Tower = _node
-		t.preview_cell = s * 0.72  # 긴 포신/미사일이 아이콘 밖으로 잘리지 않게
+		t.preview_cell = s * (0.84 if t.evolution != "" else 0.72)  # 긴 포신/미사일이 아이콘 밖으로 잘리지 않게 (진화 포탑은 타일 안에 그려서 더 크게)
 		t.queue_redraw()  # 크기가 바뀌면 다시 그린다 (아이콘은 평소에 다시 그리지 않는다)
 	_node.position = center

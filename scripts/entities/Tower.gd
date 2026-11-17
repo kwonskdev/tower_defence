@@ -363,18 +363,19 @@ func _draw() -> void:
 	# 기본 종류가 생김새로 구분된다
 	#  장거리 = 아주 긴 가는 포신 / 범위 = 나팔 모양 포구 + 둥근 포탄(박격포)
 	#  대공 = 쌍둥이 미사일(분홍 머리) / 트랩 = 포신 없이 납작하게 깔린 가시판
-	match kind.id:
-		"long":
-			_draw_gun(s, true, false)
-		"splash":
-			_draw_gun(s, false, true)
-		"air":
-			_draw_missiles(s)
-		_:
-			_draw_trap_plate(s)
-
 	if evolution != "":
-		_draw_evo_emblem(s)  # 진화하면 계열마다 다른 모양 (아이콘과 맵이 같다)
+		_draw_evolved(s)  # 진화하면 계열마다 완전히 다른 포탑 (아이콘과 맵이 같다)
+	else:
+		match kind.id:
+			"long":
+				_draw_gun(s, true, false)
+			"splash":
+				_draw_gun(s, false, true)
+			"air":
+				_draw_missiles(s)
+			_:
+				_draw_trap_plate(s)
+
 	if not preview:
 		_draw_evolution_marks(s)
 		_draw_damage_marks(s)
@@ -405,62 +406,161 @@ func _draw_damage_marks(s: float) -> void:
 		draw_rect(Rect2(-s * 0.5 - 2.0, -s * 0.5 - 2.0, s + 4.0, s + 4.0), Color(purple, pulse), false, 3.5)
 
 
-## 진화 계열 모양: 가운데 원판에 계열마다 다른 그림
-##  관통형=관통하는 화살 / 보스형=조준 표적 / 대량 처리형=폭발 별 / 지원형=구름 / 난사형=퍼지는 미사일 / 스킬형=거미줄 / 성장형=위로 쌓이는 화살표 / 충전형=번개
-func _draw_evo_emblem(s: float) -> void:
+## 진화한 타워의 모습: 계열마다 완전히 다른 포탑 (아이콘과 맵이 같다)
+##  관통형=레일건 / 보스형=중포 / 대량 처리형=박격포 / 지원형=레이더 접시 / 난사형=미사일 포드 / 스킬형=수정 구슬 / 성장형=가시 덩굴 / 충전형=테슬라 코일
+const INK := Color(0.07, 0.07, 0.1)
+const STEEL := Color(0.62, 0.65, 0.74)
+const STEEL_HI := Color(0.86, 0.89, 0.96)
+const STEEL_DK := Color(0.3, 0.32, 0.4)
+
+
+## 윗면에 빛이 비친 금속 상자 (테두리 포함)
+func _box(r: Rect2, fill: Color) -> void:
+	draw_rect(r, fill)
+	draw_rect(Rect2(r.position, Vector2(r.size.x, r.size.y * 0.32)), fill.lightened(0.3))
+	draw_rect(r, INK, false, 1.5)
+
+
+func _disc(center: Vector2, radius: float, fill: Color) -> void:
+	draw_circle(center, radius, fill)
+	draw_circle(center + Vector2(-radius * 0.25, -radius * 0.3), radius * 0.45, fill.lightened(0.28))  # 하이라이트
+	draw_arc(center, radius, 0.0, TAU, 20, INK, 1.5)
+
+
+func _glow(center: Vector2, radius: float, col: Color) -> void:
+	for i in range(3):
+		draw_circle(center, radius * (1.0 + i * 0.45), Color(col, 0.22 - i * 0.06))
+
+
+func _draw_evolved(s: float) -> void:
 	var col := evo_color()
-	var r := s * 0.3
-	var w := maxf(1.5, s * 0.045)
-	draw_circle(Vector2.ZERO, r * 1.1, Color(0.08, 0.08, 0.12, 0.94))
-	draw_arc(Vector2.ZERO, r * 1.1, 0.0, TAU, 24, col, 2.0)
+	# 팔각 받침
+	var r := s * 0.44
+	var oct := PackedVector2Array()
+	for i in range(8):
+		oct.append(Vector2.from_angle(i * TAU / 8.0 + TAU / 16.0) * r)
+	draw_colored_polygon(oct, Color(0.2, 0.21, 0.28))
+	oct.append(oct[0])
+	draw_polyline(oct, INK, 2.0)
+	draw_arc(Vector2.ZERO, r * 0.82, 0.0, TAU, 24, Color(col, 0.5), 2.0)
+
 	match evolution:
-		"pierce":
-			draw_line(Vector2(-r * 0.8, 0), Vector2(r * 0.55, 0), col, w)
-			draw_colored_polygon(PackedVector2Array([Vector2(r * 0.4, -r * 0.4), Vector2(r * 0.95, 0), Vector2(r * 0.4, r * 0.4)]), col)
-			for k in range(2):
-				var x := -r * 0.55 + k * r * 0.4
-				draw_polyline(PackedVector2Array([Vector2(x - r * 0.2, -r * 0.3), Vector2(x, 0), Vector2(x - r * 0.2, r * 0.3)]), col, w)
-		"boss":
-			draw_arc(Vector2.ZERO, r * 0.6, 0.0, TAU, 20, col, w)
-			for d in [Vector2.UP, Vector2.DOWN, Vector2.LEFT, Vector2.RIGHT]:
-				draw_line(d * r * 0.35, d * r * 0.95, col, w)
-			draw_circle(Vector2.ZERO, r * 0.14, col)
-		"mass":
-			var star := PackedVector2Array()
-			for i in range(16):
-				star.append(Vector2.from_angle(i * TAU / 16.0 - PI * 0.5) * (r * 0.95 if i % 2 == 0 else r * 0.45))
-			draw_colored_polygon(star, col)
-		"support":
-			draw_circle(Vector2(-r * 0.42, r * 0.15), r * 0.38, col)
-			draw_circle(Vector2(r * 0.42, r * 0.15), r * 0.4, col)
-			draw_circle(Vector2(0, -r * 0.2), r * 0.48, col)
-			draw_rect(Rect2(-r * 0.42, r * 0.1, r * 0.84, r * 0.43), col)
-		"barrage":
-			for a in [-0.6, 0.0, 0.6]:
-				var dir := Vector2.UP.rotated(a)
-				var perp := Vector2(-dir.y, dir.x)
-				var tail := Vector2(0, r * 0.65)
-				var tip := tail + dir * r * 1.3
-				draw_line(tail, tip - dir * r * 0.2, col, w)
-				draw_colored_polygon(PackedVector2Array([tip, tip - dir * r * 0.4 + perp * r * 0.2, tip - dir * r * 0.4 - perp * r * 0.2]), col)
-		"skill":
-			var outer := PackedVector2Array()
-			var inner := PackedVector2Array()
-			for i in range(7):
-				outer.append(Vector2.from_angle(i * TAU / 6.0) * r * 0.85)
-				inner.append(Vector2.from_angle(i * TAU / 6.0) * r * 0.42)
-			draw_polyline(outer, col, w)
-			draw_polyline(inner, col, w)
-			for i in range(6):
-				draw_line(Vector2.ZERO, Vector2.from_angle(i * TAU / 6.0) * r * 0.85, col, w * 0.7)
-		"growth":
+		"pierce":  # 레일건: 긴 포신 + 청색 코일 + 바늘 끝
+			var w := s * 0.07
+			draw_set_transform(Vector2.ZERO, _aim_angle(), Vector2.ONE)
+			_box(Rect2(s * 0.05, -w, s * 0.7, w * 2.0), STEEL)
+			for k in range(4):
+				var x := s * (0.2 + 0.13 * k)
+				draw_rect(Rect2(x, -w * 1.7, s * 0.05, w * 3.4), col)
+				draw_rect(Rect2(x, -w * 1.7, s * 0.05, w * 3.4), INK, false, 1.0)
+			var tip := PackedVector2Array([Vector2(s * 0.75, -w * 0.9), Vector2(s * 0.95, 0), Vector2(s * 0.75, w * 0.9)])
+			draw_colored_polygon(tip, STEEL_HI)
+			_glow(Vector2(s * 0.95, 0), w * 0.9, col)
+			draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+			_box(Rect2(-s * 0.2, -s * 0.16, s * 0.4, s * 0.32), STEEL_DK)
+			draw_rect(Rect2(-s * 0.2, -s * 0.04, s * 0.4, s * 0.08), col)
+			_disc(Vector2(s * 0.02, -s * 0.0), s * 0.07, INK)
+			draw_circle(Vector2(s * 0.02, 0), s * 0.035, col)
+		"boss":  # 중포: 굵은 포신 + 포구 제동기 + 붉은 경고 줄무늬
+			draw_set_transform(Vector2.ZERO, _aim_angle(), Vector2.ONE)
+			_box(Rect2(s * 0.05, -s * 0.11, s * 0.5, s * 0.22), STEEL)
 			for k in range(3):
-				var y := r * 0.5 - k * r * 0.5
-				draw_polyline(PackedVector2Array([Vector2(-r * 0.5, y + r * 0.25), Vector2(0, y - r * 0.2), Vector2(r * 0.5, y + r * 0.25)]), col, w)
-		"charge":
-			draw_colored_polygon(PackedVector2Array([
-				Vector2(r * 0.15, -r * 0.9), Vector2(-r * 0.5, r * 0.1), Vector2(-r * 0.05, r * 0.1),
-				Vector2(-r * 0.2, r * 0.9), Vector2(r * 0.5, -r * 0.2), Vector2(r * 0.05, -r * 0.2)]), col)
+				draw_rect(Rect2(s * (0.13 + 0.12 * k), -s * 0.11, s * 0.055, s * 0.22), col)
+			_box(Rect2(s * 0.52, -s * 0.15, s * 0.17, s * 0.3), STEEL_DK)
+			for k in range(2):
+				draw_rect(Rect2(s * (0.56 + 0.06 * k), -s * 0.12, s * 0.025, s * 0.24), INK)
+			draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+			_disc(Vector2.ZERO, s * 0.25, STEEL_DK)
+			draw_arc(Vector2.ZERO, s * 0.17, 0.0, TAU, 20, STEEL_HI, 2.0)
+			_disc(Vector2.ZERO, s * 0.1, col)
+			draw_circle(Vector2.ZERO, s * 0.035, INK)
+		"mass":  # 박격포: 나팔 통 + 불붙은 포탄 + 쌓인 포탄
+			draw_set_transform(Vector2.ZERO, _aim_angle(), Vector2.ONE)
+			var tube := PackedVector2Array([Vector2(s * 0.05, -s * 0.1), Vector2(s * 0.5, -s * 0.17), Vector2(s * 0.5, s * 0.17), Vector2(s * 0.05, s * 0.1)])
+			draw_colored_polygon(tube, STEEL)
+			draw_colored_polygon(PackedVector2Array([tube[0], tube[1], Vector2(s * 0.5, -s * 0.05), Vector2(s * 0.05, -s * 0.02)]), STEEL_HI)
+			tube.append(tube[0])
+			draw_polyline(tube, INK, 1.5)
+			_box(Rect2(s * 0.48, -s * 0.2, s * 0.06, s * 0.4), STEEL_DK)
+			_disc(Vector2(s * 0.58, 0), s * 0.12, Color(0.16, 0.14, 0.14))
+			draw_arc(Vector2(s * 0.58, 0), s * 0.12, 0.0, TAU, 16, col, 2.0)
+			_glow(Vector2(s * 0.66, -s * 0.09), s * 0.04, Color(1.0, 0.75, 0.2))
+			draw_circle(Vector2(s * 0.66, -s * 0.09), s * 0.04, Color(1.0, 0.9, 0.4))
+			draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+			_disc(Vector2.ZERO, s * 0.2, STEEL_DK)
+			for p in [Vector2(-s * 0.3, s * 0.1), Vector2(-s * 0.2, s * 0.26), Vector2(-s * 0.34, s * 0.28)]:
+				_disc(p, s * 0.065, col.darkened(0.2))
+		"support":  # 레이더 접시: 접시 + 안테나 + 보랏빛 구슬 + 구름
+			for p in [Vector2(-s * 0.3, -s * 0.26), Vector2(s * 0.32, -s * 0.22), Vector2(s * 0.06, -s * 0.4)]:
+				draw_circle(p, s * 0.12, Color(col, 0.5))
+			var bowl := PackedVector2Array()
+			for i in range(13):
+				bowl.append(Vector2(0, -s * 0.02) + Vector2.from_angle(i * PI / 12.0) * Vector2(s * 0.34, s * 0.3))
+			draw_colored_polygon(bowl, STEEL)
+			draw_colored_polygon(PackedVector2Array([bowl[1], bowl[11], bowl[10], bowl[2]]), STEEL_DK)
+			bowl.append(bowl[0])
+			draw_polyline(bowl, INK, 1.5)
+			draw_arc(Vector2(0, -s * 0.02), s * 0.26, PI * 0.15, PI * 0.85, 10, STEEL_HI, 2.0)
+			draw_line(Vector2(0, s * 0.02), Vector2(0, -s * 0.26), STEEL_HI, 2.0)
+			_glow(Vector2(0, -s * 0.28), s * 0.07, col)
+			_disc(Vector2(0, -s * 0.28), s * 0.07, col)
+			draw_arc(Vector2(0, -s * 0.28), s * 0.17, -PI * 0.85, -PI * 0.15, 10, Color(col, 0.7), 1.5)
+			draw_arc(Vector2(0, -s * 0.28), s * 0.26, -PI * 0.8, -PI * 0.2, 10, Color(col, 0.4), 1.5)
+		"barrage":  # 미사일 포드: 나란한 세 발 + 노란 탄두
+			draw_set_transform(Vector2.ZERO, _aim_angle(), Vector2.ONE)
+			_box(Rect2(-s * 0.02, -s * 0.27, s * 0.34, s * 0.54), STEEL_DK)
+			for row in [-1.0, 0.0, 1.0]:
+				var y: float = row * s * 0.17
+				_box(Rect2(s * 0.12, y - s * 0.055, s * 0.36, s * 0.11), STEEL_HI.darkened(0.1))
+				draw_colored_polygon(PackedVector2Array([Vector2(s * 0.48, y - s * 0.06), Vector2(s * 0.64, y), Vector2(s * 0.48, y + s * 0.06)]), col)
+				draw_polyline(PackedVector2Array([Vector2(s * 0.48, y - s * 0.06), Vector2(s * 0.64, y), Vector2(s * 0.48, y + s * 0.06)]), INK, 1.2)
+				draw_rect(Rect2(s * 0.12, y - s * 0.055, s * 0.05, s * 0.11), col)
+			draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+			_disc(Vector2(-s * 0.12, 0), s * 0.15, STEEL)
+			draw_circle(Vector2(-s * 0.12, 0), s * 0.06, col)
+		"skill":  # 수정 구슬: 수정 + 궤도 구슬 + 그물 고리
+			for i in range(8):
+				draw_line(Vector2.ZERO, Vector2.from_angle(i * TAU / 8.0) * s * 0.38, Color(col, 0.35), 1.2)
+			for rr in [0.2, 0.3, 0.38]:
+				draw_arc(Vector2.ZERO, s * rr, 0.0, TAU, 8, Color(col, 0.45), 1.2)
+			_glow(Vector2.ZERO, s * 0.14, col)
+			var gem := PackedVector2Array([Vector2(0, -s * 0.3), Vector2(s * 0.17, -s * 0.03), Vector2(0, s * 0.22), Vector2(-s * 0.17, -s * 0.03)])
+			draw_colored_polygon(gem, col)
+			draw_colored_polygon(PackedVector2Array([gem[0], gem[1], Vector2(0, -s * 0.03)]), col.lightened(0.45))
+			draw_colored_polygon(PackedVector2Array([gem[0], Vector2(0, -s * 0.03), gem[3]]), col.lightened(0.2))
+			gem.append(gem[0])
+			draw_polyline(gem, INK, 1.5)
+			for i in range(3):
+				_disc(Vector2.from_angle(i * TAU / 3.0 - PI * 0.5 + 0.5) * s * 0.34, s * 0.05, STEEL_HI)
+		"growth":  # 가시 덩굴: 길이가 다른 가시 + 새싹 구근
+			for i in range(10):
+				var a := i * TAU / 10.0
+				var d := Vector2.from_angle(a)
+				var perp := Vector2(-d.y, d.x)
+				var l := s * (0.4 if i % 2 == 0 else 0.3)
+				draw_colored_polygon(PackedVector2Array([d * s * 0.12 + perp * s * 0.055, d * l, d * s * 0.12 - perp * s * 0.055]), col)
+				draw_polyline(PackedVector2Array([d * s * 0.12 + perp * s * 0.055, d * l, d * s * 0.12 - perp * s * 0.055]), INK, 1.2)
+			_disc(Vector2.ZERO, s * 0.18, col.darkened(0.15))
+			var leaf := Color(0.45, 0.85, 0.4)
+			draw_line(Vector2(0, s * 0.02), Vector2(0, -s * 0.2), leaf.darkened(0.2), 2.5)
+			for side in [-1.0, 1.0]:
+				var lp := PackedVector2Array([Vector2(0, -s * 0.12), Vector2(side * s * 0.2, -s * 0.2), Vector2(side * s * 0.05, -s * 0.03)])
+				draw_colored_polygon(lp, leaf)
+				lp.append(lp[0])
+				draw_polyline(lp, INK, 1.2)
+		"charge":  # 테슬라 코일: 쌓인 코일 + 빛나는 구슬 + 번개
+			for k in range(4):
+				var wd := s * (0.36 - k * 0.07)
+				var y := s * 0.2 - k * s * 0.13
+				_box(Rect2(-wd * 0.5, y - s * 0.055, wd, s * 0.11), STEEL_DK)
+				draw_rect(Rect2(-wd * 0.5, y - s * 0.012, wd, s * 0.024), col)
+			var top := Vector2(0, -s * 0.34)
+			_glow(top, s * 0.1, col)
+			_disc(top, s * 0.1, col)
+			for sgn in [-1.0, 1.0]:
+				var bolt := PackedVector2Array([top, top + Vector2(sgn * s * 0.1, s * 0.05), top + Vector2(sgn * s * 0.06, s * 0.13),
+					top + Vector2(sgn * s * 0.2, s * 0.2), top + Vector2(sgn * s * 0.17, s * 0.28)])
+				draw_polyline(bolt, col.lightened(0.4), 2.0)
 
 
 ## 진화 표시: 오른쪽 아래 마름모(계열 색), 충전형은 충전 게이지, 성장형은 광란 중첩 점
