@@ -20,6 +20,7 @@ signal boss_ready(boss: BossController)    # 보스가 만들어졌다 (한 프�
 var awaiting_confirm: bool = false  # 길 막힘 확인을 기다리는 중 (이 클릭으로는 타워 선택/해제를 하지 않는다)
 var game_started: bool = false  # 시작 버튼을 눌렀는지
 var selected_tower: Tower = null  # 클릭해서 선택한 타워 (정보/업그레이드 대상)
+var side_inset: float = 0.0  # 화면 좌우 안전 여백의 합 (폰 노치/둥근 모서리). 맵이 쓰는 폭 = 화면 폭 - 이 값
 var ui_blockers: Array[Control] = []  # 이 영역 위의 클릭은 맵 클릭으로 처리하지 않는다 (필드 위에 겹친 UI)
 
 # 마우스 드래그 스크롤 변수들
@@ -62,18 +63,32 @@ func setup_game_field():
 
 	# 화면 크기에 맞춰 그리드 조정
 	if grid_renderer:
-		var container_width = get_viewport_rect().size.x  # 레이아웃이 끝나기 전에도 틀리지 않도록 화면 폭을 직접 쓴다 (이 노드는 화면 폭 전체를 쓴다)
+		var container_width = _field_width()
 		grid_renderer.set_container_width(container_width)
 
 	# 창/화면 크기가 나중에 바뀌어도(폰 회전, 시작 직후 창 크기 확정 등) 칸 크기를 화면 폭에 맞춘다
 	get_viewport().size_changed.connect(func():
-		var w := get_viewport_rect().size.x
+		var w := _field_width()
 		if w > 0.0 and int(w / GridRenderer.GRID_WIDTH) != grid_renderer.CELL_SIZE:
 			grid_renderer.set_container_width(w))
 
 	# PvE 임시: 1번 플레이어만 참여 (나머지 레인은 비어 있음)
 	start_lane(0)
 	start_boss()
+
+## 맵이 쓰는 폭. 레이아웃이 끝나기 전에도 틀리지 않도록 노드 크기 대신 화면 폭에서 좌우 여백을 뺀다
+func _field_width() -> float:
+	return get_viewport_rect().size.x - side_inset
+
+
+## 좌우 안전 여백이 바뀌면 칸 크기를 다시 맞춘다
+func set_side_inset(value: float) -> void:
+	side_inset = value
+	if grid_renderer != null:
+		var w := _field_width()
+		if w > 0.0 and int(w / GridRenderer.GRID_WIDTH) != grid_renderer.CELL_SIZE:
+			grid_renderer.set_container_width(w)
+
 
 ## 시작 버튼: 참여한 모든 레인과 보스가 동시에 시작한다 (수입, 보스 제한시간, 몬스터 파견)
 func start_game() -> void:

@@ -12,7 +12,7 @@ class_name MainGame
 
 # 몬스터 버튼은 monster_buttons[0]이 뒤로 가기, [1]부터 SentMonsters.SLOTS 순서대로 몬스터 종류 (계열별로 묶고 사이에 빈칸).
 
-var hud_panel: PanelContainer            # 하단 메시지 영역 (할 말이 있을 때만 보인다)
+var hud_panel: PanelContainer            # 맵 아래 별도 메시지 영역 (항상 보이고, 높이는 BOTTOM_HEIGHT로 고정)
 var hud_label: Label
 var tower_info_row: VBoxContainer        # 선택한 타워 정보 + (진화 전이면) 진화 버튼 줄
 var evolve_row: HBoxContainer
@@ -59,6 +59,9 @@ const FONT_TINY := 14
 const TOP_HEIGHT := 180.0                # 위쪽 UI 줄 높이 (MainGame.tscn의 TopUI와 같아야 한다)
 const SHEET_HEIGHT := 390.0              # 몬스터/업그레이드 화면 높이
 const MIN_TOUCH := 56.0                  # 눌러야 하는 버튼의 최소 높이
+const CORNER_MARGIN := 10.0              # 폰 화면 모서리가 둥글게 잘려도 UI가 가리지 않는 최소 여백
+const BOTTOM_HEIGHT := 200.0             # 맵 아래 메시지 영역 높이 (맵은 그만큼 줄어든다)
+const CANCEL_WIDTH := 182.0              # 건설 취소 버튼 폭
 
 var sheet: PanelContainer                # 위쪽 UI 아래로 내려오는 넓은 화면 (몬스터 배럭 / 업그레이드). 맵 위에 겹친다
 var sheet_content: Control               # 그 안의 화면들이 들어가는 자리
@@ -100,7 +103,8 @@ func _ready():
 	get_viewport().size_changed.connect(_apply_safe_area)
 
 
-## 폰의 노치/상태바/제스처 바에 UI가 가리지 않도록 위아래에 안전 여백을 둔다 (폰에서만)
+## 폰의 노치/상태바/제스처 바/둥근 모서리에 UI가 가리지 않도록 네 변 모두에 안전 여백을 둔다 (폰에서만).
+## 시스템이 알려 주는 안전 영역(노치 등)에, 화면 모서리가 둥글게 잘리는 폰을 위한 최소 여백(CORNER_MARGIN)을 더한다.
 func _apply_safe_area() -> void:
 	if not OS.has_feature("mobile"):
 		return
@@ -109,17 +113,35 @@ func _apply_safe_area() -> void:
 	if win.x <= 0.0 or win.y <= 0.0 or safe.size.x <= 0:
 		return
 	var s := get_viewport_rect().size.x / win.x  # 화면 픽셀 -> 가상 화면 좌표
-	var top := maxf(0.0, safe.position.y * s)
-	var bottom := maxf(0.0, (win.y - safe.end.y) * s)
-	$VBoxContainer.offset_top = top
-	$VBoxContainer.offset_bottom = -bottom
+	apply_insets(
+		maxf(CORNER_MARGIN, safe.position.x * s),
+		maxf(CORNER_MARGIN, safe.position.y * s),
+		maxf(CORNER_MARGIN, (win.x - safe.end.x) * s),
+		maxf(CORNER_MARGIN, (win.y - safe.end.y) * s))
+
+
+## 화면 가장자리에서 left/top/right/bottom 만큼 안쪽에 UI를 배치한다 (가상 화면 좌표)
+func apply_insets(left: float, top: float, right: float, bottom: float) -> void:
+	var box: Control = $VBoxContainer
+	box.offset_left = left
+	box.offset_top = top
+	box.offset_right = -right
+	box.offset_bottom = -bottom
+	game_field.set_side_inset(left + right)  # 칸 크기는 맵이 실제로 쓰는 폭으로 정한다
+	sheet.offset_left = left
+	sheet.offset_right = -right
 	sheet.offset_top = top + TOP_HEIGHT
 	sheet.offset_bottom = top + TOP_HEIGHT + SHEET_HEIGHT
-	cancel_build_button.offset_top = top + TOP_HEIGHT + 8.0
-	cancel_build_button.offset_bottom = top + TOP_HEIGHT + 8.0 + MIN_TOUCH
-	pause_button.offset_top = top + TOP_HEIGHT + 8.0
-	pause_button.offset_bottom = top + TOP_HEIGHT + 8.0 + PAUSE_SIZE
-	hud_panel.offset_bottom = -bottom
+	# 맵 오른쪽 위 버튼들: [건설 취소] [일시정지] 순으로 오른쪽 끝에서부터
+	var btn_top := top + TOP_HEIGHT + 8.0
+	pause_button.offset_right = -right - 8.0
+	pause_button.offset_left = pause_button.offset_right - PAUSE_SIZE
+	pause_button.offset_top = btn_top
+	pause_button.offset_bottom = btn_top + PAUSE_SIZE
+	cancel_build_button.offset_right = pause_button.offset_left - 8.0
+	cancel_build_button.offset_left = cancel_build_button.offset_right - CANCEL_WIDTH
+	cancel_build_button.offset_top = btn_top
+	cancel_build_button.offset_bottom = btn_top + MIN_TOUCH
 
 func setup_ui():
 	# RightPanel 플레이어 버튼들 초기화 (고정 미니맵)
@@ -594,20 +616,28 @@ func _on_minimap_gui_input(event: InputEvent, button: Button, lane_index: int):
 	game_field.scroll_to_row(row)
 
 func _create_hud():
-	# 하단 상태 표시줄 (골드/생명/보스). 입력은 통과시킨다.
+	# 맵 아래의 별도 메시지 영역 (골드/생명/보스는 위쪽 상태 패널). 맵은 이 영역만큼 줄어들어서 맵을 가리지 않는다.
+	# 높이가 고정이라 타워를 고르거나 풀어도 맵 크기가 바뀌지 않는다. 내용이 넘치면 위아래로 밀어서 본다.
 	var panel := PanelContainer.new()
-	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	panel.z_index = 100  # 타워/몬스터/이펙트(z_index 1~4)보다 항상 위에 그린다
-	panel.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
-	panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	panel.custom_minimum_size = Vector2(0, BOTTOM_HEIGHT)
+	var hud_style := StyleBoxFlat.new()
+	hud_style.bg_color = Color(0.1, 0.1, 0.14)
+	hud_style.border_color = Color(0.35, 0.35, 0.45)
+	hud_style.border_width_top = 2
+	hud_style.set_content_margin_all(6)
+	panel.add_theme_stylebox_override("panel", hud_style)
+	$VBoxContainer.add_child(panel)  # GameField 다음 = 맨 아래 줄
+	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	panel.add_child(scroll)
 	hud_label = Label.new()
 	hud_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hud_label.add_theme_font_size_override("font_size", FONT_SMALL)
 	hud_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	hud_label.custom_minimum_size = Vector2(540, 0)
+	hud_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var box := VBoxContainer.new()
-	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	panel.add_child(box)
+	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(box)
 	box.add_child(hud_label)
 
 	# 선택한 타워 정보 (타워를 선택했을 때만 보인다). 진화 버튼 2개는 정보 아래 별도 줄에 반반씩 놓는다
@@ -621,7 +651,7 @@ func _create_hud():
 	tower_info_label.add_theme_font_size_override("font_size", FONT_SMALL)
 	tower_info_label.add_theme_color_override("font_color", Color(1.0, 1.0, 0.6))
 	tower_info_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	tower_info_label.custom_minimum_size = Vector2(540, 0)
+	tower_info_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	tower_info_row.add_child(tower_info_label)
 	evolve_row = HBoxContainer.new()
 	evolve_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -651,7 +681,6 @@ func _create_hud():
 	game_field.ui_blockers.append(tower_info_row)  # 버튼을 눌렀을 때 뒤의 맵이 클릭되지 않도록
 
 	hud_panel = panel
-	add_child(panel)
 
 	# 시작 버튼: 누르기 전에는 시간도 수입도 몬스터도 멈춰 있어서 미리 타워를 지어 둘 수 있다
 	start_button = Button.new()
@@ -1194,7 +1223,6 @@ func _update_hud():
 		lines.append(_flash_text)
 	hud_label.text = "\n".join(lines)
 	hud_label.visible = not lines.is_empty()
-	hud_panel.visible = hud_label.visible or tower_info_row.visible
 	cancel_build_button.visible = game_field.current_tool == GameField.PlacementTool.TOWER and not sheet.visible
 
 func _update_tower_info(lane: LaneController):
