@@ -125,12 +125,12 @@ func cur_damage() -> float:
 
 ## 빨강 색깔 보너스: 공격력 배율 (다른 색이면 1.0)
 func color_damage_mult() -> float:
-	return 1.0 + lane.color_bonus_value("빨강") if color_info.name == "빨강" else 1.0
+	return 1.0 + lane.color_bonus_value("빨강", self) if color_info.name == "빨강" else 1.0
 
 
 ## 주황 색깔 보너스: 공격속도 배율 (다른 색이면 1.0)
 func color_speed_mult() -> float:
-	return 1.0 + lane.color_bonus_value("주황") if color_info.name == "주황" else 1.0
+	return 1.0 + lane.color_bonus_value("주황", self) if color_info.name == "주황" else 1.0
 
 
 ## 다음 공격까지의 시간 (광란 중첩만큼 빨라진다 + 색깔 보너스)
@@ -146,7 +146,7 @@ func cur_range() -> float:
 	var r: float = kind.range
 	# 노랑 색깔 보너스: 사거리 증가
 	if color_info.name == "노랑":
-		var bonus := lane.color_bonus_value("노랑")
+		var bonus := lane.color_bonus_value("노랑", self)
 		r *= (1.0 + bonus)
 	return r
 
@@ -165,6 +165,8 @@ func color_bonus_text() -> String:
 	if lv == 0:
 		return "색깔 %s Lv0: %s -" % [cname, Balance.COLOR_BONUS_LABELS[type]]
 	var text := "색깔 %s Lv%d: %s %s" % [cname, lv, Balance.COLOR_BONUS_LABELS[type], Balance.color_bonus_value_text(cname, lv)]
+	var label := "같은 색 연결 %d개" if kind.blocks else "옆 같은 색 군집 %d개"
+	text += "\n" + label % lane.cluster_size(self) + ": 효과 +%s%%" % String.num((lane.cluster_multiplier(self) - 1.0) * 100.0, 2)
 	if type == "damage" and evolution == "skill":
 		text += " (스킬형은 공격력이 없어 효과 없음)"
 	return text
@@ -172,7 +174,7 @@ func color_bonus_text() -> String:
 
 ## 방어력 관통 비율 (파랑 색깔 보너스). Monster.take_damage가 맞은 타워에게 물어본다.
 func armor_penetration() -> float:
-	return lane.color_bonus_value("파랑") if color_info.name == "파랑" else 0.0
+	return minf(lane.color_bonus_value("파랑", self), 0.95) if color_info.name == "파랑" else 0.0
 
 
 ## 치명타 확률 (성장형: 처치할 때마다 오른다)
