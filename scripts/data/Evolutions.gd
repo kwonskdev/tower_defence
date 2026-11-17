@@ -189,64 +189,61 @@ static func stat_value_text(evo: String, stat: Dictionary, level: int) -> String
 	return fmt(stat.u, p(evo, stat.s, stat.k, level))
 
 
-## 스킬 하나의 효과 설명. lv: 정수(모든 항목 같은 레벨) 또는 Dictionary(항목별 레벨)
+## 스킬 하나의 효과 설명 (한 줄). lv: 정수(모든 항목 같은 레벨) 또는 Dictionary(항목별 레벨)
 static func skill_text(evo: String, skill: String, lv) -> String:
 	match evo + skill:
 		"pierceA":
-			return "관통: 맞은 적 뒤의 적까지 최대 %d마리 더 관통. 관통할 때마다 피해 -%d%%" % [
+			return "관통: 뒤의 적 %d마리까지 관통 (관통할 때마다 피해 -%d%%)" % [
 				int(v(evo, skill, "count", lv)), roundi(v(evo, skill, "falloff", lv) * 100.0)]
 		"pierceB":
-			return "독: 맞은 적에게 독이 무한 중첩 (1중첩 초당 %.2f 피해, 마지막으로 맞은 뒤 %d초 유지). 독 피해/킬은 이 타워 몫" % [
+			return "독: 맞은 적에게 중첩 독 (1중첩 초당 %.2f, %d초 유지)" % [
 				v(evo, skill, "dps", lv), int(v(evo, skill, "time", lv))]
 		"bossA":
-			return "방어구 파괴: %d%% 확률로 %d초간 적의 방어력이 0이 됨" % [
+			return "방어구 파괴: %d%% 확률로 %d초간 적 방어력 0" % [
 				roundi(v(evo, skill, "chance", lv) * 100.0), int(v(evo, skill, "time", lv))]
 		"bossB":
-			return "처형: %d%% 확률로 최대 체력의 %d%% 이하인 적을 즉사 (보스 포함)" % [
+			return "처형: %d%% 확률로 체력 %d%% 이하 적 즉사 (보스 포함)" % [
 				roundi(v(evo, skill, "chance", lv) * 100.0), roundi(v(evo, skill, "hp", lv) * 100.0)]
 		"massA":
 			return "강타: %d번째 공격마다 피해 x%.1f" % [int(v(evo, skill, "every", lv)), v(evo, skill, "mult", lv)]
 		"massB":
-			return "중심부: 폭발 중심 %.1f칸 안의 적은 피해 x%.1f" % [v(evo, skill, "radius", lv), v(evo, skill, "mult", lv)]
+			return "중심부: 폭발 중심 %.1f칸 안은 피해 x%.1f" % [v(evo, skill, "radius", lv), v(evo, skill, "mult", lv)]
 		"supportA":
-			return "표식 구름: 공격 대신 구름(반경 %.1f칸, %.1f초)을 깔아 닿은 적에게 표식을 1개씩 남김 (구름 1개당 1회, 중첩 가능). 표식 1개당 다른 타워에게 맞을 때 추가 피해 %.1f, 한 번 맞으면 표식이 전부 터짐" % [
+			return "표식 구름: 구름(%.1f칸, %.1f초)이 적에게 표식을 남김. 다른 타워가 때리면 표식당 추가 피해 %.1f" % [
 				v(evo, skill, "radius", lv), v(evo, skill, "time", lv), v(evo, skill, "dmg", lv)]
 		"supportB":
-			return "표식 전파: 표식이 걸린 적이 죽으면 반경 %.1f칸 안의 표식 없는 적 최대 %d마리에게 표식을 옮김" % [
+			return "표식 전파: 표식 걸린 적이 죽으면 %.1f칸 안 %d마리에게 표식 이동" % [
 				v(evo, skill, "radius", lv), int(v(evo, skill, "count", lv))]
 		"barrageA":
-			return "연속 발사: %d%% 확률로 미사일을 한 번 더 발사 (위력 x%.1f)" % [
+			return "연속 발사: %d%% 확률로 한 번 더 발사 (위력 x%.1f)" % [
 				roundi(v(evo, skill, "chance", lv) * 100.0), v(evo, skill, "second", lv)]
 		"barrageB":
-			return "일제 사격: 한 번에 미사일 %d발 (가능하면 서로 다른 적을 조준), 한 발 위력 x%.2f" % [
+			return "일제 사격: 미사일 %d발 동시 발사 (발당 x%.2f)" % [
 				int(v(evo, skill, "missiles", lv)), v(evo, skill, "power", lv)]
 		"skillA":
-			return "인스네어: 공격이 %d%% 확률로 반경 %.1f칸의 적을 %.1f초간 이동속도 -%d%%" % [
+			return "인스네어: %d%% 확률로 %.1f칸 안 적을 %.1f초간 이동 -%d%%" % [
 				roundi(v(evo, skill, "chance", lv) * 100.0), v(evo, skill, "radius", lv),
 				v(evo, skill, "time", lv), roundi(v(evo, skill, "slow", lv) * 100.0)]
 		"skillB":
-			return "포획: 공격이 %d%% 확률로 공중 몬스터를 %d초간 지상에 붙잡음 (제자리 정지, 지상 타워도 공격 가능)" % [
+			return "포획: %d%% 확률로 공중 몬스터를 %d초간 지상에 붙잡음" % [
 				roundi(v(evo, skill, "chance", lv) * 100.0), int(v(evo, skill, "time", lv))]
 		"growthA":
-			return "성장: 처치할 때마다 치명타 확률 +%.1f%% (기본 %d%%, 최대 %d%%). 치명타 피해 x%.0f" % [
-				v(evo, skill, "per_kill", lv) * 100.0, roundi(CRIT_BASE * 100.0),
-				roundi(v(evo, skill, "cap", lv) * 100.0), CRIT_MULT]
+			return "성장: 처치마다 치명타 확률 +%.1f%% (최대 %d%%, 치명타 x%.0f)" % [
+				v(evo, skill, "per_kill", lv) * 100.0, roundi(v(evo, skill, "cap", lv) * 100.0), CRIT_MULT]
 		"growthB":
-			return "광란: 치명타가 터지면 공격속도 +%d%% (중첩, 최대 %d회). %d초 동안 치명타가 없으면 초기화" % [
-				roundi(v(evo, skill, "haste", lv) * 100.0), HASTE_MAX_STACKS, int(v(evo, skill, "time", lv))]
+			return "광란: 치명타 시 공격속도 +%d%% (최대 %d중첩)" % [
+				roundi(v(evo, skill, "haste", lv) * 100.0), HASTE_MAX_STACKS]
 		"chargeA":
-			return "충전: 기본 공격 없음. 적이 없는 동안 에너지를 모아(속도 x%.1f), %.0f초 이상 모이면 적이 들어올 때 부비 트랩 폭발 (피해는 충전량에 비례, 최대 %.0f초분)" % [
-				v(evo, skill, "rate", lv), CHARGE_MIN, v(evo, "A", "cap", lv)]
+			return "충전: 적이 없을 때 에너지를 모아, %.0f초 이상이면 적이 올 때 폭발 (충전량 비례)" % CHARGE_MIN
 		"chargeB":
-			return "과충전 기절: 최대 충전 상태로 터지면 맞은 적을 %.1f초 기절" % v(evo, skill, "stun", lv)
+			return "과충전 기절: 최대 충전 폭발 시 %.1f초 기절" % v(evo, skill, "stun", lv)
 	return ""
 
 
-## 업그레이드 탭 / 진화 버튼에 붙이는 설명
+## 계열 설명 (진화 전 기준 한 줄씩)
 static func tooltip(evo: String) -> String:
 	var d: Dictionary = DATA[evo]
-	var head := "%s (%s 타워)" % [d.name, Balance.TOWER_DEFS[d.tower].name]
+	var head := "%s (%s)" % [d.name, Balance.TOWER_DEFS[d.tower].name]
 	if DAMAGE_MULT.has(evo):
-		head += "  - 진화하면 한 발 피해 x%.1f" % DAMAGE_MULT[evo]
-	return "%s\nA %s: %s\nB %s: %s" % [
-		head, d.a_name, skill_text(evo, "A", 1), d.b_name, skill_text(evo, "B", 1)]
+		head += " · 한 발 피해 x%.1f" % DAMAGE_MULT[evo]
+	return "%s\nA %s\nB %s" % [head, skill_text(evo, "A", 1), skill_text(evo, "B", 1)]

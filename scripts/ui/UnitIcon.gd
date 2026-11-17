@@ -35,6 +35,17 @@ func show_tower(kind: Dictionary) -> void:
 	_set_node(t)
 
 
+## 진화한 타워의 모습 (계열마다 다르다)
+func show_evolution(evo: String) -> void:
+	var t := Tower.new()
+	t.preview = true
+	t.kind = Balance.tower_kind(Evolutions.DATA[evo].tower)
+	t.evolution = evo
+	t.color_info = {"name": "미리보기", "color": Color(0.8, 0.82, 0.9)}
+	_tall_decor = false
+	_set_node(t)
+
+
 func _set_node(n: Node2D) -> void:
 	if _node:
 		_node.queue_free()
@@ -55,6 +66,6 @@ func _layout() -> void:
 		center.y += s * (0.12 if _tall_decor else 0.02)
 	elif _node is Tower:
 		var t: Tower = _node
-		t.preview_cell = s * 0.72  # 긴 포신/미사일이 아이콘 밖으로 잘리지 않게
+		t.preview_cell = s * (0.84 if t.evolution != "" else 0.72)  # 긴 포신/미사일이 아이콘 밖으로 잘리지 않게 (진화 포탑은 타일 안에 그려서 더 크게)
 		t.queue_redraw()  # 크기가 바뀌면 다시 그린다 (아이콘은 평소에 다시 그리지 않는다)
 	_node.position = center
