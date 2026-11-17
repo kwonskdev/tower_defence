@@ -12,7 +12,7 @@ signal lane_failed(player_id: int)
 var player_id: int = 0
 var gold: int = Balance.START_GOLD
 var income: int = Balance.BASE_INCOME   # 수입 틱마다 받는 골드
-var lives: int = Balance.START_LIVES
+var lives: float = float(Balance.START_LIVES)  # 소수점까지 들고 있다. 화면/패배 판정은 lives_shown() (내림)
 var active := true
 var lane_visible := true
 var monsters: Array[Monster] = []
@@ -30,6 +30,9 @@ var _pathfinder: Pathfinder
 var _income_timer: Timer
 var _next_monster_id := 1
 var _boss_controller = null  # BossController 참조 (남색 강화 보너스용)
+var _cluster_sizes: Dictionary = {}   # 칸 -> 그 칸 타워가 속한 같은 색 덩어리의 크기 (타워가 바뀌면 다시 계산)
+var _cluster_dirty := true
+var _rewarded_patterns: Dictionary = {}  # 이미 보상을 준 패턴 종류 (ColorPatterns.PATTERNS 키)
 
 
 func setup(p_player_id: int, grid: GridSystem, renderer: GridRenderer) -> void:
@@ -71,6 +74,7 @@ func build_tower(cell: Vector2i, kind_id: String) -> Tower:
 	towers.append(tower)
 
 	Log.info(Log.Category.COLOR, "[P%d] 타워 %s 색깔 할당: %s" % [player_id + 1, cell, color_info.name])
+	_on_tower_colors_changed()
 	return tower
 
 
@@ -86,6 +90,7 @@ func recolor_tower(tower: Tower) -> bool:
 	tower.set_color_info(new_info)
 	Effects.ring(_renderer, tower.center_cell_pos(), 0.8, new_info.color, lane_visible)
 	Log.info(Log.Category.COLOR, "[P%d] 타워 %s 색깔 변경: %s -> %s" % [player_id + 1, tower.cell, old_name, new_info.name])
+	_on_tower_colors_changed()
 	return true
 
 
@@ -203,6 +208,7 @@ func _on_cell_changed(position: Vector2i, _old_state, new_state) -> void:
 			Effects.float_text(_renderer, tower.center_cell_pos(), "파괴!", Color(1.0, 0.4, 0.3), lane_visible)
 			tower.queue_free()
 			towers.erase(tower)
+			_on_tower_colors_changed()
 			break
 
 
@@ -337,22 +343,23 @@ func _on_monster_died(monster: Monster) -> void:
 		var killer_tower = monster._killer
 		match killer_tower.color_info.name:
 			"초록":  # 처치 시 골드 보너스
-				var bonus := color_bonus_value("초록")
+				var bonus := color_bonus_value("초록", killer_tower)
 				if bonus > 0.0:
 					actual_reward = roundi(base_reward * (1.0 + bonus))
 
 			"남색":  # 처치 시 보낸 몬스터 N마리 강화
-				var count := int(color_bonus_value("남색"))
+				var count := int(color_bonus_value("남색", killer_tower))
 				if count > 0:
 					_empower_sent_monsters(count)
 
 			"보라":  # 처치 시 확률로 체력 +1
+				# 확률은 업그레이드 값 그대로, 성공하면 생명 1 x 군집 배율 (소수로 쌓인다)
 				var chance := color_bonus_value("보라")
 				if lives < Balance.MAX_LIVES and randf() < chance:
-					lives += 1
-					lives_changed.emit(lives)
-					Effects.float_text(_renderer, monster.cell_pos, "+1 생명!", killer_tower.color_info.color, lane_visible)
-					Log.info(Log.Category.GAME, "[P%d] 보라 보너스: 체력 +1 (현재 %d)" % [player_id + 1, lives])
+					var gain := cluster_multiplier(killer_tower)
+					add_lives(gain)
+					Effects.float_text(_renderer, monster.cell_pos, "+%s 생명!" % String.num(gain, 2), killer_tower.color_info.color, lane_visible)
+					Log.info(Log.Category.GAME, "[P%d] 보라 보너스: 체력 +%.2f (현재 %.2f)" % [player_id + 1, gain, lives])
 
 	gold += actual_reward
 	var text := "+%d" % actual_reward if actual_reward == base_reward else "+%d (보너스!)" % actual_reward
@@ -367,11 +374,11 @@ func _on_monster_reached_exit(monster: Monster) -> void:
 	monsters.erase(monster)
 	monster.queue_free()
 	lives -= monster.life_damage
-	Log.info(Log.Category.GAME, "[P%d] 몬스터#%d(%s) 기지 도달! 생명 -%d -> %d" % [
+	Log.info(Log.Category.GAME, "[P%d] 몬스터#%d(%s) 기지 도달! 생명 -%d -> %.2f" % [
 		player_id + 1, monster.monster_id, monster.kind_id, monster.life_damage, lives])
-	lives_changed.emit(lives)
+	lives_changed.emit(lives_shown())
 
-	if lives <= 0 and active:
+	if lives_shown() <= 0 and active:
 		Log.warn(Log.Category.GAME, "[P%d] 생명 0 - 이 레인 패배" % (player_id + 1))
 		shutdown()
 		lane_failed.emit(player_id)
@@ -439,21 +446,128 @@ func color_bonus_type(color_name: String) -> String:
 	return Balance.COLOR_BONUS_TYPES.get(color_name, "")
 
 
-## 색깔 보너스 값 가져오기 (현재 레벨 기준)
-func color_bonus_value(color_name: String) -> float:
+## 색깔 보너스 값 가져오기 (현재 레벨 기준). tower를 주면 그 타워의 같은 색 군집 배율이 곱해진다.
+func color_bonus_value(color_name: String, tower: Tower = null) -> float:
 	var level := color_level(color_name)
 	if level == 0:
 		return 0.0
 	var bonus_type := color_bonus_type(color_name)
+	var base := 0.0
 	if bonus_type == "empower":
 		# 강화는 마리수를 반환
-		return float(Balance.COLOR_LEVEL_BONUS["empower_count"][level - 1])
-	else:
+		base = float(Balance.COLOR_LEVEL_BONUS["empower_count"][level - 1])
+	elif Balance.COLOR_LEVEL_BONUS.has(bonus_type):
 		# 나머지는 비율 반환
-		var key := bonus_type
-		if not Balance.COLOR_LEVEL_BONUS.has(key):
-			return 0.0
-		return Balance.COLOR_LEVEL_BONUS[key][level - 1]
+		base = Balance.COLOR_LEVEL_BONUS[bonus_type][level - 1]
+	return base * cluster_multiplier(tower)
+
+
+## 생명을 올린다 (소수 가능, 상한 MAX_LIVES)
+func add_lives(amount: float) -> void:
+	lives = minf(lives + amount, float(Balance.MAX_LIVES))
+	lives_changed.emit(lives_shown())
+
+
+## 화면에 보이고 패배 판정에 쓰는 생명 (소수점은 내림. 3.6이면 3)
+func lives_shown() -> int:
+	return floori(lives)
+
+
+# --- 색깔 군집 ---
+
+## 이 타워의 같은 색 군집 배율 (타워를 안 주면 1.0)
+func cluster_multiplier(tower: Tower) -> float:
+	if tower == null:
+		return 1.0
+	return 1.0 + Balance.CLUSTER_BONUS_PER_TOWER * cluster_size(tower)
+
+
+## 이 타워와 상하좌우로 끊기지 않고 이어진 같은 색 타워의 수 (자기 자신 포함)
+func cluster_size(tower: Tower) -> int:
+	if _cluster_dirty:
+		_rebuild_clusters()
+	return int(_cluster_sizes.get(tower.cell, 0))
+
+
+func _rebuild_clusters() -> void:
+	_cluster_dirty = false
+	_cluster_sizes.clear()
+	var color_at: Dictionary = _tower_color_map(true)  # 군집은 길을 막는 타워만 센다
+	for start in color_at:
+		if _cluster_sizes.has(start):
+			continue
+		# 넓이 우선 탐색으로 같은 색 덩어리를 모은다
+		var group: Array[Vector2i] = [start]
+		var seen := {start: true}
+		var i := 0
+		while i < group.size():
+			var c: Vector2i = group[i]
+			i += 1
+			for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+				var n: Vector2i = c + d
+				if not seen.has(n) and color_at.get(n, "") == color_at[start]:
+					seen[n] = true
+					group.append(n)
+		for c in group:
+			_cluster_sizes[c] = group.size()
+
+	# 트랩: 군집엔 안 세지만, 옆에 같은 색 군집이 있으면 그 군집의 크기(여러 개면 가장 큰 것)를 받는다
+	for t in towers:
+		if t.kind.blocks:
+			continue
+		var best := 0
+		for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var n: Vector2i = t.cell + d
+			if color_at.get(n, "") == t.color_info.name:
+				best = maxi(best, int(_cluster_sizes[n]))
+		if best > 0:
+			_cluster_sizes[t.cell] = best
+
+
+## 칸 -> 색 이름 (blocking_only면 길을 막는 타워만)
+func _tower_color_map(blocking_only: bool = false) -> Dictionary:
+	var m := {}
+	for t in towers:
+		if blocking_only and not t.kind.blocks:
+			continue
+		m[t.cell] = t.color_info.name
+	return m
+
+
+# --- 색깔 패턴 이스터에그 ---
+
+## 타워가 지어지거나, 색이 바뀌거나, 부서졌다: 군집을 다시 계산하고 새로 완성된 패턴에 보상을 준다
+func _on_tower_colors_changed() -> void:
+	_cluster_dirty = true
+	if not active:
+		return
+	for p in ColorPatterns.find(_tower_color_map()):
+		if _rewarded_patterns.has(p.id):
+			continue  # 패턴 종류마다 한 게임에 한 번만
+		_rewarded_patterns[p.id] = true
+		_reward_pattern(p)
+
+
+func _reward_pattern(p: Dictionary) -> void:
+	var data: Dictionary = ColorPatterns.PATTERNS[p.id]
+	var gold_bonus := int(data.gold)
+	var life_bonus := int(data.lives)
+	gold += gold_bonus
+	if life_bonus > 0:
+		add_lives(float(life_bonus))
+
+	# 연출: 조합에 든 타워마다 그 타워 색의 링, 가운데에 이름과 보상
+	var color_at := {}
+	for t in towers:
+		color_at[t.cell] = t.color_info.color
+	var center := Vector2.ZERO
+	for c in p.cells:
+		center += Vector2(c) + Vector2(0.5, 0.5)
+		Effects.ring(_renderer, Vector2(c) + Vector2(0.5, 0.5), 0.9, color_at.get(c, Color.WHITE), lane_visible)
+	center /= float(p.cells.size())
+	Effects.float_text(_renderer, center, "%s! %s" % [data.name, ColorPatterns.reward_text(p.id)], Color(1.0, 0.95, 0.5), lane_visible)
+	Log.info(Log.Category.COLOR, "[P%d] 패턴 완성: %s %s (골드=%d 생명=%.2f)" % [
+		player_id + 1, data.name, ColorPatterns.reward_text(p.id), gold, lives])
 
 
 ## 보스 레인에 보낸 몬스터 중 랜덤 N마리 강화 (남색 색깔 보너스)

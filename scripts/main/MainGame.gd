@@ -890,7 +890,7 @@ func _status_icon(kind: String, color: Color, px: int = 24) -> StatusIcon:
 
 
 func _update_status_panel(lane: LaneController, boss: BossController) -> void:
-	status_lives_label.text = "%d" % lane.lives
+	status_lives_label.text = "%d" % lane.lives_shown()
 	status_gold_label.text = "%d" % lane.gold
 	var left := lane.income_time_left() if boss.state == BossController.State.RUNNING else -1.0
 	status_income_label.text = "수입 +%d %s" % [lane.income, "(%d초)" % ceili(left) if left >= 0.0 else "(대기)"]

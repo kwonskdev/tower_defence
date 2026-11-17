@@ -86,7 +86,14 @@ const COLOR_UPGRADE_COSTS := [20, 30, 45, 65, 90]   # 합계 250골드 (진화 �
 # 타워 색깔 바꾸기: 비용을 내면 지금 색을 뺀 6색 중 랜덤으로 바뀐다
 const RECOLOR_COST := 10
 
-# 생명 상한 (보라 보너스로 늘어나는 생명이 이 값을 넘지 못한다)
+# 색깔 군집: 같은 색 타워가 상하좌우로 끊기지 않고 N개 이어지면, 그 타워들의 색깔 업그레이드 효과가
+# (1 + CLUSTER_BONUS_PER_TOWER * N)배가 된다 (곱연산). 0.01 = 타워 1개당 1%. 혼자(N=1)도 N에 센다.
+# N은 길을 막는 타워만 센다. 같은 색 트랩(길을 막지 않는 타워)은 군집에 안 세지만, 군집 바로 옆(상하좌우)에 있으면
+# 그 군집의 배율을 똑같이 받는다 (여러 군집에 닿으면 가장 큰 군집).
+const CLUSTER_BONUS_PER_TOWER := 0.01
+
+# 생명 상한 (보라 보너스, 패턴 보상으로 늘어나는 생명이 이 값을 넘지 못한다)
+# 생명은 소수점까지 들고 있되, 화면과 패배 판정은 내림한 값을 쓴다 (3.6이면 3).
 const MAX_LIVES := 20
 
 # UI 표시용 보너스 이름
@@ -110,6 +117,9 @@ static func color_bonus_value_text(color_name: String, level: int) -> String:
 static func color_tooltip(color_name: String, level: int) -> String:
 	var type: String = COLOR_BONUS_TYPES[color_name]
 	var text := "%s: %s (이 색 타워에 적용, 레인 전체 공유)\n" % [color_name, COLOR_BONUS_LABELS[type]]
+	text += "같은 색 타워가 상하좌우로 N개 이어지면 효과 +%s%% (곱연산). 군집 옆의 같은 색 트랩도 같은 효과를 받는다.\n" % String.num(CLUSTER_BONUS_PER_TOWER * 100.0, 2)
+	if type == "lifegain":
+		text += "성공하면 생명을 1이 아니라 군집 배율만큼 얻는다 (소수로 쌓이고 화면엔 내림).\n"
 	match type:
 		"damage": text += "이 색 타워의 공격력이 오른다."
 		"cooldown": text += "이 색 타워의 공격 간격이 짧아진다."
