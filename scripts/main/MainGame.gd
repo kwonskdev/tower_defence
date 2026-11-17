@@ -1380,25 +1380,8 @@ class PauseOverlay extends Control:
 	signal restart_requested
 	signal quit_requested
 
-	# 설명서 항목: [이름, 색, 내용]. 내용의 %d는 수입 주기(초)
-	const GUIDE_TOPICS := [
-		["목표", Color(1.0, 0.85, 0.4),
-			"제한시간 안에 보스를 무찌르세요.\n보스가 보내는 몬스터가 끝까지 가지 못하게 막아야 해요.\n생명이 0이 되거나 시간이 끝나면 패배예요."],
-		["진행", Color(1.0, 0.85, 0.4),
-			"게임을 시작하면 %d초마다 수입이 들어오고,\n보스가 몬스터들을 보내와요.\n시작 전에는 타워를 미리 지을 수 있어요."],
-		["타워", Color(0.5, 0.85, 1.0),
-			"타워 → 종류 선택 → 맵의 빈 타일 클릭.\n지은 타워를 누르면 진화와 색깔 바꾸기를 할 수 있어요.\n길을 완전히 막으면 몬스터가 타워를 부수며 와요."],
-		["몬스터", Color(1.0, 0.6, 0.55),
-			"몬스터 → 유형 선택 → 몬스터 선택 → [생성].\n보스를 공격하고, 수입도 늘어나요."],
-		["업그레이드", Color(0.7, 0.9, 0.5),
-			"항목을 고르고 [업그레이드].\n같은 계열 타워가 모두 강해져요."],
-		["색깔 보너스", Color(0.85, 0.65, 1.0),
-			"같은 색 타워가 붙어 있을수록 더 강해져요.\n색마다 효과가 달라요."],
-		["미니맵", Color(0.6, 0.66, 1.0),
-			"1~8은 각자의 레인, B는 보스 레인이에요.\n누르면 이동하고, 누른 채 끌면 스크롤돼요."],
-		["조작", Color(0.75, 0.75, 0.75),
-			"P / Esc: 일시정지\n맵은 드래그하거나 휠로 스크롤해요."],
-	]
+	var _topics: Array = []   # 설명서 항목: [{name, color, text, children: [{name, color, text}]}] (게임 데이터로 만든다)
+	var _topic_idx := 0
 
 	var restart_button: Button
 	var quit_button: Button
@@ -1408,9 +1391,11 @@ class PauseOverlay extends Control:
 	var title_label: Label
 	var menu_box: VBoxContainer     # 1단계: 계속하기 / 설명서 / 다시 시작 / 종료
 	var guide_box: VBoxContainer    # 2단계: 설명서 항목 버튼들
-	var page_box: VBoxContainer     # 3단계: 항목 하나의 설명
+	var page_box: VBoxContainer     # 3단계: 항목 하나의 설명 (+ 세부 항목 버튼)
 	var page_text: RichTextLabel
-	var _page := "menu"             # 지금 보이는 단계: menu / guide / page
+	var child_grid: GridContainer   # 세부 항목 버튼 (타워 종류 / 진화 계열 / 색깔)
+	var page_back: Button
+	var _page := "menu"             # 지금 보이는 단계: menu / guide / page / sub(세부 항목)
 
 	func _init() -> void:
 		process_mode = Node.PROCESS_MODE_ALWAYS
@@ -1472,12 +1457,9 @@ class PauseOverlay extends Control:
 		grid.add_theme_constant_override("h_separation", 12)
 		grid.add_theme_constant_override("v_separation", 12)
 		guide_box.add_child(grid)
-		for i in range(GUIDE_TOPICS.size()):
-			var b := _make_button(GUIDE_TOPICS[i][0])
-			b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			b.add_theme_color_override("font_color", GUIDE_TOPICS[i][1])
-			b.pressed.connect(_show_topic.bind(i))
-			grid.add_child(b)
+		_topics = _build_topics()
+		for i in range(_topics.size()):
+			grid.add_child(_make_topic_button(_topics[i], _show_topic.bind(i)))
 		var guide_back := _make_button("← 뒤로")
 		guide_back.pressed.connect(_show_page.bind("menu"))
 		guide_box.add_child(guide_back)
@@ -1490,12 +1472,17 @@ class PauseOverlay extends Control:
 		page_text.bbcode_enabled = true
 		page_text.fit_content = true
 		page_text.scroll_active = false
-		page_text.custom_minimum_size = Vector2(0, 170)
-		page_text.add_theme_font_size_override("normal_font_size", 22)
-		page_text.add_theme_constant_override("line_separation", 8)
+		page_text.custom_minimum_size = Vector2(0, 150)
+		page_text.add_theme_font_size_override("normal_font_size", 20)
+		page_text.add_theme_constant_override("line_separation", 6)
 		page_box.add_child(page_text)
-		var page_back := _make_button("← 목록")
-		page_back.pressed.connect(_show_page.bind("guide"))
+		child_grid = GridContainer.new()
+		child_grid.columns = 2
+		child_grid.add_theme_constant_override("h_separation", 12)
+		child_grid.add_theme_constant_override("v_separation", 10)
+		page_box.add_child(child_grid)
+		page_back = _make_button("← 목록")
+		page_back.pressed.connect(go_back)
 		page_box.add_child(page_back)
 		_show_page("menu")
 		_create_confirm()
@@ -1564,22 +1551,82 @@ class PauseOverlay extends Control:
 		title_label.remove_theme_color_override("font_color")
 		menu_box.visible = page == "menu"
 		guide_box.visible = page == "guide"
-		page_box.visible = page == "page"
+		page_box.visible = page == "page" or page == "sub"
 		if confirm_layer != null:
 			_close_confirm()
 		match page:
 			"menu": title_label.text = "일시정지"
 			"guide": title_label.text = "설명서"
 
+	func _make_topic_button(info: Dictionary, on_press: Callable) -> Button:
+		var b := _make_button(info.name)
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.add_theme_color_override("font_color", info.color)
+		b.pressed.connect(on_press)
+		return b
+
+	## 항목 하나를 연다: 설명 + (있으면) 세부 항목 버튼
 	func _show_topic(index: int) -> void:
-		var topic: Array = GUIDE_TOPICS[index]
+		_topic_idx = index
+		var topic: Dictionary = _topics[index]
 		_show_page("page")
-		title_label.text = topic[0]
-		title_label.add_theme_color_override("font_color", topic[1])
-		var text: String = topic[2]
-		if text.contains("%d"):
-			text = text % int(Balance.INCOME_INTERVAL)
-		page_text.text = text
+		title_label.text = topic.name
+		title_label.add_theme_color_override("font_color", topic.color)
+		page_text.text = topic.text
+		for c in child_grid.get_children():
+			child_grid.remove_child(c)
+			c.queue_free()
+		for i in range(topic.children.size()):
+			child_grid.add_child(_make_topic_button(topic.children[i], _show_child.bind(i)))
+		child_grid.visible = not topic.children.is_empty()
+		page_back.text = "← 목록"
+
+	func _show_child(index: int) -> void:
+		var child: Dictionary = _topics[_topic_idx].children[index]
+		_show_page("sub")
+		title_label.text = child.name
+		title_label.add_theme_color_override("font_color", child.color)
+		page_text.text = child.text
+		child_grid.visible = false
+		page_back.text = "← 뒤로"
+
+	## 설명서 내용. 타워/진화/색깔은 게임 데이터에서 만들어서 수치가 바뀌어도 맞는다.
+	func _build_topics() -> Array:
+		var gold := Color(1.0, 0.85, 0.4)
+		var towers: Array = []
+		for id in Balance.TOWER_KINDS:
+			var kind := Balance.tower_kind(id)
+			var evos: Array = Evolutions.TREE[id].map(func(e): return Evolutions.DATA[e].name)
+			towers.append({"name": kind.name, "color": kind.color,
+				"text": "%s\n\n진화: %s" % [Balance.tower_tooltip(kind), " / ".join(evos)]})
+		var upgrades: Array = []
+		for evo in Evolutions.ORDER:
+			var d: Dictionary = Evolutions.DATA[evo]
+			var lines: Array[String] = [Evolutions.tooltip(evo), "", "업그레이드 (Lv1 → Lv%d)" % Evolutions.MAX_LEVEL]
+			for stat in Evolutions.STATS[evo]:
+				lines.append("%s %s: %s → %s" % [stat.s, stat.name, Evolutions.stat_value_text(evo, stat, 1), Evolutions.stat_value_text(evo, stat, Evolutions.MAX_LEVEL)])
+			upgrades.append({"name": d.name, "color": d.color, "text": "\n".join(lines)})
+		var colors: Array = []
+		for info in Balance.TOWER_COLORS:
+			colors.append({"name": info.name, "color": info.color.lightened(0.35), "text": Balance.color_guide(info.name)})
+		return [
+			{"name": "목표", "color": gold, "children": [],
+				"text": "제한시간 안에 보스를 무찌르세요.\n보스가 보내는 몬스터가 끝까지 가지 못하게 막아야 해요.\n생명이 0이 되거나 시간이 끝나면 패배예요."},
+			{"name": "진행", "color": gold, "children": [],
+				"text": "게임을 시작하면 %d초마다 수입이 들어오고,\n보스가 몬스터들을 보내와요.\n시작 전에는 타워를 미리 지을 수 있어요." % int(Balance.INCOME_INTERVAL)},
+			{"name": "타워", "color": Color(0.5, 0.85, 1.0), "children": towers,
+				"text": "타워를 고르고 맵의 빈 타일을 누르면 지어져요.\n지은 타워를 누르면 진화와 색깔 바꾸기를 할 수 있어요.\n길을 완전히 막으면 몬스터가 타워를 부수며 와요.\n\n타워 종류를 눌러 자세히 보세요."},
+			{"name": "몬스터", "color": Color(1.0, 0.6, 0.55), "children": [],
+				"text": "몬스터 → 유형 선택 → 몬스터 선택 → [생성].\n보스를 공격하고, 수입도 늘어나요."},
+			{"name": "업그레이드", "color": Color(0.7, 0.9, 0.5), "children": upgrades,
+				"text": "계열을 고르고 항목을 올리면 그 계열 타워가 모두 강해져요.\n항목마다 Lv%d까지 올릴 수 있어요.\n\n계열을 눌러 자세히 보세요." % Evolutions.MAX_LEVEL},
+			{"name": "색깔 보너스", "color": Color(0.85, 0.65, 1.0), "children": colors,
+				"text": "타워 색은 지을 때 랜덤으로 정해져요 (바꾸기 %d골드).\n같은 색 타워가 상하좌우로 이어질수록 효과가 커져요 (타워 1개당 +%d%%).\n\n색을 눌러 효과를 확인하세요." % [Balance.RECOLOR_COST, roundi(Balance.CLUSTER_BONUS_PER_TOWER * 100.0)]},
+			{"name": "미니맵", "color": Color(0.6, 0.66, 1.0), "children": [],
+				"text": "1~8은 각자의 레인, B는 보스 레인이에요.\n누르면 그 레인으로 이동해요."},
+			{"name": "숨은 요소", "color": Color(0.75, 0.75, 0.75), "children": [],
+				"text": "게임 곳곳에 이스터에그가 숨어 있어요.\n직접 찾아보세요!"},
+		]
 
 	## 뒤로: 항목 -> 목록 -> 일시정지 -> 계속하기
 	func go_back() -> void:
@@ -1587,6 +1634,7 @@ class PauseOverlay extends Control:
 			_close_confirm()
 			return
 		match _page:
+			"sub": _show_topic(_topic_idx)
 			"page": _show_page("guide")
 			"guide": _show_page("menu")
 			_: resume_requested.emit()

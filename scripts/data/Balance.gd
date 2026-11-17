@@ -113,23 +113,35 @@ static func color_bonus_value_text(color_name: String, level: int) -> String:
 	return "+%d%%" % roundi(float(COLOR_LEVEL_BONUS[type][level - 1]) * 100.0)
 
 
-## 색깔 보너스 설명 (마우스를 올렸을 때)
+## 색깔 보너스가 어떤 효과인지 한 문장
+static func color_effect(type: String) -> String:
+	match type:
+		"damage": return "공격력이 오른다."
+		"cooldown": return "공격 간격이 짧아진다."
+		"range": return "사거리가 늘어난다."
+		"income": return "처치 골드가 늘어난다."
+		"penetration": return "적 방어력을 일부 무시한다."
+		"empower": return "처치하면 내 몬스터 몇 마리가 %d초간 공격력 +%d%%." % [roundi(EMPOWER_DURATION), roundi(EMPOWER_BOOST * 100.0)]
+		"lifegain": return "처치하면 확률로 생명 +1."
+	return ""
+
+
+## 색깔 보너스 설명 (업그레이드 화면에서 색을 골랐을 때)
 static func color_tooltip(color_name: String, level: int) -> String:
 	var type: String = COLOR_BONUS_TYPES[color_name]
-	var effect := ""
-	match type:
-		"damage": effect = "공격력이 오른다."
-		"cooldown": effect = "공격 간격이 짧아진다."
-		"range": effect = "사거리가 늘어난다."
-		"income": effect = "처치 골드가 늘어난다."
-		"penetration": effect = "적 방어력을 일부 무시한다."
-		"empower": effect = "처치하면 내 몬스터 몇 마리가 %d초간 공격력 +%d%%." % [roundi(EMPOWER_DURATION), roundi(EMPOWER_BOOST * 100.0)]
-		"lifegain": effect = "처치하면 확률로 생명 +1."
 	var text := "%s · %s\n이 색 타워는 %s 같은 색이 붙을수록 더 강해진다.\n현재 %s" % [
-		color_name, COLOR_BONUS_LABELS[type], effect, color_bonus_value_text(color_name, level)]
+		color_name, COLOR_BONUS_LABELS[type], color_effect(type), color_bonus_value_text(color_name, level)]
 	if level < COLOR_MAX_LEVEL:
 		text += " → 다음 %s" % color_bonus_value_text(color_name, level + 1)
 	return text
+
+
+## 설명서용 색깔 설명: 효과와 레벨별 범위
+static func color_guide(color_name: String) -> String:
+	var type: String = COLOR_BONUS_TYPES[color_name]
+	return "%s · %s\n이 색 타워는 %s\n\n업그레이드: Lv1 %s → Lv%d %s" % [
+		color_name, COLOR_BONUS_LABELS[type], color_effect(type),
+		color_bonus_value_text(color_name, 1), COLOR_MAX_LEVEL, color_bonus_value_text(color_name, COLOR_MAX_LEVEL)]
 
 
 # 강화 효과 상수
