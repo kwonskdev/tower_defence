@@ -26,7 +26,9 @@ var action_buttons: Array[Button] = []   # 미니맵 바로 왼쪽 우하단의 
 var detail_action: Button
 var color_action: Button
 var monster_action: Button
-var start_button: Button                 # 위쪽 메인 줄의 [시작] -> 시작하면 [일시정지]
+var start_button: Button                 # 위쪽 메인 줄의 [시작] (누르면 사라진다)
+var pause_button: Button                 # 맵 오른쪽 위의 [일시정지] (시작한 뒤에만 보인다)
+const PAUSE_SIZE := 48.0
 var confirm_dialog: ConfirmationDialog   # 타워를 지으면 길이 막힐 때 확인창
 var _pending_cell := Vector2i.ZERO
 var tower_buttons: Dictionary = {}       # 기본 타워 종류 -> 타워 배럭 버튼
@@ -1041,11 +1043,11 @@ func _update_status_panel(lane: LaneController, boss: BossController) -> void:
 	status_lives_label.text = "%d" % lane.lives_shown()
 	status_gold_label.text = "%d" % lane.gold
 	var left := lane.income_time_left() if boss.state == BossController.State.RUNNING else -1.0
-	status_income_label.text = "수입 +%d %s" % [lane.income, "(%d초)" % ceili(left) if left >= 0.0 else "(대기)"]
+	status_income_label.text = "수입 +%d\n%s" % [lane.income, "%d초 뒤" % ceili(left) if left >= 0.0 else "대기"]
 
 	var preview := boss.get_next_wave_preview()
 	var wave_left := boss.time_to_next_wave()
-	status_wave_title.text = "다음 웨이브 %s" % ("%d초" % ceili(wave_left) if wave_left >= 0.0 else "(대기)")
+	status_wave_title.text = "다음 웨이브\n%s" % ("%d초 뒤" % ceili(wave_left) if wave_left >= 0.0 else "대기")
 	for i in range(status_wave_rows.size()):
 		var r: Dictionary = status_wave_rows[i]
 		r.row.visible = i < preview.size()
@@ -1310,6 +1312,20 @@ func _on_start_pressed():
 
 ## 일시정지 화면 (일시정지 버튼은 위쪽 메인 줄의 [시작] 버튼이 시작 뒤에 바뀐 것)
 func _create_pause_ui() -> void:
+	pause_button = Button.new()
+	pause_button.z_index = 85  # 상태 표시와 같은 높이: 타워/몬스터(1~4)보다 위
+	pause_button.custom_minimum_size = Vector2(PAUSE_SIZE, PAUSE_SIZE)
+	pause_button.size = Vector2(PAUSE_SIZE, PAUSE_SIZE)
+	pause_button.visible = false
+	pause_button.tooltip_text = "일시정지 (P / Esc)"
+	pause_button.focus_mode = Control.FOCUS_NONE  # 스페이스/엔터가 이 버튼을 누르지 않게
+	pause_button.pressed.connect(_toggle_pause)
+	var icon := PauseIcon.new()
+	pause_button.add_child(icon)
+	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	add_child(pause_button)
+	game_field.ui_blockers.append(pause_button)  # 이 버튼을 눌러도 뒤의 맵이 클릭되지 않게
+
 	pause_overlay = PauseOverlay.new()
 	add_child(pause_overlay)
 	pause_overlay.resume_requested.connect(func(): _set_paused(false))
@@ -1337,17 +1353,27 @@ func _set_paused(on: bool) -> void:
 	Log.info(Log.Category.GAME, "일시정지 %s" % ("켬" if on else "끔"))
 
 
-## 위쪽 메인 줄의 버튼: 시작 전에는 [시작], 시작한 뒤에는 [일시정지], 게임이 끝나면 눌리지 않는다
+## 시작 전에는 위쪽 메인 줄에 [시작]이 있고, 시작하면 그 버튼은 사라지고 맵 오른쪽 위에 [일시정지]가 나타난다 (게임이 끝나면 숨김)
 func _refresh_start_button() -> void:
-	start_button.text = "일시정지" if _play_running else "▶ 시작"
-	start_button.disabled = game_over_screen.visible
+	start_button.visible = not _play_running
+	pause_button.visible = _play_running and not game_over_screen.visible
 
 
 func _on_start_button_pressed() -> void:
-	if _play_running:
-		_toggle_pause()
-	else:
+	if not _play_running:
 		_on_start_pressed()
+
+
+## 일시정지 버튼 아이콘 (막대 두 개. 글꼴에 일시정지 기호가 없을 수 있어 직접 그린다)
+class PauseIcon extends Control:
+	func _init() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	func _draw() -> void:
+		var bar := Vector2(size.x * 0.16, size.y * 0.46)
+		var top := (size.y - bar.y) * 0.5
+		draw_rect(Rect2(Vector2(size.x * 0.5 - bar.x * 1.6, top), bar), Color.WHITE)
+		draw_rect(Rect2(Vector2(size.x * 0.5 + bar.x * 0.6, top), bar), Color.WHITE)
 
 
 ## 일시정지 화면: 게임이 멈춘 동안에도 눌리고 키를 받아야 하므로 PROCESS_MODE_ALWAYS.
@@ -1358,11 +1384,13 @@ class PauseOverlay extends Control:
 	signal quit_requested
 
 	const GUIDE_TEXT := """[color=#ffd966][b]목표[/b][/color]
-보스 %d단계를 제한시간 안에 쓰러뜨리면 승리!
+제한시간 안에 보스를 무찌르면 승리!
+보스가 보내오는 몬스터가 끝까지 가지 못하게 막으세요.
 생명이 0이 되거나 시간이 끝나면 패배예요.
 
 [color=#ffd966][b]진행[/b][/color]
-[시작]을 누르면 수입과 웨이브가 시작돼요 (%d초마다).
+게임을 시작하면 %d초마다 수입이 들어오고,
+보스가 몬스터들을 보내와요.
 시작 전에 타워를 미리 지어 둘 수 있어요.
 
 [color=#7fd8ff][b]타워[/b][/color]
@@ -1450,7 +1478,7 @@ class PauseOverlay extends Control:
 		text.add_theme_font_size_override("normal_font_size", 18)
 		text.add_theme_font_size_override("bold_font_size", 20)
 		text.add_theme_constant_override("line_separation", 3)
-		text.text = GUIDE_TEXT % [BossLevels.COUNT, int(Balance.INCOME_INTERVAL)]
+		text.text = GUIDE_TEXT % int(Balance.INCOME_INTERVAL)
 		scroll.add_child(text)
 		return scroll
 
@@ -1497,6 +1525,9 @@ func _process(delta):
 		_play_time += delta
 	if map_overlay != null:  # 맵 왼쪽 위 모서리를 따라간다 (맵 크기/위치가 바뀌어도)
 		map_overlay.global_position = game_field.global_position + Vector2(OVERLAY_MARGIN, OVERLAY_MARGIN)
+	if pause_button != null:  # 맵 오른쪽 위 모서리
+		var rect := game_field.get_global_rect()
+		pause_button.global_position = Vector2(rect.end.x - PAUSE_SIZE - OVERLAY_MARGIN, rect.position.y + OVERLAY_MARGIN)
 	_update_skill_banner(delta)
 	_hud_timer -= delta
 	if _hud_timer > 0.0:
