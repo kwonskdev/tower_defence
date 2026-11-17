@@ -1383,41 +1383,35 @@ class PauseOverlay extends Control:
 	signal restart_requested
 	signal quit_requested
 
-	const GUIDE_TEXT := """[color=#ffd966][b]목표[/b][/color]
-제한시간 안에 보스를 무찌르면 승리!
-보스가 보내오는 몬스터가 끝까지 가지 못하게 막으세요.
-생명이 0이 되거나 시간이 끝나면 패배예요.
-
-[color=#ffd966][b]진행[/b][/color]
-게임을 시작하면 %d초마다 수입이 들어오고,
-보스가 몬스터들을 보내와요.
-시작 전에 타워를 미리 지어 둘 수 있어요.
-
-[color=#7fd8ff][b]타워[/b][/color]
-타워 → 종류 고르기 → 맵의 빈 타일 클릭.
-지은 타워를 누르면 진화와 색깔 바꾸기.
-길을 완전히 막으면 몬스터가 타워를 부수며 와요.
-
-[color=#ff9a8a][b]몬스터[/b][/color]
-몬스터 → 유형 → 고르고 [생성].
-보스를 공격하고, 수입도 늘어요.
-
-[color=#b6e88a][b]업그레이드[/b][/color]
-항목을 고르고 [업그레이드].
-같은 계열 타워 전체가 강해져요.
-
-[color=#d9a8ff][b]색깔 보너스[/b][/color]
-같은 색 타워가 붙어 있을수록 더 강해져요.
-
-[color=#9aa8ff][b]미니맵[/b][/color]
-1~8은 각자의 레인, B는 보스 레인.
-누르면 이동, 누른 채 끌면 스크롤.
-
-[color=#aaaaaa]P / Esc: 일시정지[/color]"""
+	# 설명서 항목: [이름, 색, 내용]. 내용의 %d는 수입 주기(초)
+	const GUIDE_TOPICS := [
+		["목표", Color(1.0, 0.85, 0.4),
+			"제한시간 안에 보스를 무찌르세요.\n보스가 보내는 몬스터가 끝까지 가지 못하게 막아야 해요.\n생명이 0이 되거나 시간이 끝나면 패배예요."],
+		["진행", Color(1.0, 0.85, 0.4),
+			"게임을 시작하면 %d초마다 수입이 들어오고,\n보스가 몬스터들을 보내와요.\n시작 전에는 타워를 미리 지을 수 있어요."],
+		["타워", Color(0.5, 0.85, 1.0),
+			"타워 → 종류 선택 → 맵의 빈 타일 클릭.\n지은 타워를 누르면 진화와 색깔 바꾸기를 할 수 있어요.\n길을 완전히 막으면 몬스터가 타워를 부수며 와요."],
+		["몬스터", Color(1.0, 0.6, 0.55),
+			"몬스터 → 유형 선택 → 몬스터 선택 → [생성].\n보스를 공격하고, 수입도 늘어나요."],
+		["업그레이드", Color(0.7, 0.9, 0.5),
+			"항목을 고르고 [업그레이드].\n같은 계열 타워가 모두 강해져요."],
+		["색깔 보너스", Color(0.85, 0.65, 1.0),
+			"같은 색 타워가 붙어 있을수록 더 강해져요.\n색마다 효과가 달라요."],
+		["미니맵", Color(0.6, 0.66, 1.0),
+			"1~8은 각자의 레인, B는 보스 레인이에요.\n누르면 이동하고, 누른 채 끌면 스크롤돼요."],
+		["조작", Color(0.75, 0.75, 0.75),
+			"P / Esc: 일시정지\n맵은 드래그하거나 휠로 스크롤해요."],
+	]
 
 	var restart_button: Button
 	var quit_button: Button
 	var _armed: Button = null  # 한 번 눌러서 "정말?" 상태인 버튼
+	var title_label: Label
+	var menu_box: VBoxContainer     # 1단계: 계속하기 / 설명서 / 다시 시작 / 종료
+	var guide_box: VBoxContainer    # 2단계: 설명서 항목 버튼들
+	var page_box: VBoxContainer     # 3단계: 항목 하나의 설명
+	var page_text: RichTextLabel
+	var _page := "menu"             # 지금 보이는 단계: menu / guide / page
 
 	func _init() -> void:
 		process_mode = Node.PROCESS_MODE_ALWAYS
@@ -1449,38 +1443,91 @@ class PauseOverlay extends Control:
 		var box := VBoxContainer.new()
 		box.add_theme_constant_override("separation", 14)
 		panel.add_child(box)
-		var title := Label.new()
-		title.text = "일시정지"
-		title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		title.add_theme_font_size_override("font_size", 32)
-		box.add_child(title)
-		box.add_child(_make_guide())
+		title_label = Label.new()
+		title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		title_label.add_theme_font_size_override("font_size", 32)
+		box.add_child(title_label)
+
+		menu_box = VBoxContainer.new()
+		menu_box.add_theme_constant_override("separation", 14)
+		box.add_child(menu_box)
 		var resume := _make_button("계속하기")
 		resume.pressed.connect(func(): resume_requested.emit())
-		box.add_child(resume)
+		menu_box.add_child(resume)
+		var guide := _make_button("설명서")
+		guide.pressed.connect(_show_page.bind("guide"))
+		menu_box.add_child(guide)
 		restart_button = _make_button("다시 시작")
 		restart_button.pressed.connect(_on_confirmable_pressed.bind(restart_button, "다시 시작", restart_requested))
-		box.add_child(restart_button)
+		menu_box.add_child(restart_button)
 		quit_button = _make_button("종료")
 		quit_button.pressed.connect(_on_confirmable_pressed.bind(quit_button, "종료", quit_requested))
-		box.add_child(quit_button)
+		menu_box.add_child(quit_button)
 
-	## 설명서: 제목은 색을 입히고 한 줄씩 짧게. 길면 위아래로 밀어서 본다.
-	func _make_guide() -> Control:
-		var scroll := ScrollContainer.new()
-		scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-		scroll.custom_minimum_size = Vector2(0, 300)
-		var text := RichTextLabel.new()
-		text.bbcode_enabled = true
-		text.fit_content = true
-		text.scroll_active = false
-		text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		text.add_theme_font_size_override("normal_font_size", 18)
-		text.add_theme_font_size_override("bold_font_size", 20)
-		text.add_theme_constant_override("line_separation", 3)
-		text.text = GUIDE_TEXT % int(Balance.INCOME_INTERVAL)
-		scroll.add_child(text)
-		return scroll
+		# 설명서 항목 버튼 (2열)
+		guide_box = VBoxContainer.new()
+		guide_box.add_theme_constant_override("separation", 14)
+		box.add_child(guide_box)
+		var grid := GridContainer.new()
+		grid.columns = 2
+		grid.add_theme_constant_override("h_separation", 12)
+		grid.add_theme_constant_override("v_separation", 12)
+		guide_box.add_child(grid)
+		for i in range(GUIDE_TOPICS.size()):
+			var b := _make_button(GUIDE_TOPICS[i][0])
+			b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			b.add_theme_color_override("font_color", GUIDE_TOPICS[i][1])
+			b.pressed.connect(_show_topic.bind(i))
+			grid.add_child(b)
+		var guide_back := _make_button("← 뒤로")
+		guide_back.pressed.connect(_show_page.bind("menu"))
+		guide_box.add_child(guide_back)
+
+		# 항목 하나의 설명
+		page_box = VBoxContainer.new()
+		page_box.add_theme_constant_override("separation", 14)
+		box.add_child(page_box)
+		page_text = RichTextLabel.new()
+		page_text.bbcode_enabled = true
+		page_text.fit_content = true
+		page_text.scroll_active = false
+		page_text.custom_minimum_size = Vector2(0, 170)
+		page_text.add_theme_font_size_override("normal_font_size", 22)
+		page_text.add_theme_constant_override("line_separation", 8)
+		page_box.add_child(page_text)
+		var page_back := _make_button("← 목록")
+		page_back.pressed.connect(_show_page.bind("guide"))
+		page_box.add_child(page_back)
+		_show_page("menu")
+
+	## 단계 전환: menu(일시정지) / guide(설명서 항목 목록) / page(항목 하나)
+	func _show_page(page: String) -> void:
+		_page = page
+		title_label.remove_theme_color_override("font_color")
+		menu_box.visible = page == "menu"
+		guide_box.visible = page == "guide"
+		page_box.visible = page == "page"
+		match page:
+			"menu": title_label.text = "일시정지"
+			"guide": title_label.text = "설명서"
+		_disarm()
+
+	func _show_topic(index: int) -> void:
+		var topic: Array = GUIDE_TOPICS[index]
+		_show_page("page")
+		title_label.text = topic[0]
+		title_label.add_theme_color_override("font_color", topic[1])
+		var text: String = topic[2]
+		if text.contains("%d"):
+			text = text % int(Balance.INCOME_INTERVAL)
+		page_text.text = text
+
+	## 뒤로: 항목 -> 목록 -> 일시정지 -> 계속하기
+	func go_back() -> void:
+		match _page:
+			"page": _show_page("guide")
+			"guide": _show_page("menu")
+			_: resume_requested.emit()
 
 	func _make_button(text: String) -> Button:
 		var b := Button.new()
@@ -1506,18 +1553,21 @@ class PauseOverlay extends Control:
 		_armed = null
 
 	func show_menu(on: bool) -> void:
-		_disarm()
+		_show_page("menu")
 		visible = on
 
 	func _input(event: InputEvent) -> void:
 		if visible and event is InputEventKey and event.pressed and not event.echo \
 				and (event.keycode == KEY_ESCAPE or event.keycode == KEY_P):
-			resume_requested.emit()
+			if event.keycode == KEY_ESCAPE:
+				go_back()  # Esc는 한 단계씩 뒤로, P는 바로 계속하기
+			else:
+				resume_requested.emit()
 			get_viewport().set_input_as_handled()
 
 	func _notification(what: int) -> void:
-		if what == NOTIFICATION_WM_GO_BACK_REQUEST and visible:  # 폰의 뒤로 가기 = 계속하기
-			resume_requested.emit()
+		if what == NOTIFICATION_WM_GO_BACK_REQUEST and visible:  # 폰의 뒤로 가기 = 한 단계 뒤로 (처음 화면이면 계속하기)
+			go_back()
 
 
 func _process(delta):
