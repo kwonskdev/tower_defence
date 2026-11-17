@@ -1441,7 +1441,7 @@ class PauseOverlay extends Control:
 	signal quit_requested
 
 	var _topics: Array = []   # 설명서 항목: [{name, color, text, children: [{name, color, text}]}] (게임 데이터로 만든다)
-	var _topic_idx := 0
+	var _stack: Array = []        # 설명서에서 들어와 있는 경로 (항목 -> 세부 항목 -> ...)
 
 	var restart_button: Button
 	var quit_button: Button
@@ -1611,7 +1611,7 @@ class PauseOverlay extends Control:
 		title_label.remove_theme_color_override("font_color")
 		menu_box.visible = page == "menu"
 		guide_box.visible = page == "guide"
-		page_box.visible = page == "page" or page == "sub"
+		page_box.visible = page == "page"
 		if confirm_layer != null:
 			_close_confirm()
 		match page:
@@ -1625,30 +1625,35 @@ class PauseOverlay extends Control:
 		b.pressed.connect(on_press)
 		return b
 
-	## 항목 하나를 연다: 설명 + (있으면) 세부 항목 버튼
+	## 목록에서 항목을 연다
 	func _show_topic(index: int) -> void:
-		_topic_idx = index
-		var topic: Dictionary = _topics[index]
+		_stack = [_topics[index]]
 		_show_page("page")
-		title_label.text = topic.name
-		title_label.add_theme_color_override("font_color", topic.color)
-		page_text.text = topic.text
+		_render_node()
+
+	## 지금 경로의 맨 끝 항목을 보여준다: 설명 + (있으면) 세부 항목 버튼. 세부 항목은 몇 단계든 들어갈 수 있다.
+	func _render_node() -> void:
+		var node: Dictionary = _stack.back()
+		var kids: Array = node.get("children", [])
+		title_label.text = node.name
+		title_label.add_theme_color_override("font_color", node.color)
+		page_text.text = node.text
 		for c in child_grid.get_children():
 			child_grid.remove_child(c)
 			c.queue_free()
-		for i in range(topic.children.size()):
-			child_grid.add_child(_make_topic_button(topic.children[i], _show_child.bind(i)))
-		child_grid.visible = not topic.children.is_empty()
-		page_back.text = "← 목록"
+		child_grid.columns = 2 if kids.size() <= 8 else 3  # 몬스터처럼 많으면 3열로 줄여서 화면에 들어오게
+		for kid in kids:
+			var b := _make_topic_button(kid, _open_child.bind(kid))
+			if kids.size() > 8:
+				b.custom_minimum_size.y = 46
+				b.add_theme_font_size_override("font_size", 18)
+			child_grid.add_child(b)
+		child_grid.visible = not kids.is_empty()
+		page_back.text = "← 목록" if _stack.size() == 1 else "← 뒤로"
 
-	func _show_child(index: int) -> void:
-		var child: Dictionary = _topics[_topic_idx].children[index]
-		_show_page("sub")
-		title_label.text = child.name
-		title_label.add_theme_color_override("font_color", child.color)
-		page_text.text = child.text
-		child_grid.visible = false
-		page_back.text = "← 뒤로"
+	func _open_child(kid: Dictionary) -> void:
+		_stack.append(kid)
+		_render_node()
 
 	## 설명서 내용. 타워/진화/색깔은 게임 데이터에서 만들어서 수치가 바뀌어도 맞는다.
 	func _build_topics() -> Array:
@@ -1666,6 +1671,17 @@ class PauseOverlay extends Control:
 			for stat in Evolutions.STATS[evo]:
 				lines.append("%s %s: %s → %s" % [stat.s, stat.name, Evolutions.stat_value_text(evo, stat, 1), Evolutions.stat_value_text(evo, stat, Evolutions.MAX_LEVEL)])
 			upgrades.append({"name": d.name, "color": d.color, "text": "\n".join(lines)})
+		var monsters: Array = []  # 유형 -> 몬스터 하나하나
+		for cat in Monsters.CATEGORIES:
+			var cat_info: Dictionary = Monsters.CATEGORY_DATA[cat]
+			var kinds: Array = []
+			for kind_id in Monsters.slots_of(cat):
+				if kind_id == "":
+					continue
+				var md: Dictionary = Monsters.DATA[kind_id]
+				kinds.append({"name": md.name, "color": Monsters.FAMILY_COLORS.get(md.get("family", ""), cat_info.color).lightened(0.2),
+					"text": Monsters.tooltip(kind_id)})
+			monsters.append({"name": cat_info.name, "color": cat_info.color, "children": kinds, "text": "%s\n\n몬스터를 눌러 자세히 보세요." % cat_info.desc})
 		var colors: Array = []
 		for info in Balance.TOWER_COLORS:
 			colors.append({"name": info.name, "color": info.color.lightened(0.35), "text": Balance.color_guide(info.name)})
@@ -1676,8 +1692,8 @@ class PauseOverlay extends Control:
 				"text": "게임을 시작하면 %d초마다 수입이 들어오고,\n보스가 몬스터들을 보내와요.\n시작 전에는 타워를 미리 지을 수 있어요." % int(Balance.INCOME_INTERVAL)},
 			{"name": "타워", "color": Color(0.5, 0.85, 1.0), "children": towers,
 				"text": "타워를 고르고 맵의 빈 타일을 누르면 지어져요.\n지은 타워를 누르면 진화와 색깔 바꾸기를 할 수 있어요.\n길을 완전히 막으면 몬스터가 타워를 부수며 와요.\n\n타워 종류를 눌러 자세히 보세요."},
-			{"name": "몬스터", "color": Color(1.0, 0.6, 0.55), "children": [],
-				"text": "몬스터 → 유형 선택 → 몬스터 선택 → [생성].\n보스를 공격하고, 수입도 늘어나요."},
+			{"name": "몬스터", "color": Color(1.0, 0.6, 0.55), "children": monsters,
+				"text": "몬스터 → 유형 선택 → 몬스터 선택 → [생성].\n보스를 공격하고, 수입도 늘어나요.\n\n유형을 눌러 몬스터를 확인하세요."},
 			{"name": "업그레이드", "color": Color(0.7, 0.9, 0.5), "children": upgrades,
 				"text": "계열을 고르고 항목을 올리면 그 계열 타워가 모두 강해져요.\n항목마다 Lv%d까지 올릴 수 있어요.\n\n계열을 눌러 자세히 보세요." % Evolutions.MAX_LEVEL},
 			{"name": "색깔 보너스", "color": Color(0.85, 0.65, 1.0), "children": colors,
@@ -1694,8 +1710,12 @@ class PauseOverlay extends Control:
 			_close_confirm()
 			return
 		match _page:
-			"sub": _show_topic(_topic_idx)
-			"page": _show_page("guide")
+			"page":
+				if _stack.size() > 1:
+					_stack.pop_back()
+					_render_node()
+				else:
+					_show_page("guide")
 			"guide": _show_page("menu")
 			_: resume_requested.emit()
 
