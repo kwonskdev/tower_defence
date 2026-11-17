@@ -42,7 +42,7 @@ var status_affix_label: Label            # 다음 웨이브에 변형(돌격/부
 var status_guard_label: Label            # 비늘 보호막이 보스 피해를 얼마나 줄이는지
 var status_wave_rows: Array = []         # [{dot: StatusIcon, label: Label}]
 var family_frames: Control               # 몬스터 배럭의 계열 묶음 외곽선
-var monster_type_view: GridContainer     # 몬스터 배럭 1단계: [←] + 유형 버튼들 (공격형/일반형/공중형)
+var monster_type_view: HBoxContainer     # 몬스터 1단계: [←] + 4x2 격자 (유형 4개 + 빈칸 4개)
 var _monster_category := ""              # 지금 열려 있는 몬스터 유형
 var _monster_slots: Array = []           # 지금 열려 있는 유형의 칸 배치 (monster_buttons[i+1] = _monster_slots[i])
 var tower_info_label: Label
@@ -221,21 +221,34 @@ func _decorate_unit_button(b: Button, icon: UnitIcon, cost: int, tooltip: String
 ## 몬스터 배럭은 두 단계다. 1단계: 유형 버튼(공격형/일반형/공중형). 2단계: 고른 유형의 몬스터 종류 버튼.
 ## 보스가 보내는 몬스터(일반형/공중형)도 여기서 볼 수 있다. 협력(PvE)에서 만들 수 없는 것은 회색이고, 눌러도 설명만 나온다.
 func _create_monster_type_view() -> void:
-	monster_type_view = _make_tile_grid(_show_view.bind("main"))
+	monster_type_view = HBoxContainer.new()
+	monster_type_view.visible = false
+	left_panel.add_child(monster_type_view)
+	monster_type_view.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var back := _make_back_column("monster_back")
+	back.pressed.connect(_show_view.bind("main"))
+	monster_type_view.add_child(back)
+	var grid := GridContainer.new()
+	grid.columns = 4
+	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	grid.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	monster_type_view.add_child(grid)
 	var cats := Monsters.CATEGORIES
-	for i in range(cats.size()):  # 왼쪽 위부터 차례대로
+	for i in range(8):  # 4x2 격자: 유형을 왼쪽 위부터 채우고 나머지는 비운다
+		if i >= cats.size():
+			var spacer := Control.new()
+			spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+			grid.add_child(spacer)
+			continue
 		var cat: String = cats[i]
 		var info: Dictionary = Monsters.CATEGORY_DATA[cat]
-		var b := Button.new()
-		b.text = info.name
-		b.clip_text = true  # 글자가 길어도 칸 폭을 넘겨서 옆 칸을 밀어내지 않게 한다
-		b.add_theme_font_size_override("font_size", 13)  # 600px 화면에서 칸 폭이 약 45px라 14px(글자 폭 42)는 좌우가 잘린다
+		var b := _make_view_button(info.name, FONT_BODY)
 		b.add_theme_color_override("font_color", info.color)
-		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		b.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		_apply_family_style(b, info.color)
 		b.pressed.connect(_on_monster_type_selected.bind(cat))
-		_set_tile(monster_type_view, _slot_cell(i), b)
+		grid.add_child(b)
 
 
 const TILE_COLS := 9
@@ -496,6 +509,23 @@ func _create_upgrade_views():
 		var eb := _make_view_button("", 12)
 		eb.add_theme_color_override("font_color", Evolutions.DATA[evo].color)
 		eb.pressed.connect(_open_evo_detail.bind(evo))
+		eb.clip_contents = true
+		var evo_icon := UnitIcon.new()  # 진화한 타워의 모습 (맵에서와 같다)
+		evo_icon.show_evolution(evo)
+		eb.add_child(evo_icon)
+		evo_icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		evo_icon.offset_bottom = -18.0
+		var evo_name := Label.new()
+		evo_name.text = Evolutions.DATA[evo].name
+		evo_name.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		evo_name.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		evo_name.add_theme_font_size_override("font_size", 13)
+		evo_name.add_theme_color_override("font_color", Evolutions.DATA[evo].color)
+		evo_name.add_theme_color_override("font_outline_color", Color(0, 0, 0))
+		evo_name.add_theme_constant_override("outline_size", 4)
+		eb.add_child(evo_name)
+		evo_name.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
+		evo_name.grow_vertical = Control.GROW_DIRECTION_BEGIN
 		evo_grid.add_child(eb)
 		evo_buttons[evo] = eb
 
@@ -588,7 +618,11 @@ func _show_view(view: String) -> void:
 	_request_refresh()
 
 
-## 고른 계열의 업그레이드 항목 화면을 만든다 (A 항목들, 이어서 B 항목들, 마지막 칸에 [업그레이드])
+## 고른 계열의 업그레이드 항목 화면을 만든다. 4x2 격자의 왼쪽 2x2는 A 스킬 항목, 오른쪽 2x2는 B 스킬 항목 (각각 1 2 / 3 4 순서).
+## 없는 칸은 비우고, 오른쪽 아래 칸이 [업그레이드] 버튼이다.
+const DETAIL_A_CELLS := [0, 1, 4, 5]
+const DETAIL_B_CELLS := [2, 3, 6, 7]
+
 func _open_evo_detail(evo: String) -> void:
 	_detail_evo = evo
 	_detail_items.clear()
@@ -597,25 +631,42 @@ func _open_evo_detail(evo: String) -> void:
 	for c in detail_grid.get_children():
 		detail_grid.remove_child(c)
 		c.queue_free()
-	var color: Color = Evolutions.DATA[evo].color
-	for stat in Evolutions.STATS[evo]:
-		_add_detail_button(evo, stat, color)
-	while detail_grid.get_child_count() < 7:  # 8번째(오른쪽 아래) 칸이 [업그레이드]가 되도록 빈칸으로 채운다
+	var cells: Array[Control] = []
+	for i in range(8):
 		var spacer := Control.new()
 		spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		detail_grid.add_child(spacer)
-	detail_grid.add_child(detail_action)
+		spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		cells.append(spacer)
+	var color: Color = Evolutions.DATA[evo].color
+	var a_n := 0
+	var b_n := 0
+	for stat in Evolutions.STATS[evo]:
+		var b := _make_detail_button(evo, stat, color)
+		var cell: int
+		if stat.s == "A":
+			cell = DETAIL_A_CELLS[a_n]
+			a_n += 1
+		else:
+			cell = DETAIL_B_CELLS[b_n]
+			b_n += 1
+		cells[cell].queue_free()
+		cells[cell] = b
+	cells[7].queue_free()  # B 항목은 최대 3개라 오른쪽 아래 칸은 늘 비어 있다
+	cells[7] = detail_action
+	for c in cells:
+		detail_grid.add_child(c)
 	_show_view("detail")
 	_refresh_now()
 
 
-func _add_detail_button(evo: String, stat: Dictionary, color: Color) -> void:
+func _make_detail_button(evo: String, stat: Dictionary, color: Color) -> Button:
 	var b := _make_view_button("", 11)
 	b.add_theme_color_override("font_color", color)
 	b.add_theme_color_override("font_disabled_color", Color(color, 0.55))
 	b.pressed.connect(_on_stat_pressed.bind(evo, stat.s, stat.k))
-	detail_grid.add_child(b)
 	_detail_items.append({"btn": b, "stat": stat})
+	return b
 
 
 ## 업그레이드 항목을 골랐다: 하단에 설명이 나온다 (아직 올리지 않는다)
@@ -664,10 +715,6 @@ func _request_refresh() -> void:
 
 ## 업그레이드 화면 글자 갱신 (설명은 하단 메시지 칸: _update_explain)
 func _refresh_upgrade_views(lane: LaneController) -> void:
-	if evo_view.visible:
-		for evo in Evolutions.ORDER:
-			var d: Dictionary = Evolutions.DATA[evo]
-			evo_buttons[evo].text = "%s\n(%s)\nA %s\nB %s" % [d.name, Balance.TOWER_DEFS[d.tower].name, d.a_name, d.b_name]
 	if detail_view.visible and _detail_evo != "":
 		var evo := _detail_evo
 		for item in _detail_items:
@@ -753,8 +800,6 @@ func _refresh_action_buttons(lane: LaneController, boss: BossController) -> void
 				var cost: int = Monsters.DATA[_sel_monster].cost
 				text = "생성\n%d골드" % cost
 				enabled = Monsters.can_send_in_pve(_sel_monster) and lane.gold >= cost and boss.state == BossController.State.RUNNING
-				if boss.state != BossController.State.RUNNING:
-					text += "\n(시작 후)"
 		"detail":
 			if _sel.size() == 4 and _sel[1] == "stat":
 				var cost := lane.stat_upgrade_cost(_sel[0], _sel[2], _sel[3])

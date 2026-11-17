@@ -373,6 +373,8 @@ func _draw() -> void:
 		_:
 			_draw_trap_plate(s)
 
+	if evolution != "":
+		_draw_evo_emblem(s)  # 진화하면 계열마다 다른 모양 (아이콘과 맵이 같다)
 	if not preview:
 		_draw_evolution_marks(s)
 		_draw_damage_marks(s)
@@ -401,6 +403,64 @@ func _draw_damage_marks(s: float) -> void:
 	elif seal_warn:
 		var pulse := 0.55 + 0.45 * sin(_t * 12.0)
 		draw_rect(Rect2(-s * 0.5 - 2.0, -s * 0.5 - 2.0, s + 4.0, s + 4.0), Color(purple, pulse), false, 3.5)
+
+
+## 진화 계열 모양: 가운데 원판에 계열마다 다른 그림
+##  관통형=관통하는 화살 / 보스형=조준 표적 / 대량 처리형=폭발 별 / 지원형=구름 / 난사형=퍼지는 미사일 / 스킬형=거미줄 / 성장형=위로 쌓이는 화살표 / 충전형=번개
+func _draw_evo_emblem(s: float) -> void:
+	var col := evo_color()
+	var r := s * 0.3
+	var w := maxf(1.5, s * 0.045)
+	draw_circle(Vector2.ZERO, r * 1.1, Color(0.08, 0.08, 0.12, 0.94))
+	draw_arc(Vector2.ZERO, r * 1.1, 0.0, TAU, 24, col, 2.0)
+	match evolution:
+		"pierce":
+			draw_line(Vector2(-r * 0.8, 0), Vector2(r * 0.55, 0), col, w)
+			draw_colored_polygon(PackedVector2Array([Vector2(r * 0.4, -r * 0.4), Vector2(r * 0.95, 0), Vector2(r * 0.4, r * 0.4)]), col)
+			for k in range(2):
+				var x := -r * 0.55 + k * r * 0.4
+				draw_polyline(PackedVector2Array([Vector2(x - r * 0.2, -r * 0.3), Vector2(x, 0), Vector2(x - r * 0.2, r * 0.3)]), col, w)
+		"boss":
+			draw_arc(Vector2.ZERO, r * 0.6, 0.0, TAU, 20, col, w)
+			for d in [Vector2.UP, Vector2.DOWN, Vector2.LEFT, Vector2.RIGHT]:
+				draw_line(d * r * 0.35, d * r * 0.95, col, w)
+			draw_circle(Vector2.ZERO, r * 0.14, col)
+		"mass":
+			var star := PackedVector2Array()
+			for i in range(16):
+				star.append(Vector2.from_angle(i * TAU / 16.0 - PI * 0.5) * (r * 0.95 if i % 2 == 0 else r * 0.45))
+			draw_colored_polygon(star, col)
+		"support":
+			draw_circle(Vector2(-r * 0.42, r * 0.15), r * 0.38, col)
+			draw_circle(Vector2(r * 0.42, r * 0.15), r * 0.4, col)
+			draw_circle(Vector2(0, -r * 0.2), r * 0.48, col)
+			draw_rect(Rect2(-r * 0.42, r * 0.1, r * 0.84, r * 0.43), col)
+		"barrage":
+			for a in [-0.6, 0.0, 0.6]:
+				var dir := Vector2.UP.rotated(a)
+				var perp := Vector2(-dir.y, dir.x)
+				var tail := Vector2(0, r * 0.65)
+				var tip := tail + dir * r * 1.3
+				draw_line(tail, tip - dir * r * 0.2, col, w)
+				draw_colored_polygon(PackedVector2Array([tip, tip - dir * r * 0.4 + perp * r * 0.2, tip - dir * r * 0.4 - perp * r * 0.2]), col)
+		"skill":
+			var outer := PackedVector2Array()
+			var inner := PackedVector2Array()
+			for i in range(7):
+				outer.append(Vector2.from_angle(i * TAU / 6.0) * r * 0.85)
+				inner.append(Vector2.from_angle(i * TAU / 6.0) * r * 0.42)
+			draw_polyline(outer, col, w)
+			draw_polyline(inner, col, w)
+			for i in range(6):
+				draw_line(Vector2.ZERO, Vector2.from_angle(i * TAU / 6.0) * r * 0.85, col, w * 0.7)
+		"growth":
+			for k in range(3):
+				var y := r * 0.5 - k * r * 0.5
+				draw_polyline(PackedVector2Array([Vector2(-r * 0.5, y + r * 0.25), Vector2(0, y - r * 0.2), Vector2(r * 0.5, y + r * 0.25)]), col, w)
+		"charge":
+			draw_colored_polygon(PackedVector2Array([
+				Vector2(r * 0.15, -r * 0.9), Vector2(-r * 0.5, r * 0.1), Vector2(-r * 0.05, r * 0.1),
+				Vector2(-r * 0.2, r * 0.9), Vector2(r * 0.5, -r * 0.2), Vector2(r * 0.05, -r * 0.2)]), col)
 
 
 ## 진화 표시: 오른쪽 아래 마름모(계열 색), 충전형은 충전 게이지, 성장형은 광란 중첩 점

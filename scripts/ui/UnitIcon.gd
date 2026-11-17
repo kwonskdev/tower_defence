@@ -35,6 +35,17 @@ func show_tower(kind: Dictionary) -> void:
 	_set_node(t)
 
 
+## 진화한 타워의 모습 (계열마다 다르다)
+func show_evolution(evo: String) -> void:
+	var t := Tower.new()
+	t.preview = true
+	t.kind = Balance.tower_kind(Evolutions.DATA[evo].tower)
+	t.evolution = evo
+	t.color_info = {"name": "미리보기", "color": Color(0.8, 0.82, 0.9)}
+	_tall_decor = false
+	_set_node(t)
+
+
 func _set_node(n: Node2D) -> void:
 	if _node:
 		_node.queue_free()
