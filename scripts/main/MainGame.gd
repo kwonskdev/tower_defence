@@ -795,7 +795,7 @@ func _refresh_action_buttons(lane: LaneController, boss: BossController) -> void
 	match _view:
 		"monster_kinds":
 			if _sel_monster == "":
-				text = "생성\n(몬스터를 고르세요)"
+				text = "생성"
 			else:
 				var cost: int = Monsters.DATA[_sel_monster].cost
 				text = "생성\n%d골드" % cost
@@ -806,12 +806,12 @@ func _refresh_action_buttons(lane: LaneController, boss: BossController) -> void
 				text = "업그레이드\n최대" if cost < 0 else "업그레이드\n%d골드" % cost
 				enabled = cost >= 0 and lane.gold >= cost
 			else:
-				text = "업그레이드\n(항목을 고르세요)"
+				text = "업그레이드"
 		"tower_sel":
 			var t := game_field.get_selected_tower()
 			var cost := _pick_cost(t, lane)
 			if cost < 0:
-				text = "진화\n(고르세요)"
+				text = "진화"
 			else:
 				text = "진화\n%d골드" % cost
 				enabled = t.lane == lane and lane.gold >= cost
@@ -821,7 +821,7 @@ func _refresh_action_buttons(lane: LaneController, boss: BossController) -> void
 				text = "업그레이드\n최대" if cost < 0 else "업그레이드\n%d골드" % cost
 				enabled = cost >= 0 and lane.gold >= cost
 			else:
-				text = "업그레이드\n(색을 고르세요)"
+				text = "업그레이드"
 		_:
 			return
 	for b in action_buttons:
