@@ -94,6 +94,18 @@ func recolor_tower(tower: Tower) -> bool:
 	return true
 
 
+## 타워 내구도를 가득 채운다 (골드). 이미 가득이면 돈을 쓰지 않는다.
+func heal_tower(tower: Tower) -> bool:
+	if tower == null or tower.lane != self or tower.durability >= Balance.TOWER_DURABILITY - 0.001:
+		return false
+	if not try_spend(Balance.HEAL_COST, "타워 회복 %s" % tower.cell):
+		return false
+	tower.durability = Balance.TOWER_DURABILITY
+	Effects.ring(_renderer, tower.center_cell_pos(), 0.8, Color(0.4, 1.0, 0.5), lane_visible)
+	Log.info(Log.Category.TOWER, "[P%d] 타워 회복 %s" % [player_id + 1, tower.cell])
+	return true
+
+
 # --- 진화 / 업그레이드 ---
 
 ## 업그레이드 항목 하나의 현재 레벨 (1~3). 안 올렸으면 1.
@@ -119,6 +131,7 @@ func evolve_tower(tower: Tower, evo: String) -> bool:
 	if not try_spend(Balance.EVOLVE_COST, "타워 진화 %s(%s) -> %s" % [tower.cell, tower.kind.name, Evolutions.evo_name(evo)]):
 		return false
 	tower.set_evolution(evo)
+	tower.durability = Balance.TOWER_DURABILITY  # 진화하면 항상 풀피
 	Effects.ring(_renderer, tower.center_cell_pos(), 0.8, Evolutions.DATA[evo].color, lane_visible)
 	Log.info(Log.Category.TOWER, "[P%d] 타워 진화 %s: %s -> %s" % [player_id + 1, tower.cell, tower.kind.name, Evolutions.evo_name(evo)])
 	return true

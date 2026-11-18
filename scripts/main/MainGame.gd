@@ -47,6 +47,8 @@ var _monster_category := ""              # 지금 열려 있는 몬스터 유형
 var _monster_slots: Array = []           # 지금 열려 있는 유형의 칸 배치 (monster_buttons[i+1] = _monster_slots[i])
 var tower_info_label: Label
 var evolve_buttons: Array[Button] = []   # 선택한 타워의 진화 선택 버튼 2개 (진화 전: 계열 2개 / 진화 후 B가 남았으면: B 진화 1개)
+var heal_button: Button                  # 타워 화면의 [회복] 버튼 (골드로 내구도 가득)
+var _view_before_tower := "main"          # 맵에서 타워를 누르기 전에 보던 상단 화면 (뒤로 가면 여기로 돌아간다)
 var tower_action: Button                 # 오른쪽 아래 [진화] 버튼 (고른 진화를 실행)
 var _tower_pick := ""                    # 고른 진화: 계열 이름 또는 "B"
 var _pick_tower: Tower = null            # _tower_pick을 고른 타워 (다른 타워를 누르면 선택을 지운다)
@@ -949,7 +951,7 @@ func _create_tower_sel_view() -> void:
 	back.pressed.connect(_on_tower_sel_back_pressed)
 	tower_sel_view.add_child(back)
 	var grid := GridContainer.new()
-	grid.columns = 2
+	grid.columns = 3
 	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	grid.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	tower_sel_view.add_child(grid)
@@ -958,9 +960,15 @@ func _create_tower_sel_view() -> void:
 		eb.pressed.connect(_on_evolve_pressed.bind(i))
 		grid.add_child(eb)
 		evolve_buttons.append(eb)
+	heal_button = _make_view_button("", FONT_SMALL)  # 윗줄 오른쪽: 내구도 회복 (바로 실행)
+	heal_button.pressed.connect(func(): game_field.heal_selected_tower())
+	grid.add_child(heal_button)
 	recolor_button = _make_view_button("", FONT_SMALL)  # 아랫줄 왼쪽: 색깔 바꾸기 (바로 실행)
 	recolor_button.pressed.connect(_on_recolor_selected_pressed)
 	grid.add_child(recolor_button)
+	var gap := Control.new()
+	gap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	grid.add_child(gap)
 	tower_action = _make_action_button()  # 아랫줄 오른쪽: [진화]
 	grid.add_child(tower_action)
 
@@ -968,13 +976,26 @@ func _create_tower_sel_view() -> void:
 ## 맵에서 지어진 타워를 눌렀다: 건설 모드 중이어도 상단이 그 타워 화면으로 바뀌고 건설 모드는 꺼진다.
 ## 다시 지으려면 타워를 새로 골라야 하고, 그동안 빈 칸을 눌러도 짓지 않는다.
 func _on_tower_selected(_tower: Tower) -> void:
-	if _view == "main" or _view == "tower":
-		_show_view("tower_sel")
+	_enter_tower_sel()
+
+
+## 어떤 화면을 보고 있든 타워 화면으로 넘어간다 (보던 화면은 기억해 둔다)
+func _enter_tower_sel() -> void:
+	if _view == "tower_sel":
+		return
+	_view_before_tower = _view if _view != "tower" else "main"
+	_show_view("tower_sel")
 
 
 func _on_tower_sel_back_pressed() -> void:
 	game_field.select_tower(null)
-	_show_view("main")
+	_leave_tower_sel()
+
+
+func _leave_tower_sel() -> void:
+	var prev := _view_before_tower
+	_view_before_tower = "main"
+	_show_view(prev)
 
 ## 지금 건설하려고 고른 타워를 타워 배럭에서 굵은 노란 테두리로 강조한다 (건설 도구가 꺼지면 해제).
 ## 메인 화면의 "타워" 버튼에도 고른 타워 이름을 보여준다.
@@ -1776,10 +1797,10 @@ func _update_hud():
 		return
 	# 맵에서 타워를 누르면 상단이 그 타워 화면으로 바뀌고, 선택이 풀리면 메인으로 돌아온다
 	var picked := game_field.get_selected_tower()
-	if picked != null and (_view == "main" or _view == "tower"):
-		_show_view("tower_sel")
-	elif picked == null and _view == "tower_sel":
-		_show_view("main")
+	if picked != null:
+		_enter_tower_sel()
+	elif _view == "tower_sel":
+		_leave_tower_sel()
 	_update_tower_info(lane)
 	_refresh_upgrade_views(lane)
 	_update_explain(lane)
@@ -1835,6 +1856,10 @@ func _update_tower_info(lane: LaneController):
 	recolor_button.text = "색깔 바꾸기 (%d골드)" % Balance.RECOLOR_COST
 	recolor_button.tooltip_text = "이 타워의 색깔을 지금 색을 뺀 6색 중 랜덤으로 바꿉니다. 색깔 보너스는 그 색의 업그레이드를 따라갑니다."
 	recolor_button.disabled = t.lane != lane or lane.gold < Balance.RECOLOR_COST
+	var hurt := t.durability < Balance.TOWER_DURABILITY - 0.001
+	heal_button.text = "회복 (%d골드)
+내구도 %d/%d" % [Balance.HEAL_COST, roundi(t.durability), roundi(Balance.TOWER_DURABILITY)]
+	heal_button.disabled = t.lane != lane or not hurt or lane.gold < Balance.HEAL_COST
 
 	# 진화 선택: 진화 전이면 계열 2개 중 하나, 진화했는데 B가 남았으면 B 진화 하나. 고르면 하단에 설명이 나오고 [진화]를 눌러야 진화한다.
 	if _pick_tower != t:

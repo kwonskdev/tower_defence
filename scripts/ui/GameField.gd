@@ -249,6 +249,12 @@ func recolor_selected_tower() -> bool:
 	return lane != null and lane.recolor_tower(get_selected_tower())
 
 
+## 선택한 타워 1기의 내구도를 가득 채운다 (골드)
+func heal_selected_tower() -> bool:
+	var lane: LaneController = lanes.get(local_player_id)
+	return lane != null and lane.heal_tower(get_selected_tower())
+
+
 ## 색깔 업그레이드 (골드, 그 색 타워 전체에 적용)
 func upgrade_color(color_name: String) -> bool:
 	var lane: LaneController = lanes.get(local_player_id)
