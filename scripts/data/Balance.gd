@@ -18,22 +18,22 @@ const TOWER_KINDS := ["long", "splash", "air", "trap"]
 
 const TOWER_DEFS := {
 	"long": {
-		"name": "장거리", "cost": 4, "range": 5.5, "damage": 0.2, "cooldown": 1.4, "splash": 0.0,
+		"name": "장거리", "cost": 4, "range": 5.5, "damage": 0.3, "cooldown": 1.4, "splash": 0.0,
 		"blocks": true, "anti_air": false, "color": Color(0.35, 0.75, 1.0),
 		"desc": "사거리가 길고 느리다. 진화 전엔 길을 막는 벽, 진화하면 한 발이 강해진다.",
 	},
 	"splash": {
-		"name": "범위", "cost": 7, "range": 3.0, "damage": 0.4, "cooldown": 0.7, "splash": 1.5,
+		"name": "범위", "cost": 7, "range": 3.0, "damage": 0.5, "cooldown": 0.7, "splash": 1.5,
 		"blocks": true, "anti_air": false, "color": Color(0.45, 0.9, 0.45),
 		"desc": "공격이 폭발해서 주변 적에게 모두 들어간다.",
 	},
 	"air": {
-		"name": "대공", "cost": 6, "range": 3.5, "damage": 0.7, "cooldown": 0.7, "splash": 0.0,
+		"name": "대공", "cost": 6, "range": 3.5, "damage": 0.8, "cooldown": 0.7, "splash": 0.0,
 		"blocks": true, "anti_air": true, "color": Color(1.0, 0.55, 0.85),
 		"desc": "공중 몬스터만 공격한다 (지상은 못 때림).",
 	},
 	"trap": {
-		"name": "트랩", "cost": 5, "range": 1.8, "damage": 0.7, "cooldown": 0.4, "splash": 0.0,
+		"name": "트랩", "cost": 5, "range": 1.8, "damage": 0.8, "cooldown": 0.4, "splash": 0.0,
 		"blocks": false, "anti_air": false, "color": Color(0.9, 0.85, 0.3),
 		"desc": "길을 막지 못하고 사거리가 짧지만 강하고 빠르다.",
 	},
