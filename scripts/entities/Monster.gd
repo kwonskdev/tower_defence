@@ -35,6 +35,7 @@ var size_scale: float = 1.0
 var life_damage: int = 1         # 기지에 닿았을 때 줄이는 생명
 var reward: int = 2              # 처치 시 골드
 var max_hp: float = 1.0
+var _base_max_hp: float = 1.0   # 강화가 없을 때의 최대 체력 (setup에서 정해진다)
 var hp: float = 1.0
 var armor: float = 0.0
 var regen: float = 0.0           # 초당 최대체력 회복 비율
@@ -129,6 +130,7 @@ func setup(id: int, grid: GridSystem, renderer: GridRenderer, pathfinder: Pathfi
 	_pathfinder = pathfinder
 	grid_pos = spawn_cell
 	cell_pos = Vector2(spawn_cell) + Vector2(0.5, 0.5)
+	_base_max_hp = max_hp  # 강화 전 기본 최대 체력 (강화는 max_hp를 이 값의 배수로 바꾼다)
 	hp = max_hp
 	_anim = randf() * TAU
 	_update_position()
@@ -161,12 +163,10 @@ func take_damage(amount: float, source = null) -> void:
 
 
 ## 체력을 실제로 깎는다. damage_source: 누적 피해를 올려 줄 타워, kill_source: 죽였을 때 킬을 올려 줄 타워.
-## 강화(남색 보너스) 중이면 받는 피해가 1/(1+강화)로 줄어든다 = 체력 +강화%. 처형은 강화를 무시한다 (ignore_empower).
-func _lose_hp(amount: float, damage_source, kill_source, ignore_empower := false) -> void:
+## 강화(남색 보너스)는 최대 체력을 늘리는 방식이라 피해는 그대로 hp에서 깎는다 (_sync_empower_max_hp).
+func _lose_hp(amount: float, damage_source, kill_source) -> void:
 	if _dead:
 		return
-	if not ignore_empower and not _empower_buffs.is_empty():
-		amount /= 1.0 + get_total_empower()
 	var applied := minf(amount, maxf(hp, 0.0))  # 남은 체력을 넘는 초과분은 피해로 치지 않는다
 	hp -= amount
 	if is_instance_valid(damage_source):  # 투사체가 날아가는 사이 타워가 부서졌을 수 있다
@@ -200,7 +200,7 @@ func _die() -> void:
 func execute(source) -> void:
 	if _dead:
 		return
-	_lose_hp(maxf(hp, 0.0) + 0.001, source, source, true)
+	_lose_hp(maxf(hp, 0.0) + 0.001, source, source)
 
 
 func is_dead() -> bool:
@@ -274,6 +274,18 @@ func add_empower(duration: float, boost: float) -> void:
 	_empower_buffs.sort_custom(func(a, b): return a.end_time < b.end_time)
 	while _empower_buffs.size() > Balance.EMPOWER_MAX_STACKS:
 		_empower_buffs.remove_at(0)  # 가장 먼저 끝나는 것을 밀어낸다
+	_sync_empower_max_hp()
+
+
+## 강화 총합에 맞춰 최대 체력을 다시 계산한다. 체력 비율은 유지한다 (100/100 → 105/105, 52.5/105 → 50/100).
+## 강화가 걸리거나 끝나거나 밀려날 때마다 불린다.
+func _sync_empower_max_hp() -> void:
+	var new_max := _base_max_hp * (1.0 + get_total_empower())
+	if is_equal_approx(new_max, max_hp):
+		return
+	if hp > 0.0 and max_hp > 0.0:
+		hp = maxf(hp / max_hp * new_max, 0.001)  # 비율이 유지되므로 0이 되진 않지만, 강화가 끝나도 죽지 않게 하한을 둔다
+	max_hp = new_max
 
 
 ## 현재 적용 중인 강화 효과 총합 (만료된 버프는 제거)
@@ -287,11 +299,6 @@ func get_total_empower() -> float:
 		else:
 			total += _empower_buffs[i].boost
 	return total
-
-
-## 강화가 반영된 실질 체력 (UI/계산용). 체력은 받는 피해를 줄이는 방식으로 반영된다 (_lose_hp).
-func get_effective_hp() -> float:
-	return hp * (1.0 + get_total_empower())
 
 
 ## 강화가 반영된 DPS (보스 레인 몬스터용). 기본 DPS와 성장(ramp) 증가분 모두 강화를 받는다. 오라는 BossController가 따로 곱한다.
@@ -423,6 +430,8 @@ func _process(delta: float) -> void:
 	if preview:
 		return
 
+	if not _empower_buffs.is_empty() or not is_equal_approx(max_hp, _base_max_hp):
+		_sync_empower_max_hp()  # 만료된 강화를 바로 반영 (끝난 시점에 체력 비율대로 되돌린다)
 	if regen > 0.0 and hp < max_hp and not _dead:
 		hp = minf(max_hp, hp + max_hp * regen * delta)
 
