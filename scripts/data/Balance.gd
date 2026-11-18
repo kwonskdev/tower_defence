@@ -121,7 +121,7 @@ static func color_effect(type: String) -> String:
 		"range": return "사거리가 늘어난다."
 		"income": return "처치 골드가 늘어난다."
 		"penetration": return "적 방어력을 일부 무시한다."
-		"empower": return "처치하면 내 몬스터 몇 마리가 %d초간 공격력 +%d%%." % [roundi(EMPOWER_DURATION), roundi(EMPOWER_BOOST * 100.0)]
+		"empower": return "처치하면 내 몬스터 몇 마리가 %d초간 공격력과 최대 체력 +%d%%." % [roundi(EMPOWER_DURATION), roundi(EMPOWER_BOOST * 100.0)]
 		"lifegain": return "처치하면 확률로 생명 +1."
 	return ""
 
