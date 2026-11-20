@@ -188,6 +188,8 @@ static func tooltip(kind_id: String) -> String:
 	if not (desc.contains("빠") or desc.contains("느리") or desc.contains("도착")):
 		desc += " 이동 %s." % ("빠름" if d.speed >= 4.0 else ("느림" if d.speed <= 2.0 else "보통"))
 	var atk := "공격 %s" % _num(d.dps) if d.dps > 0.0 else "공격 없음"
+	if d.category in ["normal", "air"] and not d.get("gnaws", false):
+		atk = "타워 공격 안 함 (길이 막히면 한 방에 파괴)"  # dps는 보스 레인에서만 쓰이고, 웨이브로 올 땐 타워를 때리지 않는다
 	var text := "%s (%s%s)\n%s\n비용 %d · 수입 +%d · %s · 체력 %s" % [
 		d.name, cat.name, " · " + d.family if d.has("family") else "", desc, d.cost, d.income, atk, _num(max_hp(kind_id))]
 	if not can_send_in_pve(kind_id):
