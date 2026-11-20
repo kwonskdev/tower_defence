@@ -10,7 +10,7 @@ class_name BossLevels
 
 const LEVELS := [
 	{"name": "화염 군주", "hp": 1500.0, "time": 150.0, "reward": 60, "income": 150, "color": Color(0.85, 0.35, 0.1)},
-	{"name": "늑대왕", "hp": 2200.0, "time": 160.0, "reward": 90, "income": 230, "color": Color(0.45, 0.47, 0.55)},
+	{"name": "늑대왕", "hp": 2200.0, "time": 160.0, "reward": 90, "income": 150, "color": Color(0.45, 0.47, 0.55)},
 	{"name": "오크 족장", "hp": 3200.0, "time": 170.0, "reward": 130, "income": 330, "color": Color(0.4, 0.5, 0.2)},
 	{"name": "해골 마법사", "hp": 4700.0, "time": 175.0, "reward": 180, "income": 450, "color": Color(0.7, 0.68, 0.55)},
 	{"name": "슬라임 대장", "hp": 6800.0, "time": 180.0, "reward": 240, "income": 600, "color": Color(0.25, 0.6, 0.25)},

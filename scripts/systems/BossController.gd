@@ -55,7 +55,6 @@ var _dmg_accum := 0.0
 var _dmg_timer := 0.0
 var _dps_timer := 0.0
 var _next_wave: Array = []            # 다음 웨이브 [{type, count}] (보스 수입으로 미리 "사 둔다")
-var _skill_count_mult := 1.0          # 이번 보스 스킬이 정한 웨이브 마릿수 배율
 var damage_mult := 1.0                # 보스가 받는 피해 배율 (비늘 보호막. 1.0이면 그대로)
 var _next_affix := ""                 # 다음 웨이브에 붙는 변형 (BossSkills.AFFIXES 키, 없으면 "")
 var _level_wave_no := 0               # 이번 보스 라운드에서 지금까지 보낸 웨이브 수
@@ -158,14 +157,12 @@ func _apply_level_skills() -> void:
 ## 항상 켜져 있는 값(웨이브 주기, 마릿수, 보호막, 동상)은 기본값에서 다시 계산하고, 발동형은 시계를 새로 시작한다.
 func _apply_active_skills() -> void:
 	var interval := Balance.INCOME_INTERVAL
-	_skill_count_mult = 1.0
 	_guard_per_monster = 0.0
 	_guard_cap = 0.0
 	_chill_max = 0.0
 	_triggered.clear()
 	for skill in _active_skills():
 		interval = minf(interval, float(skill.get("wave_interval", interval)))
-		_skill_count_mult *= float(skill.get("count_mult", 1.0))
 		_guard_per_monster += float(skill.get("guard_per_monster", 0.0))
 		_guard_cap = maxf(_guard_cap, float(skill.get("guard_cap", 0.0)))
 		if skill.has("chill_max"):
@@ -182,8 +179,8 @@ func _apply_active_skills() -> void:
 	if not _next_wave.is_empty():
 		_plan_next_wave()
 	if not _active_skills().is_empty():
-		Log.info(Log.Category.GAME, "보스 스킬 적용(페이즈 %d): 웨이브 주기 %.0fs, 마릿수 x%.2f, 보호막 %.0f%%/마리(최대 %.0f%%), 발동형 %d개" % [
-			_phase, interval, _skill_count_mult, _guard_per_monster * 100.0, _guard_cap * 100.0, _triggered.size()])
+		Log.info(Log.Category.GAME, "보스 스킬 적용(페이즈 %d): 웨이브 주기 %.0fs, 보호막 %.0f%%/마리(최대 %.0f%%), 발동형 %d개" % [
+			_phase, interval, _guard_per_monster * 100.0, _guard_cap * 100.0, _triggered.size()])
 
 
 ## 이번 라운드의 스킬 중 지금 페이즈에 켜져 있는 것
@@ -415,9 +412,9 @@ func _plan_next_wave() -> void:
 		_next_wave.append({"type": id, "count": counts[id]})
 
 
-## 이번 웨이브에 보스가 쓸 수 있는 돈: 보스 수입(라운드별 income)에 스킬 마릿수 배율을 곱한 값. 웨이브 주기와는 상관없다.
+## 이번 웨이브에 보스가 쓸 수 있는 돈: 보스 수입(라운드별 income) 그대로. 웨이브 주기나 스킬과 상관없다 (주기가 짧으면 그만큼 더 어렵다).
 func wave_budget() -> int:
-	return roundi(float(level_data.income) * _skill_count_mult)
+	return level_data.income
 
 
 ## 이번 라운드의 wave_no번째 웨이브에 붙는 변형 (없으면 ""). "N웨이브마다"는 N, 2N, ... 번째에 붙는다.
