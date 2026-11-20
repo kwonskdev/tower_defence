@@ -8,7 +8,7 @@ class_name BossSkills
 ##   lane: 영향을 주는 레인. "player"(내 레인) / "boss"(보스 레인) / "both"
 ## 항상 켜져 있는 스킬(보스가 나오면 바로 적용)이 쓰는 항목
 ##   wave_interval: 웨이브 주기(초). 없으면 수입 주기(Balance.INCOME_INTERVAL)
-##   count_mult: 웨이브 한 묶음의 마릿수 배율. 없으면 1.0
+##   count_mult: 웨이브 한 번에 쓰는 보스 수입(예산) 배율. 없으면 1.0
 ##   wave_affix + affix_every: N번째 웨이브마다(N, 2N, ...) 그 웨이브에 AFFIXES의 변형을 붙인다. 다음 웨이브 미리보기에 먼저 뜬다.
 ##   guard_per_monster + guard_cap: 비늘 보호막. 필드 위 웨이브 몬스터(참여 레인 평균) 1마리당 보스가 받는 피해가 이만큼 줄고, 최대 guard_cap까지
 ##   chill_start / chill_full / chill_max: 동상. 이 라운드에서 보스 앞에 선 지 chill_start초부터 dps가 줄기 시작해 chill_full초에 chill_max(비율)가 된다

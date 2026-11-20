@@ -162,20 +162,14 @@ static func reward(kind_id: String) -> int:
 	return int(d.get("reward", maxi(1, roundi(float(d.cost) / 10.0))))
 
 
-## 보스 라운드에 맞는 종류를 가중치로 뽑는다. flying_only이면 공중 종류만 (공습 웨이브).
-static func pick(level: int, flying_only: bool = false) -> String:
-	var total := 0.0
+## 보스가 이 라운드에 살 수 있는 몬스터 종류 (min_level이 라운드 이하). flying_only이면 공중 종류만 (공습 웨이브).
+## 뽑는 건 BossController가 보스의 수입 안에서 weight(가중치)로 한다.
+static func candidates(level: int, flying_only: bool = false) -> Array[String]:
+	var list: Array[String] = []
 	for id in DATA:
 		if _can_pick(id, level, flying_only):
-			total += float(DATA[id].weight)
-	var roll := randf() * total
-	for id in DATA:
-		if not _can_pick(id, level, flying_only):
-			continue
-		roll -= float(DATA[id].weight)
-		if roll <= 0.0:
-			return id
-	return "flyer" if flying_only else "grunt"
+			list.append(id)
+	return list
 
 
 static func _can_pick(id: String, level: int, flying_only: bool) -> bool:

@@ -452,7 +452,8 @@ func _process(delta: float) -> void:
 
 	if stopped:
 		return
-	if gnaws_towers and not flying and _process_gnaw(delta):
+	# 길이 막혀서 뚫고 가야 할 때(breaching)는 갉지 않고 아래에서 한 번에 부순다 (공격력이 약한 공격형이 길을 못 뚫는 일이 없게)
+	if gnaws_towers and not flying and not breaching and _process_gnaw(delta):
 		return  # 타워를 갉는 중이라 제자리에 서 있다
 	if waypoints.is_empty():
 		_check_arrival()

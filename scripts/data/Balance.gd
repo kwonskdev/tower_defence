@@ -184,9 +184,8 @@ static func tower_tooltip(kind: Dictionary) -> String:
 
 
 # --- 웨이브 ---
-# PvE: 수입이 들어오는 시점(INCOME_INTERVAL)마다 웨이브가 한꺼번에 온다. 한 웨이브는 종류가 다른 묶음 WAVE_GROUPS개.
-# 묶음은 한 칸에서 촘촘히 쏟아져 나와서 뭉쳐서 온다 (그래야 범위 타워가 값어치를 한다).
-# 마릿수는 BossLevels의 interval(압박 기준)과 count_mult로 정해진다 (BossController._group_count).
+# PvE: 수입이 들어오는 시점(INCOME_INTERVAL)마다 웨이브가 한꺼번에 온다. 한 웨이브는 종류가 다른 몬스터 최대 WAVE_GROUPS가지.
+# 보스는 수입(BossLevels의 income) 안에서 몬스터를 랜덤으로 사서 보낸다 (BossController._plan_next_wave). 몬스터마다 나오는 칸은 따로 랜덤.
 # (PvP는 다른 레인이 보내는 즉시 몬스터가 오는 방식이라 이 웨이브와는 별개다.)
 const WAVE_GROUPS := 3
 const WAVE_SPAWN_GAP := 0.18       # 같은 묶음 몬스터가 한 마리씩 나오는 간격(초). 지상 기본 속도면 몸 하나 정도 간격
