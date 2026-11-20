@@ -8,7 +8,6 @@ class_name BossSkills
 ##   lane: 영향을 주는 레인. "player"(내 레인) / "boss"(보스 레인) / "both"
 ## 항상 켜져 있는 스킬(보스가 나오면 바로 적용)이 쓰는 항목
 ##   wave_interval: 웨이브 주기(초). 없으면 수입 주기(Balance.INCOME_INTERVAL)
-##   count_mult: 웨이브 한 묶음의 마릿수 배율. 없으면 1.0
 ##   wave_affix + affix_every: N번째 웨이브마다(N, 2N, ...) 그 웨이브에 AFFIXES의 변형을 붙인다. 다음 웨이브 미리보기에 먼저 뜬다.
 ##   guard_per_monster + guard_cap: 비늘 보호막. 필드 위 웨이브 몬스터(참여 레인 평균) 1마리당 보스가 받는 피해가 이만큼 줄고, 최대 guard_cap까지
 ##   chill_start / chill_full / chill_max: 동상. 이 라운드에서 보스 앞에 선 지 chill_start초부터 dps가 줄기 시작해 chill_full초에 chill_max(비율)가 된다
@@ -51,8 +50,8 @@ const PHASES := {
 const BY_LEVEL := {
 	2: [
 		{"id": "howl", "name": "울부짖음", "lane": "player",
-			"text": "웨이브가 20초마다 옵니다 (수입은 30초). 한 번에 오는 수는 줄어듭니다.",
-			"wave_interval": 20.0, "count_mult": 0.75},
+			"text": "웨이브가 20초마다 옵니다 (수입은 30초).",
+			"wave_interval": 20.0},
 	],
 	3: [
 		{"id": "charge", "name": "돌격 북소리", "lane": "player",
@@ -102,7 +101,7 @@ const BY_LEVEL := {
 	10: [
 		{"id": "p1_pressure", "name": "파멸의 압박", "lane": "player", "phase": 1, "quiet": true,
 			"text": "웨이브 25초 주기, 2웨이브마다 돌격.",
-			"wave_interval": 25.0, "count_mult": 0.85, "wave_affix": "charge", "affix_every": 2},
+			"wave_interval": 25.0, "wave_affix": "charge", "affix_every": 2},
 		{"id": "p2_undead", "name": "되살아나는 뼈", "lane": "player", "phase": 2, "quiet": true,
 			"text": "짝수 웨이브는 부활.", "wave_affix": "undead", "affix_every": 2, "affix_offset": 0},
 		{"id": "p2_airraid", "name": "공습", "lane": "player", "phase": 2, "quiet": true,
@@ -112,7 +111,7 @@ const BY_LEVEL := {
 			"trigger": "hp_below", "hp_ratios": [0.6, 0.4], "delay": 3.0,
 			"effect": "execute", "refund": 0.5, "phantoms": 1},
 		{"id": "p3_pressure", "name": "종말의 압박", "lane": "player", "phase": 3, "quiet": true,
-			"text": "웨이브 20초 주기.", "wave_interval": 20.0, "count_mult": 0.75},
+			"text": "웨이브 20초 주기.", "wave_interval": 20.0},
 		{"id": "p3_split", "name": "분열", "lane": "player", "phase": 3, "quiet": true,
 			"text": "슬라임 새끼 4마리.",
 			"trigger": "hp_below", "hp_ratios": [0.3], "delay": 3.0, "effect": "split", "count": 4},

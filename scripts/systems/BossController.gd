@@ -5,7 +5,8 @@ class_name BossController
 ## - 보스는 레인 한가운데에 크게 서 있고, 내가 보낸 몬스터들이 걸어와서 보스를 둘러싸고 공격한다.
 ##   보스 앞에 선 몬스터는 사라지지 않고 다음 라운드 보스도 계속 공격한다 (수 제한 없음).
 ## - 수입이 들어오는 시점(INCOME_INTERVAL)마다 모든 참여 플레이어 레인에 몬스터 웨이브가 한꺼번에 온다 (PvE).
-##   한 웨이브는 종류가 다른 몬스터 묶음 WAVE_GROUPS개이고, 다음 웨이브에 뭐가 오는지는 미리 정해져서 HUD에 보인다.
+##   보스에게도 수입(BossLevels의 income)이 있다. 웨이브마다 그 돈 안에서 이번 라운드에 나올 수 있는 몬스터(min_level)를 랜덤으로 사서 보낸다.
+##   종류는 WAVE_GROUPS개까지이고, 다음 웨이브에 뭐가 오는지는 미리 정해져서 HUD에 보인다. 몬스터는 하나하나 나오는 칸이 랜덤이다.
 ##   종류마다 이기는 타워가 달라서 그때그때 필요한 타워가 달라진다 (Monsters.gd 상성 참고).
 ## - 제한시간 안에 못 잡으면 패배. 보스는 플레이어 몬스터를 공격하지 않는다 (현재 미정).
 ## - 보스 스킬은 BossSkills.gd에 라운드별로 정의한다. 지금 있는 것: 웨이브 주기/마릿수, 웨이브 변형(돌격/부활/공습), 비늘 보호막,
@@ -24,6 +25,7 @@ const SLOT_RING_GAP := 0.65   # 겹겹이 둘러쌀 때 바깥 고리 간격 (�
 const SLOT_SPACING := 0.85    # 같은 고리에서 몬스터 간 간격 (칸)
 const DPS_RECALC_INTERVAL := 0.25
 const AURA_BONUS_CAP := 1.5   # 지원형 오라는 아무리 겹쳐도 최대 +150%
+const MAX_WAVE_MONSTERS := 80  # 한 웨이브 최대 마릿수 (싼 몬스터만 뽑혀도 화면이 터지지 않게)
 const MIN_WAVE_GAP := 10.0    # 웨이브 주기를 수입 시점에 다시 맞출 때, 직전 웨이브와 최소 이만큼은 띄운다 (초)
 
 var state: State = State.WAITING
@@ -52,8 +54,7 @@ var _lane_visible := false
 var _dmg_accum := 0.0
 var _dmg_timer := 0.0
 var _dps_timer := 0.0
-var _next_types: Array[String] = []   # 다음 웨이브에 오는 몬스터 묶음 종류 (미리 정해 둔다)
-var _skill_count_mult := 1.0          # 이번 보스 스킬이 정한 웨이브 마릿수 배율
+var _next_wave: Array = []            # 다음 웨이브 [{type, count}] (보스 수입으로 미리 "사 둔다")
 var damage_mult := 1.0                # 보스가 받는 피해 배율 (비늘 보호막. 1.0이면 그대로)
 var _next_affix := ""                 # 다음 웨이브에 붙는 변형 (BossSkills.AFFIXES 키, 없으면 "")
 var _level_wave_no := 0               # 이번 보스 라운드에서 지금까지 보낸 웨이브 수
@@ -133,9 +134,9 @@ func _start_level(new_level: int) -> void:
 	level_flash = 1.0
 	current_wave_text = "-"
 
-	Log.info(Log.Category.GAME, "보스 Lv.%d/%d '%s' 등장: hp=%.0f (참여 %d명), 제한시간=%.0fs, 압박 기준 %.1f, 마릿수x%.1f" % [
-		level, BossLevels.COUNT, level_data.name, max_hp, _lanes.size(), time_left, level_data.interval,
-		level_data.count_mult])
+	Log.info(Log.Category.GAME, "보스 Lv.%d/%d '%s' 등장: hp=%.0f (참여 %d명), 제한시간=%.0fs, 보스 수입=%d골드/%.0fs" % [
+		level, BossLevels.COUNT, level_data.name, max_hp, _lanes.size(), time_left, level_data.income,
+		Balance.INCOME_INTERVAL])
 	Effects.float_text(_renderer, Balance.BOSS_CENTER + Vector2(-1.2, 0.3), "BOSS Lv.%d  %s" % [level, level_data.name],
 		Color(1.0, 0.85, 0.3), _lane_visible)
 	_apply_level_skills()
@@ -156,14 +157,12 @@ func _apply_level_skills() -> void:
 ## 항상 켜져 있는 값(웨이브 주기, 마릿수, 보호막, 동상)은 기본값에서 다시 계산하고, 발동형은 시계를 새로 시작한다.
 func _apply_active_skills() -> void:
 	var interval := Balance.INCOME_INTERVAL
-	_skill_count_mult = 1.0
 	_guard_per_monster = 0.0
 	_guard_cap = 0.0
 	_chill_max = 0.0
 	_triggered.clear()
 	for skill in _active_skills():
 		interval = minf(interval, float(skill.get("wave_interval", interval)))
-		_skill_count_mult *= float(skill.get("count_mult", 1.0))
 		_guard_per_monster += float(skill.get("guard_per_monster", 0.0))
 		_guard_cap = maxf(_guard_cap, float(skill.get("guard_cap", 0.0)))
 		if skill.has("chill_max"):
@@ -176,12 +175,12 @@ func _apply_active_skills() -> void:
 				fired.append(false)
 			_triggered.append({"skill": skill, "fired": fired, "timer": float(skill.get("first", skill.get("period", 20.0)))})
 	_apply_wave_interval(interval)
-	# 라운드나 페이즈가 바뀌어 다음 웨이브의 변형이 달라지면 다음 웨이브를 다시 정한다 (처음 setup 때는 setup이 정한다)
-	if not _next_types.is_empty() and _affix_for_wave(_level_wave_no + 1) != _next_affix:
+	# 라운드나 페이즈가 바뀌면 보스 수입/뽑을 수 있는 종류/변형이 달라지므로 다음 웨이브를 다시 산다 (처음 setup 때는 setup이 정한다)
+	if not _next_wave.is_empty():
 		_plan_next_wave()
 	if not _active_skills().is_empty():
-		Log.info(Log.Category.GAME, "보스 스킬 적용(페이즈 %d): 웨이브 주기 %.0fs, 마릿수 x%.2f, 보호막 %.0f%%/마리(최대 %.0f%%), 발동형 %d개" % [
-			_phase, interval, _skill_count_mult, _guard_per_monster * 100.0, _guard_cap * 100.0, _triggered.size()])
+		Log.info(Log.Category.GAME, "보스 스킬 적용(페이즈 %d): 웨이브 주기 %.0fs, 보호막 %.0f%%/마리(최대 %.0f%%), 발동형 %d개" % [
+			_phase, interval, _guard_per_monster * 100.0, _guard_cap * 100.0, _triggered.size()])
 
 
 ## 이번 라운드의 스킬 중 지금 페이즈에 켜져 있는 것
@@ -368,14 +367,54 @@ func _on_level_cleared() -> void:
 	_announce_level_skills()
 
 
-## 다음 웨이브의 변형과 몬스터 묶음 종류를 미리 정한다 (HUD 미리보기용). 종류는 라운드에 맞게 가중치로 뽑는다.
-## 공습 변형이면 공중 종류만 뽑는다.
+## 다음 웨이브를 미리 정한다 (HUD 미리보기용). 보스에게는 수입이 있어서, 그 돈 안에서 이번 라운드에 살 수 있는 몬스터를
+## 가중치로 랜덤하게 뽑아 더 살 수 없을 때까지 산다. 공습 변형이면 공중 종류만 산다.
+## 종류는 WAVE_GROUPS개까지만 (HUD 칸 수). 같은 종류는 한 묶음(count마리)씩 산다 (살 돈이 모자라면 그만큼만).
 func _plan_next_wave() -> void:
 	_next_affix = _affix_for_wave(_level_wave_no + 1)
 	var air_only := _next_affix != "" and bool(BossSkills.AFFIXES[_next_affix].get("air_only", false))
-	_next_types.clear()
-	for i in range(Balance.WAVE_GROUPS):
-		_next_types.append(Monsters.pick(level, air_only))
+	var pool := Monsters.candidates(level, air_only)
+	if pool.is_empty():
+		pool = Monsters.candidates(level)
+	var budget := wave_budget()
+	var counts := {}
+	var order: Array[String] = []
+	var total := 0
+	while total < MAX_WAVE_MONSTERS:
+		var options: Array[String] = []
+		var weight_sum := 0.0
+		for id in pool:
+			if int(Monsters.DATA[id].cost) > budget:
+				continue  # 못 산다
+			if order.size() >= Balance.WAVE_GROUPS and not counts.has(id):
+				continue  # 이미 종류가 꽉 찼다
+			options.append(id)
+			weight_sum += float(Monsters.DATA[id].weight)
+		if options.is_empty():
+			break
+		var roll := randf() * weight_sum
+		var chosen: String = options[options.size() - 1]
+		for id in options:
+			roll -= float(Monsters.DATA[id].weight)
+			if roll <= 0.0:
+				chosen = id
+				break
+		var cost := int(Monsters.DATA[chosen].cost)
+		var bundle := mini(mini(int(Monsters.DATA[chosen].get("count", 1)), budget / cost), MAX_WAVE_MONSTERS - total)
+		budget -= bundle * cost
+		total += bundle
+		if not counts.has(chosen):
+			order.append(chosen)
+			counts[chosen] = 0
+		counts[chosen] += bundle
+	_next_wave.clear()
+	for id in order:
+		_next_wave.append({"type": id, "count": counts[id]})
+
+
+## 이번 웨이브에 보스가 쓸 수 있는 돈: 보스 수입(라운드별 income) 그대로. 웨이브 주기나 스킬과 상관없다 (주기가 짧으면 그만큼 더 어렵다).
+func wave_budget() -> int:
+	return level_data.income
 
 
 ## 이번 라운드의 wave_no번째 웨이브에 붙는 변형 (없으면 ""). "N웨이브마다"는 N, 2N, ... 번째에 붙는다.
@@ -397,26 +436,12 @@ func get_next_wave_affix() -> Dictionary:
 	return {"id": _next_affix, "name": a.name, "color": a.color}
 
 
-## 묶음 하나의 마릿수. 라운드가 오를수록(파견 압박 interval이 짧아질수록, count_mult가 클수록) 늘어난다.
-func _group_count(type_id: String) -> int:
-	var wave_type: Dictionary = Monsters.DATA[type_id]
-	var scale := Balance.INCOME_INTERVAL / float(level_data.interval) / float(Balance.WAVE_GROUPS)
-	return maxi(1, roundi(float(wave_type.get("count", 1)) * float(level_data.count_mult) * scale * _skill_count_mult))
-
-
-## HUD용: 다음 웨이브에 뭐가 몇 마리 오는지. 같은 종류는 합친다. [{type, name, count, flying, color}]
+## HUD용: 다음 웨이브에 뭐가 몇 마리 오는지. [{type, name, count, flying, color}]
 func get_next_wave_preview() -> Array:
-	var order: Array[String] = []
-	var counts := {}
-	for t in _next_types:
-		if not counts.has(t):
-			order.append(t)
-			counts[t] = 0
-		counts[t] += _group_count(t)
 	var preview: Array = []
-	for t in order:
-		var wt: Dictionary = Monsters.DATA[t]
-		preview.append({"type": t, "name": wt.name, "count": counts[t], "flying": bool(wt.get("flying", false)), "color": wt.color})
+	for e in _next_wave:
+		var wt: Dictionary = Monsters.DATA[e.type]
+		preview.append({"type": e.type, "name": wt.name, "count": e.count, "flying": bool(wt.get("flying", false)), "color": wt.color})
 	return preview
 
 
@@ -434,7 +459,7 @@ func _dispatch_wave() -> void:
 	if state != State.RUNNING:
 		return
 	_since_wave = 0.0
-	var types := _next_types.duplicate()
+	var wave := _next_wave.duplicate()
 	var preview := get_next_wave_preview()
 	var affix_id := _next_affix
 	_level_wave_no += 1
@@ -450,22 +475,18 @@ func _dispatch_wave() -> void:
 		skill_announced.emit({"name": "%s 웨이브" % a.name, "text": a.text, "lane": "player", "delay": 0.0, "boss": level_data.name})
 
 	var dispatch_level := level
-	# 레인마다 이번 웨이브가 나오는 칸을 하나 정해서 한 덩어리로 내보낸다
-	var spawn_cells := {}
-	for lane in _lanes.values():
-		spawn_cells[lane] = lane.pick_spawn_cell()
+	# 몬스터마다 나오는 칸을 따로 랜덤으로 뽑는다 (spawn_cell을 안 주면 레인이 뽑는다). 같은 종류끼리는 연달아 나온다.
 	var first := true
-	for type_id in types:
-		var count := _group_count(type_id)
-		for i in range(count):
+	for entry in wave:
+		for i in range(int(entry.count)):
 			if not first:
 				var gap := Balance.WAVE_SPAWN_GAP if i > 0 else Balance.WAVE_GROUP_GAP
-				await get_tree().create_timer(gap, false).timeout  # (false: 일시정지 중에는 멈춘다) 촘촘하게 연달아 나온다 (묶음 사이는 조금 더 띄운다)
+				await get_tree().create_timer(gap, false).timeout  # (false: 일시정지 중에는 멈춘다) 촘촘하게 연달아 나온다 (종류 사이는 조금 더 띄운다)
 				if state != State.RUNNING:
 					return
 			first = false
 			for lane in _lanes.values():
-				lane.spawn_wave_monster(type_id, dispatch_level, spawn_cells[lane], affix_id)
+				lane.spawn_wave_monster(entry.type, dispatch_level, Pathfinder.NO_GOAL, affix_id)
 
 
 ## 플레이어가 생산한 몬스터를 보스 레인으로 보낸다
@@ -487,7 +508,7 @@ func spawn_player_monster(owner_id: int, kind_id: String) -> void:
 	monster.kind_id = kind_id
 	monster.max_hp = Monsters.max_hp(kind_id)  # setup()이 hp를 가득 채운다
 	monster.slot_key = slot_info.key
-	monster.dps = float(data.dps)
+	monster.dps = Monsters.dps(kind_id)
 	monster.ramp = float(data.get("ramp", 0.0))
 	monster.ramp_cap = float(data.get("ramp_cap", 0.0))
 	monster.aura_radius = float(data.get("aura_radius", 0.0))
