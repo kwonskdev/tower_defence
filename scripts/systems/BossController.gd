@@ -55,7 +55,6 @@ var _dmg_accum := 0.0
 var _dmg_timer := 0.0
 var _dps_timer := 0.0
 var _next_wave: Array = []            # 다음 웨이브 [{type, count}] (보스 수입으로 미리 "사 둔다")
-var _wave_interval := Balance.INCOME_INTERVAL  # 지금 웨이브 주기(초). 수입은 수입 주기당 income이라 주기가 짧으면 한 웨이브 예산도 준다
 var _skill_count_mult := 1.0          # 이번 보스 스킬이 정한 웨이브 마릿수 배율
 var damage_mult := 1.0                # 보스가 받는 피해 배율 (비늘 보호막. 1.0이면 그대로)
 var _next_affix := ""                 # 다음 웨이브에 붙는 변형 (BossSkills.AFFIXES 키, 없으면 "")
@@ -179,7 +178,6 @@ func _apply_active_skills() -> void:
 				fired.append(false)
 			_triggered.append({"skill": skill, "fired": fired, "timer": float(skill.get("first", skill.get("period", 20.0)))})
 	_apply_wave_interval(interval)
-	_wave_interval = interval
 	# 라운드나 페이즈가 바뀌면 보스 수입/뽑을 수 있는 종류/변형이 달라지므로 다음 웨이브를 다시 산다 (처음 setup 때는 setup이 정한다)
 	if not _next_wave.is_empty():
 		_plan_next_wave()
@@ -417,9 +415,9 @@ func _plan_next_wave() -> void:
 		_next_wave.append({"type": id, "count": counts[id]})
 
 
-## 이번 웨이브에 보스가 쓸 수 있는 돈: 보스 수입은 수입 주기(30초)마다 income이라, 웨이브 주기가 짧으면 한 번에 쓰는 돈도 준다.
+## 이번 웨이브에 보스가 쓸 수 있는 돈: 보스 수입(라운드별 income)에 스킬 마릿수 배율을 곱한 값. 웨이브 주기와는 상관없다.
 func wave_budget() -> int:
-	return roundi(float(level_data.income) * _wave_interval / Balance.INCOME_INTERVAL * _skill_count_mult)
+	return roundi(float(level_data.income) * _skill_count_mult)
 
 
 ## 이번 라운드의 wave_no번째 웨이브에 붙는 변형 (없으면 ""). "N웨이브마다"는 N, 2N, ... 번째에 붙는다.
