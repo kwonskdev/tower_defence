@@ -291,9 +291,9 @@ func spawn_wave_monster(type_id: String = "grunt", level: int = 1, spawn_cell: V
 	monster.regen = float(wave_type.get("regen", 0.0))
 	monster.flying = bool(wave_type.get("flying", false))
 	monster.reward = roundi(Monsters.reward(type_id) * (1.0 + 0.15 * (level - 1)))
-	monster.dps = float(wave_type.dps)
+	monster.dps = Monsters.dps(type_id)
 	monster.gnaws_towers = monster.dps > 0.0 and (bool(wave_type.get("gnaws", false)) or wave_type.category == "attack")  # 공격력 0(응원단 등)은 갉을 게 없다
-	monster.gnaw_rate = float(wave_type.dps)
+	monster.gnaw_rate = monster.dps
 	monster.gnawed.connect(_on_tower_gnawed)
 	if affix != "":
 		var affix_data: Dictionary = BossSkills.AFFIXES[affix]

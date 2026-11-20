@@ -508,7 +508,7 @@ func spawn_player_monster(owner_id: int, kind_id: String) -> void:
 	monster.kind_id = kind_id
 	monster.max_hp = Monsters.max_hp(kind_id)  # setup()이 hp를 가득 채운다
 	monster.slot_key = slot_info.key
-	monster.dps = float(data.dps)
+	monster.dps = Monsters.dps(kind_id)
 	monster.ramp = float(data.get("ramp", 0.0))
 	monster.ramp_cap = float(data.get("ramp_cap", 0.0))
 	monster.aura_radius = float(data.get("aura_radius", 0.0))

@@ -5,7 +5,8 @@ class_name Monsters
 ##
 ## 공통 값
 ##   cost: 생산 비용 / income: 생산하면 수입 틱 골드가 영구히 이만큼 오른다 / hp: 체력
-##   dps: 공격력 = 초당 피해. 보스 레인에서는 보스에게, 타워 레인에서는 타워(내구도)에게 똑같이 적용된다
+##   dps: 공격력 = 초당 피해. 보스 레인에서는 보스에게, 타워 레인에서는 타워(내구도)에게 똑같이 적용된다.
+##        일반형/공중형은 타워를 때리지 않아(길이 막히면 한 방에 부순다) null. 슬라임 새끼만 갉으니 값이 있다
 ##   speed: 이동 속도(칸/초) / size, shape, color: 겉모습 / desc: 설명
 ## 있을 때만 쓰는 값
 ##   life: 기지에 닿았을 때 줄이는 생명(기본 1) / armor: 한 발 피해 감소 / regen: 초당 최대체력 회복 비율 / flying: 공중
@@ -103,25 +104,25 @@ const DATA := {
 		"desc": "스스로는 안 싸우지만 주변(3칸) 몬스터의 공격력을 +50%."},
 
 	# --- 일반형 (보스 웨이브) ---
-	"grunt": {"name": "일반", "category": "normal", "cost": 15, "income": 1, "hp": 10.0, "dps": 1.0, "speed": 3.0, "size": 1.0, "shape": "horn",
+	"grunt": {"name": "일반", "category": "normal", "cost": 15, "income": 1, "hp": 10.0, "dps": null, "speed": 3.0, "size": 1.0, "shape": "horn",
 		"reward": 2, "color": Color(0.85, 0.2, 0.2), "weight": 5.0, "count": 1, "min_level": 1,
 		"desc": "평범한 몬스터."},
-	"runner": {"name": "질주", "category": "normal", "cost": 12, "income": 1, "hp": 5.0, "dps": 0.5, "speed": 5.5, "size": 0.85, "shape": "runner",
+	"runner": {"name": "질주", "category": "normal", "cost": 12, "income": 1, "hp": 5.0, "dps": null, "speed": 5.5, "size": 0.85, "shape": "runner",
 		"reward": 2, "color": Color(0.95, 0.55, 0.15), "weight": 3.0, "count": 1, "min_level": 1,
 		"desc": "빠르다. 사거리 안에 머무는 시간이 짧아서 장거리 타워가 유리."},
-	"swarm": {"name": "무리", "category": "normal", "cost": 6, "income": 0, "hp": 3.0, "dps": 0.3, "speed": 3.8, "size": 0.65, "shape": "horn",
+	"swarm": {"name": "무리", "category": "normal", "cost": 6, "income": 0, "hp": 3.0, "dps": null, "speed": 3.8, "size": 0.65, "shape": "horn",
 		"reward": 1, "color": Color(0.75, 0.4, 0.6), "weight": 3.0, "count": 6, "min_level": 2,
 		"desc": "작은 몬스터가 떼로 몰려온다. 범위 타워가 필요."},
-	"tank": {"name": "중장갑", "category": "normal", "cost": 60, "income": 3, "hp": 35.0, "dps": 3.0, "speed": 1.8, "size": 1.4, "shape": "armor",
+	"tank": {"name": "중장갑", "category": "normal", "cost": 60, "income": 3, "hp": 35.0, "dps": null, "speed": 1.8, "size": 1.4, "shape": "armor",
 		"life": 2, "armor": 0.25, "reward": 6, "color": Color(0.4, 0.5, 0.65), "weight": 2.0, "count": 1, "min_level": 7,
 		"desc": "체력이 많고 느리다. 기지에 닿으면 생명 -2."},
-	"armored": {"name": "갑옷병", "category": "normal", "cost": 35, "income": 2, "hp": 16.0, "dps": 2.0, "speed": 2.6, "size": 1.0, "shape": "armor",
+	"armored": {"name": "갑옷병", "category": "normal", "cost": 35, "income": 2, "hp": 16.0, "dps": null, "speed": 2.6, "size": 1.0, "shape": "armor",
 		"armor": 0.5, "reward": 4, "color": Color(0.75, 0.6, 0.3), "weight": 3.0, "count": 2, "min_level": 5,
 		"desc": "갑옷이 단단해서 약한 타격은 거의 안 먹힌다. 한 발이 센 타워나 방어구 파괴가 필요."},
-	"regen": {"name": "재생체", "category": "normal", "cost": 45, "income": 2, "hp": 22.0, "dps": 2.0, "speed": 2.8, "size": 1.1, "shape": "cross",
+	"regen": {"name": "재생체", "category": "normal", "cost": 45, "income": 2, "hp": 22.0, "dps": null, "speed": 2.8, "size": 1.1, "shape": "cross",
 		"regen": 0.07, "reward": 5, "color": Color(0.3, 0.8, 0.5), "weight": 3.0, "count": 1, "min_level": 5,
 		"desc": "체력을 계속 회복한다. 화력이 흩어져 있으면 못 잡는다. 한곳에 집중 필요."},
-	"juggernaut": {"name": "거신병", "category": "normal", "cost": 200, "income": 8, "hp": 80.0, "dps": 6.0, "speed": 1.3, "size": 1.7, "shape": "armor",
+	"juggernaut": {"name": "거신병", "category": "normal", "cost": 200, "income": 8, "hp": 80.0, "dps": null, "speed": 1.3, "size": 1.7, "shape": "armor",
 		"life": 3, "armor": 0.8, "regen": 0.02, "reward": 20, "color": Color(0.25, 0.28, 0.35), "weight": 1.0, "count": 1, "min_level": 8,
 		"desc": "엄청나게 단단하고 느리다. 기지에 닿으면 생명 -3."},
 	# 보스 스킬로만 나온다 (웨이브에 뽑히지 않는다: summon_only). gnaws: 시야 안의 벽 타워를 찾아가 dps만큼 갉아 먹는다.
@@ -130,13 +131,13 @@ const DATA := {
 		"desc": "슬라임 대장이 분열하면 나온다. 시야 안의 벽 타워를 갉아 먹는다 (트랩 타워는 보지 못한다)."},
 
 	# --- 공중형 (보스 웨이브) ---
-	"flyer": {"name": "비행", "category": "air", "cost": 20, "income": 1, "hp": 7.0, "dps": 1.0, "speed": 4.0, "size": 0.9, "shape": "bird",
+	"flyer": {"name": "비행", "category": "air", "cost": 20, "income": 1, "hp": 7.0, "dps": null, "speed": 4.0, "size": 0.9, "shape": "bird",
 		"flying": true, "reward": 3, "color": Color(0.5, 0.75, 0.95), "weight": 3.0, "count": 2, "min_level": 4,
 		"desc": "공중으로 미로를 무시하고 직선으로 온다. 대공 타워만 공격 가능."},
-	"flock": {"name": "비행 무리", "category": "air", "cost": 5, "income": 0, "hp": 2.5, "dps": 0.3, "speed": 3.5, "size": 0.6, "shape": "bird",
+	"flock": {"name": "비행 무리", "category": "air", "cost": 5, "income": 0, "hp": 2.5, "dps": null, "speed": 3.5, "size": 0.6, "shape": "bird",
 		"flying": true, "reward": 1, "color": Color(0.95, 0.9, 0.5), "weight": 2.0, "count": 8, "min_level": 6,
 		"desc": "작은 비행 몬스터 떼. 범위 + 대공 타워가 필요."},
-	"bomber": {"name": "폭격기", "category": "air", "cost": 70, "income": 3, "hp": 35.0, "dps": 3.0, "speed": 2.4, "size": 1.4, "shape": "bird",
+	"bomber": {"name": "폭격기", "category": "air", "cost": 70, "income": 3, "hp": 35.0, "dps": null, "speed": 2.4, "size": 1.4, "shape": "bird",
 		"flying": true, "life": 2, "armor": 0.2, "reward": 8, "color": Color(0.7, 0.25, 0.25), "weight": 2.0, "count": 1, "min_level": 7,
 		"desc": "튼튼한 대형 비행 몬스터. 대공 타워를 모아야 한다 (스킬형 포획이 유용). 기지에 닿으면 생명 -2."},
 }
@@ -150,6 +151,13 @@ static func slots_of(category: String) -> Array:
 ## 유저가 협력(PvE)에서 만들 수 있는 몬스터인가
 static func can_send_in_pve(kind_id: String) -> bool:
 	return DATA[kind_id].category in PVE_SENDABLE
+
+
+## 공격력(초당 피해). 없으면(null) 0. 일반형/공중형은 타워를 때리지 않고(길이 막히면 한 방에 부순다) 보스 레인에도 못 가서 값이 없다.
+## 슬라임 새끼처럼 타워를 갉는 몬스터와 공격형/지원형만 값이 있다.
+static func dps(kind_id: String) -> float:
+	var v = DATA[kind_id].get("dps")
+	return 0.0 if v == null else float(v)
 
 
 static func max_hp(kind_id: String) -> float:
@@ -187,7 +195,7 @@ static func tooltip(kind_id: String) -> String:
 		desc += " 공중으로 온다."
 	if not (desc.contains("빠") or desc.contains("느리") or desc.contains("도착")):
 		desc += " 이동 %s." % ("빠름" if d.speed >= 4.0 else ("느림" if d.speed <= 2.0 else "보통"))
-	var atk := "공격 %s" % _num(d.dps) if d.dps > 0.0 else "공격 없음"
+	var atk := "공격 %s" % _num(dps(kind_id)) if dps(kind_id) > 0.0 else "공격 없음"
 	if d.category in ["normal", "air"] and not d.get("gnaws", false):
 		atk = "타워 공격 안 함 (길이 막히면 한 방에 파괴)"  # dps는 보스 레인에서만 쓰이고, 웨이브로 올 땐 타워를 때리지 않는다
 	var text := "%s (%s%s)\n%s\n비용 %d · 수입 +%d · %s · 체력 %s" % [
