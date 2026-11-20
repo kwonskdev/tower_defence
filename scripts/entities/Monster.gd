@@ -47,7 +47,6 @@ var gnaws_towers: bool = false
 var gnaw_rate: float = 1.0         # 초당 갉는 양 (타워 내구도 Balance.TOWER_DURABILITY 기준)
 var _gnaw_cell: Vector2i = Pathfinder.NO_GOAL   # 지금 노리는 타워 칸 (없으면 NO_GOAL)
 var _gnaw_retarget := 0.0
-var _block_check := 0.0
 var _gnaw_skip: Dictionary = {}    # 곁으로 갈 길이 없어서 포기한 타워 칸
 var _gnawing := false
 
@@ -491,13 +490,6 @@ func _process(delta: float) -> void:
 ## 기절하면 _process가 먼저 멈추므로 갉지 못한다.
 func _process_gnaw(delta: float) -> bool:
 	_gnawing = false
-	_block_check -= delta
-	if _gnaw_cell != Pathfinder.NO_GOAL and _block_check <= 0.0:
-		_block_check = 0.3
-		if _path_is_blocked():  # 갉는 사이에 길이 막혔다: 목표를 버리고 돌파한다
-			_gnaw_cell = Pathfinder.NO_GOAL
-			_repath()
-			return false
 	if _gnaw_cell != Pathfinder.NO_GOAL:
 		if _grid.get_cell_state(_gnaw_cell) != GridSystem.CellState.TOWER:
 			_gnaw_cell = Pathfinder.NO_GOAL  # 목표 타워가 사라졌다 (다른 새끼가 부숨)
@@ -516,18 +508,10 @@ func _process_gnaw(delta: float) -> bool:
 		return false
 	_gnaw_retarget = 0.3
 	var found := _nearest_gnaw_target()
-	if found != Pathfinder.NO_GOAL and _path_is_blocked():
-		found = Pathfinder.NO_GOAL  # 길이 완전히 막혔으면 갉지 않고 막은 타워를 한 방에 부수며 지나간다 (breaching)
 	if found != Pathfinder.NO_GOAL:
 		_gnaw_cell = found
 		_repath()  # 목표가 생겼으니 그 곁으로 가는 길을 짠다 (길이 없으면 목표를 버린다)
 	return false
-
-
-## 실제 격자 기준으로 목적지까지 타워를 부수지 않고는 갈 수 없는가 (시야로 못 본 타워까지 센다. 시야 때문에 막힌 걸 몰라도 갉지 않게)
-func _path_is_blocked() -> bool:
-	var result := _pathfinder.find_route(cell_pos, goal_cell)
-	return result.ok and result.breach
 
 
 ## 본 적 있는 타워(벽 타워만) 중 GNAW_SEEK_RANGE 안에서 가장 가까운 것
