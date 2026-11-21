@@ -50,6 +50,7 @@ func run() -> void:
 	get_tree().root.add_child.call_deferred(game)
 	await frames(8)
 	await hud_matches_state(game)
+	await map_view_draws_from_snapshot()
 	game.queue_free()
 	await frames(3)
 
@@ -102,3 +103,46 @@ func hud_matches_state(game: Node) -> void:
 		v.queue_redraw()
 	await frames(3)
 	check(true, "미니맵 %d개가 스냅샷으로 오류 없이 그려진다" % game.minimap_views.size())
+
+
+## 맵의 타워/몬스터는 서버 스냅샷으로 만든 껍데기가 그린다 (시뮬레이션 노드는 숨는다)
+func map_view_draws_from_snapshot() -> void:
+	print("[맵] 타워/몬스터 껍데기")
+	var game := (load("res://scenes/main/MainGame.tscn") as PackedScene).instantiate()
+	get_tree().root.add_child.call_deferred(game)
+	await frames(8)
+	var gf: GameField = game.game_field
+	var lane: LaneController = gf.lanes[0]
+	lane.gold = 500.0
+	lane.try_build_tower(Vector2i(4, 10), "long", false)
+	lane.try_build_tower(Vector2i(6, 10), "splash", false)
+	lane.evolve_tower(lane.tower_at(Vector2i(4, 10)), "pierce")
+	lane.spawn_wave_monster("grunt", 1)
+	lane.spawn_wave_monster("flyer", 1)
+	await frames(10)
+	var mv := gf.map_view
+	check(mv != null and mv.tower_count() == 2, "타워 껍데기 2개 (%d)" % mv.tower_count())
+	check(mv.monster_count() == lane.monsters.size() and mv.monster_count() == 2, "몬스터 껍데기 %d개 = 서버 몬스터 %d마리" % [mv.monster_count(), lane.monsters.size()])
+	var sim_t := lane.tower_at(Vector2i(4, 10))
+	var pup := mv.tower_node(0, Vector2i(4, 10))
+	check(not sim_t.visible and pup != null and pup.visible and pup.puppet, "시뮬레이션 타워는 숨고 껍데기가 보인다")
+	check(pup.evolution == "pierce" and pup.color_info.name == sim_t.color_info.name and absf(pup.cur_range() - sim_t.cur_range()) < 0.001, "껍데기가 진화/색/사거리를 서버 값대로 가진다")
+	var m: Monster = lane.monsters[0]
+	var shell: Monster = null
+	for c in gf.grid_renderer.get_children():
+		if c is Monster and c.puppet and c.monster_id == m.monster_id and c.visible:
+			shell = c
+	check(shell != null and not m.visible, "몬스터도 시뮬레이션 노드는 숨고 껍데기가 보인다")
+	check(shell != null and shell.cell_pos.distance_to(m.cell_pos) < 0.3, "껍데기 위치가 서버 몬스터 위치와 같다 (차이 %.3f칸)" % (shell.cell_pos.distance_to(m.cell_pos) if shell else -1.0))
+	# 다른 레인을 보면 이 레인의 껍데기는 숨는다
+	gf.switch_player(1)
+	await frames(3)
+	check(not pup.visible, "다른 레인을 보면 이 레인의 껍데기는 숨는다")
+	gf.switch_player(0)
+	# 판매하면 껍데기가 사라진다
+	gf.select_tower(sim_t)
+	gf.sell_selected_tower()
+	await frames(5)
+	check(mv.tower_count() == 1 and not is_instance_valid(pup) or pup.is_queued_for_deletion(), "판매한 타워의 껍데기가 치워진다 (남은 %d)" % mv.tower_count())
+	game.queue_free()
+	await frames(3)

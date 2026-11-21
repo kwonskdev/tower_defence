@@ -32,6 +32,11 @@ var seal_warn: bool = false
 
 # 아이콘 미리보기용
 var preview: bool = false
+
+# 클라이언트 껍데기 모드(puppet): 서버 스냅샷을 받아 그리기만 한다. 공격/조준/시간 흐름 같은 시뮬레이션은 하지 않는다 (#21).
+var puppet: bool = false
+var puppet_range: float = 0.0       # 서버가 계산해 보낸 실제 사거리 (색깔 보너스 반영)
+var puppet_charge_max: float = 1.0  # 충전형 상한
 var preview_cell: float = 40.0
 var preview_aim: float = -PI * 0.25  # 아이콘에서 포신이 가리키는 방향 (오른쪽 위)
 
@@ -150,12 +155,37 @@ func cur_cooldown() -> float:
 
 ## 실제 사거리 (색깔 보너스 반영)
 func cur_range() -> float:
+	if puppet:
+		return puppet_range
 	var r: float = kind.range
 	# 노랑 색깔 보너스: 사거리 증가
 	if color_info.name == "노랑":
 		var bonus := lane.color_bonus_value("노랑", self)
 		r *= (1.0 + bonus)
 	return r
+
+
+## 그릴 때 필요한 값들 (스냅샷에 실려 클라이언트 껍데기로 간다)
+func view_state() -> Dictionary:
+	return {"aim": _aim, "recoil": _recoil, "sealed": sealed_time > 0.0, "warn": seal_warn, "charge": charge,
+		"charge_max": charge_max(), "haste": haste_stacks, "range": cur_range()}
+
+
+## 스냅샷의 타워 항목(Snapshot의 타워)을 받아 모습을 맞춘다. 껍데기(puppet)용.
+func apply_view(v: Dictionary) -> void:
+	evolution = v.evo
+	b_learned = v.b
+	durability = v.durability
+	sealed_time = 1.0 if v.sealed else 0.0
+	seal_warn = v.warn
+	_aim = v.aim
+	_recoil = v.recoil
+	charge = v.charge
+	puppet_charge_max = v.charge_max
+	haste_stacks = int(v.haste)
+	puppet_range = v.range
+	if color_info.name != v.color:
+		color_info = Balance.color_info_by_name(v.color)
 
 
 ## 색깔을 바꾼다 (LaneController.recolor_tower가 골드 처리를 한 뒤 부른다)
@@ -190,6 +220,8 @@ func crit_chance() -> float:
 
 ## 충전형이 모을 수 있는 최대 충전량 ("충전 상한" 업그레이드)
 func charge_max() -> float:
+	if puppet:
+		return puppet_charge_max
 	return _p("A", "cap") if evolution == "charge" else Evolutions.CHARGE_MIN
 
 
@@ -200,6 +232,10 @@ func charge_ratio() -> float:
 func _process(delta: float) -> void:
 	if preview:
 		return  # 아이콘은 가만히 둔다
+	if puppet:
+		_t += delta  # 봉인 예고 깜빡임 같은 그림용 시간만 흐른다
+		queue_redraw()
+		return
 
 	_t += delta
 	_recoil = maxf(0.0, _recoil - delta * 5.0)

@@ -31,6 +31,7 @@ const MIN_WAVE_GAP := 10.0    # 웨이브 주기를 수입 시점에 다시 맞�
 
 var state: State = State.WAITING
 var level: int = 1
+var show_nodes := true  # 보낸 몬스터 노드를 직접 보여 줄지 (클라이언트는 스냅샷 껍데기로 그리므로 끈다)
 var events := SimEvents.new()  # 연출 이벤트 통로 (GameField가 세션 것으로 바꿔 끼운다)
 var rng := RandomNumberGenerator.new()  # 보스의 시뮬레이션 랜덤 (GameField가 세션 것으로 바꿔 끼운다). 화면 흔들림 같은 연출 랜덤은 전역 randf()
 var level_data: Dictionary = {}
@@ -642,7 +643,7 @@ func spawn_player_monster(owner_id: int, kind_id: String) -> void:
 	monster.aura_bonus = float(data.get("aura_bonus", 0.0))
 	monster.goal_cell = _walkable_cell_near(slot)
 	monster.final_point = slot
-	monster.visible = _lane_visible
+	monster.visible = _lane_visible and show_nodes
 	monster.z_index = 2
 	monster.setup(_next_monster_id, _grid, _renderer, _pathfinder, spawn_cell)
 	monster.reached_exit.connect(_on_monster_arrived)
@@ -979,7 +980,7 @@ func set_lane_visible(is_shown: bool) -> void:
 	if _bar:
 		_bar.visible = is_shown
 	for m in _sent_monsters:
-		m.visible = is_shown
+		m.visible = is_shown and show_nodes
 
 
 ## 보스 레인 한가운데의 커다란 보스. 라운드마다 색이 다르다.

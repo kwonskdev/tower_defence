@@ -47,6 +47,9 @@ func setup_game_field():
 	grid_renderer = GridRenderer.new()
 	grid_renderer.name = "GridRenderer"
 	add_child(grid_renderer)
+	if play_effects:  # 화면이 있는 클라이언트만: 서버 스냅샷으로 타워/몬스터를 그린다
+		map_view = MapView.new(grid_renderer)
+		add_child(map_view)
 
 	# 8명의 플레이어를 위한 그리드 시스템 생성
 	for i in range(MAX_PLAYERS + 1):
@@ -116,8 +119,17 @@ func snapshot(fresh := false) -> Dictionary:
 	return _snapshot
 
 
-## 연출을 그릴지. 서버(ServerMain)는 화면이 없으니 끈다: 시뮬레이션은 이벤트를 내보내기만 하고 그리지 않는다.
+## 연출을 그릴지 (= 화면이 있는 클라이언트인지). 서버(ServerMain)는 화면이 없으니 끈다: 시뮬레이션은 이벤트를 내보내기만 하고 그리지 않는다.
 var play_effects := true
+var map_view: MapView = null  # 스냅샷으로 타워/몬스터를 그리는 껍데기들 (서버에는 없다)
+
+
+func _process(_delta: float) -> void:
+	if map_view == null or boss == null:
+		return
+	var sel := get_selected_tower()
+	var sel_key := "" if sel == null else "%d:%d:%d" % [sel.lane.player_id, sel.cell.x, sel.cell.y]
+	map_view.sync(snapshot(), current_player_id, sel_key)
 
 
 ## 시뮬레이션이 내보낸 연출 이벤트(SimEvents)를 받아 그린다. 레인이 지금 보이는지는 여기(클라이언트)가 정한다.
@@ -175,6 +187,7 @@ func start_lane(player_id: int):
 	lane.name = "Lane_" + str(player_id)
 	lane.rng = session.rng  # 시뮬레이션 랜덤은 세션 하나를 같이 쓴다
 	lane.events = session.events
+	lane.show_nodes = not play_effects  # 그리는 쪽은 MapView 껍데기
 	add_child(lane)
 	lane.setup(player_id, grid_systems[player_id], grid_renderer)
 	lane.set_lane_visible(player_id == current_player_id)
@@ -186,6 +199,7 @@ func start_boss():
 	boss.name = "Boss"
 	boss.rng = session.rng
 	boss.events = session.events
+	boss.show_nodes = not play_effects
 	add_child(boss)
 	bus.boss = boss
 	boss.setup(grid_systems[BOSS_LANE_ID], grid_renderer, lanes)

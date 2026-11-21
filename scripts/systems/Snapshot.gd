@@ -7,8 +7,8 @@ class_name Snapshot
 ##   {"v", "boss_lane": int, "players": [id...],
 ##    "lanes": {"<id>": 레인}, "boss": 보스}
 ##   레인: gold, lives, income, income_left, active, started, ghost_damage, stat_levels, color_levels, towers[], monsters[]
-##   타워: cell[x,y], kind, color, evo, b, invested, durability, kills, damage, ghost_damage
-##   몬스터: id, kind, owner, pos[x,y], hp, max_hp, flying, ghost
+##   타워: cell[x,y], kind, color, evo, b, invested, durability, kills, damage, ghost_damage + Tower.view_state()(aim, recoil, sealed, warn, charge, charge_max, haste, range)
+##   몬스터: Monster.view_state() (id, kind, owner, pos[x,y], hp, max_hp, flying, ghost, shape, color, size, facing, 상태이상 ...)
 ##   보스: state, level, hp, max_hp, time_left, in_ghost, ghost_length, total_dps, damage_mult, wave_text,
 ##         next_wave_in, sent_count, attackers, damage_by_player, ghost_boss_damage_by_player, monsters[],
 ##         name, phase_text, effective_dps, has_guard, ghost_running, ghost_summary, wave_preview[], affix
@@ -38,11 +38,13 @@ static func _vec(v: Vector2) -> Array:
 static func _lane(lane: LaneController) -> Dictionary:
 	var towers: Array = []
 	for t in lane.towers:
-		towers.append({
+		var entry := {
 			"cell": [t.cell.x, t.cell.y], "kind": t.kind.id, "color": t.color_info.name, "evo": t.evolution, "b": t.b_learned,
 			"invested": t.invested, "durability": t.durability, "kills": t.kills,
 			"damage": t.total_damage, "ghost_damage": t.ghost_damage,
-		})
+		}
+		entry.merge(t.view_state())  # 그리는 데 필요한 값 (조준각, 반동, 충전, 사거리 ...)
+		towers.append(entry)
 	var monsters: Array = []
 	for m in lane.monsters:
 		if is_instance_valid(m):
@@ -56,8 +58,7 @@ static func _lane(lane: LaneController) -> Dictionary:
 
 
 static func _monster(m: Monster) -> Dictionary:
-	return {"id": m.monster_id, "kind": m.kind_id, "owner": m.owner_id, "pos": _vec(m.cell_pos),
-		"hp": m.hp, "max_hp": m.max_hp, "flying": m.flying, "ghost": m.ghost}
+	return m.view_state()  # 위치/체력/외형/상태이상 (클라이언트 껍데기가 이것만으로 그린다)
 
 
 static func _boss(boss: BossController) -> Dictionary:

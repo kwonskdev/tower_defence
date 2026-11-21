@@ -92,6 +92,10 @@ var facing: Vector2 = Vector2.DOWN
 var breaching: bool = false
 var stopped: bool = false
 
+# 클라이언트 껍데기 모드(puppet): 서버 스냅샷을 받아 그리기만 한다. 길찾기/전투/상태 시간은 흐르지 않는다 (#21).
+var puppet: bool = false
+var puppet_moving: bool = false  # 걷는 중인가 (서버의 "정지/갉기/경로 없음"이 아닌 상태)
+
 # 아이콘 미리보기용
 var preview: bool = false
 var preview_cell: float = 40.0
@@ -437,6 +441,9 @@ func _process(delta: float) -> void:
 	if _hit_flash > 0.0:
 		_hit_flash -= delta
 	queue_redraw()
+	if puppet:
+		_update_position()
+		return
 	if preview:
 		return
 
@@ -588,6 +595,63 @@ func _check_arrival() -> void:
 		reached_exit.emit(self)
 
 
+## 그릴 때 필요한 값들 (스냅샷에 실려 클라이언트 껍데기로 간다)
+func view_state() -> Dictionary:
+	return {
+		"id": monster_id, "kind": kind_id, "owner": owner_id, "pos": [snappedf(cell_pos.x, 0.001), snappedf(cell_pos.y, 0.001)],
+		"hp": hp, "max_hp": max_hp, "flying": flying, "ghost": ghost,
+		"shape": shape, "color": body_color.to_html(false), "size": size_scale, "speed": speed,
+		"facing": [facing.x, facing.y], "attack_dir": [attack_dir.x, attack_dir.y],
+		"stopped": stopped, "gnawing": _gnawing, "moving": not stopped and not _gnawing and not waypoints.is_empty(),
+		"breaching": breaching, "hit": _hit_flash > 0.0, "aura": aura_radius, "time_at_boss": time_at_boss,
+		"poison": not _poisons.is_empty(), "slow": slow_time > 0.0, "stun": stun_time > 0.0 or captured_time > 0.0,
+		"armor_break": armor_break_time > 0.0, "boost": speed_boost > 1.0, "revive": revive_ratio > 0.0 and not _revived,
+		"chill": chill, "dread": dread_time > 0.0, "warn": warn_color.to_html(true) if warn_color.a > 0.0 else "",
+		"marks": marks.size(),
+	}
+
+
+## 스냅샷의 몬스터 항목을 받아 모습을 맞춘다. 껍데기(puppet)용.
+func apply_view(v: Dictionary) -> void:
+	monster_id = v.id
+	kind_id = v.kind
+	shape = v.shape
+	body_color = Color.html(v.color)
+	size_scale = v.size
+	speed = v.speed
+	cell_pos = Vector2(v.pos[0], v.pos[1])
+	facing = Vector2(v.facing[0], v.facing[1])
+	attack_dir = Vector2(v.attack_dir[0], v.attack_dir[1])
+	hp = v.hp
+	max_hp = v.max_hp
+	flying = v.flying
+	ghost = v.ghost
+	stopped = v.stopped
+	_gnawing = v.gnawing
+	puppet_moving = v.moving
+	breaching = v.breaching
+	_hit_flash = 0.1 if v.hit else 0.0
+	aura_radius = v.aura
+	time_at_boss = v.time_at_boss
+	_poisons = [{}] if v.poison else []
+	slow_time = 1.0 if v.slow else 0.0
+	stun_time = 1.0 if v.stun else 0.0
+	armor_break_time = 1.0 if v.armor_break else 0.0
+	speed_boost = 1.5 if v.boost else 1.0
+	revive_ratio = 1.0 if v.revive else 0.0
+	_revived = not v.revive
+	chill = v.chill
+	dread_time = 1.0 if v.dread else 0.0
+	warn_color = Color.html(v.warn) if v.warn != "" else Color(0, 0, 0, 0)
+	marks.resize(int(v.marks))
+
+
+## 껍데기로 쓴다: 시뮬레이션 없이 그리기만 한다 (setup()은 길찾기까지 하므로 부르지 않는다)
+func setup_puppet(renderer: GridRenderer) -> void:
+	puppet = true
+	_renderer = renderer
+
+
 func _cell_px() -> float:
 	return preview_cell if _renderer == null else float(_renderer.CELL_SIZE)
 
@@ -599,7 +663,7 @@ func _update_position() -> void:
 func _draw() -> void:
 	var cell := _cell_px()
 	var r: float = cell * 0.32 * size_scale
-	var moving := preview or (not stopped and not _gnawing and not waypoints.is_empty())
+	var moving := preview or (puppet_moving if puppet else (not stopped and not _gnawing and not waypoints.is_empty()))
 
 	# 걷는 동안 통통 튀고, 멈추면 숨쉬듯 흔들림. 보스 앞에서는 보스 쪽으로 달려들었다 물러남. 타워를 갉을 때도 타워 쪽으로 달려든다.
 	var bob := absf(sin(_anim * speed * 3.0)) * cell * 0.09 if moving else sin(_anim * 3.0) * cell * 0.015

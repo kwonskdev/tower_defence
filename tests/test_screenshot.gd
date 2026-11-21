@@ -32,7 +32,13 @@ func run() -> void:
 		lane.spawn_wave_monster(t, 1)
 	await frames(1)
 	gf.select_tower(lane.tower_at(cells[0]))
-	await wait_seconds(2.5)
+	if "--lane=boss" in OS.get_cmdline_user_args():  # 보스 레인: 보낸 몬스터와 보스를 본다
+		for k in ["worker", "warrior", "knight", "cheer"]:
+			gf.do_command(Command.SEND_MONSTER, {"kind_id": k})
+		gf.switch_player(GameField.BOSS_LANE_ID)
+		await wait_seconds(8.0)
+	else:
+		await wait_seconds(2.5)
 	var img := get_viewport().get_texture().get_image()
 	if path != "":
 		img.save_png(path)

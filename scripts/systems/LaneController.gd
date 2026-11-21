@@ -16,6 +16,7 @@ var lives: float = float(Balance.START_LIVES)  # 소수점까지 들고 있다. 
 var active := true
 var started := false  # 시작 버튼을 눌렀는가 (누르기 전에는 타워를 전액 환급으로 팔 수 있다)
 var lane_visible := true
+var show_nodes := true  # 타워/몬스터 노드를 직접 보여 줄지. 화면이 있는 클라이언트는 스냅샷 껍데기(MapView)로 그리므로 끈다
 var events := SimEvents.new()  # 연출 이벤트 통로 (GameField가 세션 것으로 바꿔 끼운다)
 var rng := RandomNumberGenerator.new()  # 이 레인의 시뮬레이션 랜덤 (GameField가 세션 것으로 바꿔 끼운다. 서버만 뽑는다)
 var monsters: Array[Monster] = []  # 필드 위 몬스터 (유령 구간의 유령도 들어 있다: 타워가 똑같이 조준한다)
@@ -102,7 +103,7 @@ func build_tower(cell: Vector2i, kind_id: String) -> Tower:
 
 	var tower := Tower.new()
 	tower.setup(cell, kind, color_info, self, _renderer)
-	tower.visible = lane_visible
+	tower.visible = lane_visible and show_nodes
 	tower.z_index = 1
 	tower.invested = int(kind.cost)  # 건설 골드는 호출한 쪽(GameField.place_tower)이 이미 냈다
 	_renderer.add_child(tower)
@@ -408,7 +409,7 @@ func spawn_wave_monster(type_id: String = "grunt", level: int = 1, spawn_cell: V
 		var affix_data: Dictionary = BossSkills.AFFIXES[affix]
 		monster.speed_boost = float(affix_data.get("speed_mult", 1.0))
 		monster.revive_ratio = float(affix_data.get("revive", 0.0))
-	monster.visible = lane_visible
+	monster.visible = lane_visible and show_nodes
 	monster.z_index = 2
 	monster.setup(_next_monster_id, _grid, _renderer, _pathfinder, spawn_cell)
 	monster.reached_exit.connect(_on_monster_reached_exit)
@@ -574,9 +575,9 @@ func is_cell_occupied(cell: Vector2i) -> bool:
 func set_lane_visible(is_shown: bool) -> void:
 	lane_visible = is_shown
 	for m in monsters:
-		m.visible = is_shown
+		m.visible = is_shown and show_nodes
 	for t in towers:
-		t.visible = is_shown
+		t.visible = is_shown and show_nodes
 
 
 # --- 색깔 시스템 ---
