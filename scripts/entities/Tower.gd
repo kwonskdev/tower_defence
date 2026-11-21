@@ -35,10 +35,10 @@ var preview_cell: float = 40.0
 var preview_aim: float = -PI * 0.25  # 아이콘에서 포신이 가리키는 방향 (오른쪽 위)
 
 # 진화 스킬 상태
-var charge: float = 0.0         # 충전형: 모아 둔 에너지(초)
+var charge: float = 0.0         # 충전형: 모아 둔 충전량 (폭발하면 0)
 var haste_stacks: int = 0       # 성장형 B: 광란 중첩
 var _haste_timer := 0.0
-var _shot_count := 0            # 대량 처리형 A: 몇 번째 공격인지
+var _snare_cd := 0.0            # 스킬형 A: 인스네어를 다시 쓸 수 있을 때까지 남은 시간 (0이면 바로 사용 가능)
 
 const TRAP_ALPHA := 0.55   # 트랩(길을 막지 않는 타워)의 투명도
 
@@ -68,7 +68,7 @@ func set_evolution(evo: String) -> void:
 	b_learned = false
 	charge = 0.0
 	haste_stacks = 0
-	_shot_count = 0
+	_snare_cd = 0.0
 	queue_redraw()
 
 
@@ -185,7 +185,7 @@ func armor_penetration() -> float:
 func crit_chance() -> float:
 	if evolution != "growth":
 		return 0.0
-	return minf(_p("A", "cap"), Evolutions.CRIT_BASE + _p("A", "per_kill") * kills)
+	return minf(minf(_p("A", "cap"), 1.0), Evolutions.CRIT_BASE + _p("A", "per_kill") * kills)
 
 
 ## 충전형이 모을 수 있는 최대 충전량 ("충전 상한" 업그레이드)
@@ -208,6 +208,7 @@ func _process(delta: float) -> void:
 	position = center_cell_pos() * _renderer.CELL_SIZE
 
 	if lane.active:
+		_snare_cd = maxf(0.0, _snare_cd - delta)
 		if _haste_timer > 0.0:
 			_haste_timer -= delta
 			if _haste_timer <= 0.0:
@@ -252,27 +253,30 @@ func _shoot(target: Monster, power: float = 1.0) -> void:
 	var fx := {}
 	match evolution:
 		"pierce":
-			fx.pierce = int(_p("A", "count"))
+			fx.pierce = Evolutions.roll_int(_p("A", "count"))  # 첫 적을 포함한 최대 마릿수
 			fx.falloff = _p("A", "falloff")
+			fx.range = cur_range()
 			if has_skill("B"):
-				fx.poison = {"dps": _p("B", "dps"), "time": _p("B", "time")}
+				fx.poison = {"dps": _p("B", "tick") * 10.0, "time": _p("B", "time")}  # 독 피해 항목은 0.1초당 값
 		"boss":
-			fx.armor_break = {"chance": _p("A", "chance"), "time": _p("A", "time")}
+			fx.armor_break = {"chance": _p("A", "chance"), "ratio": _p("A", "ratio"), "time": _p("A", "time")}
 			if has_skill("B"):
 				fx.execute = {"chance": _p("B", "chance"), "hp": _p("B", "hp")}
 		"mass":
-			_shot_count += 1
-			if _shot_count >= int(_p("A", "every")):
-				_shot_count = 0
-				dmg *= _p("A", "mult")  # N번에 한 번 더 강한 공격
+			if randf() < _p("A", "chance"):  # 확률로 강타
+				dmg *= _p("A", "mult")
 				Effects.float_text(_renderer, center_cell_pos(), "강타!", evo_color(), lane.lane_visible)
 			if has_skill("B"):
 				fx.center = {"radius": _p("B", "radius"), "mult": _p("B", "mult")}
 		"skill":
 			dmg = 0.0  # 스킬형은 공격력이 없다. 공격이 맞을 때 확률로 스킬만 터진다
-			fx.snare = {"chance": _p("A", "chance"), "radius": _p("A", "radius"), "slow": _p("A", "slow"), "time": _p("A", "time")}
+			if _snare_cd <= 0.0:  # 인스네어는 주기마다 한 번, 맞는 순간 반드시 터진다
+				_snare_cd = _p("A", "cooldown")
+				fx.snare = {"chance": 1.0, "radius": _p("A", "radius"), "slow": _p("A", "slow"), "time": _p("A", "time")}
 			if has_skill("B"):
 				fx.capture = {"chance": _p("B", "chance"), "time": _p("B", "time")}
+			if fx.is_empty():
+				return  # 전할 효과가 없으면 쏘지 않는다
 		"growth":
 			if randf() < crit_chance():
 				dmg *= Evolutions.CRIT_MULT
@@ -282,13 +286,13 @@ func _shoot(target: Monster, power: float = 1.0) -> void:
 					_haste_timer = _p("B", "time")
 
 	var muzzle := center_cell_pos() + Vector2.from_angle(_aim) * 0.45
-	var color: Color = evo_color() if fx.has("snare") else kind.color
+	var color: Color = evo_color() if (fx.has("snare") or fx.has("capture")) else kind.color
 	Effects.spawn_projectile(_renderer, lane, muzzle, target, kind, color, self, dmg, fx)
 
 
 ## 난사형: 한 번에 N발 (가능하면 서로 다른 적을 조준, 적이 모자라면 같은 적에게 겹쳐 쏜다)
 func _fire_volley(target: Monster, power: float = 1.0) -> void:
-	var count := int(_p("B", "missiles")) if has_skill("B") else 1
+	var count := Evolutions.roll_int(_p("B", "missiles")) if has_skill("B") else 1
 	if has_skill("B"):
 		power *= _p("B", "power")  # 일제 사격 미사일 한 발의 위력
 	if count <= 1:

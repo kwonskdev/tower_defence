@@ -2,7 +2,7 @@ extends RefCounted
 class_name Balance
 ## 밸런스 수치 모음. 전부 임시값이며, 밸런스 패치는 data 폴더의 파일들만 고치면 된다.
 ## - Balance.gd     : 경제, 기본 타워 4종, 보스 레인 크기
-## - Evolutions.gd  : 타워 진화 계열 8종과 스킬 수치 (A/B 스킬, 레벨 1~3)
+## - Evolutions.gd  : 타워 진화 계열 8종과 스킬 수치 (A/B 스킬, 항목마다 레벨 1~50)
 ## - BossLevels.gd  : 보스 10라운드
 ## - Monsters.gd     : 모든 몬스터 (공격형/일반형/공중형). 유저가 만드는 것도 보스가 보내는 것도 같은 목록. 비용/수입/체력/공격력 고정
 
@@ -123,6 +123,11 @@ static func color_upgrade_cost_for(level: int) -> int:
 	return COLOR_UPGRADE_COST_STEP * level
 
 
+## 업그레이드 탭 항목을 level-1에서 level로 올리는 비용 (level은 2 이상)
+static func stat_upgrade_cost_for(level: int) -> int:
+	return STAT_UPGRADE_COST_STEP * level
+
+
 ## 색깔 보너스 수치 글자 (level 0이면 "-"). 예: "+22%", "2.3마리", "5 무시"
 static func color_bonus_value_text(color_name: String, level: int) -> String:
 	if level <= 0:
@@ -177,9 +182,10 @@ const EMPOWER_MAX_STACKS := 10     # 한 몬스터에 동시에 쌓이는 최대
 # 타워 1기를 진화시키는 비용. 선택하는 순간 A 스킬을 배운다 (그 계열을 처음 진화하면 A 스킬 1레벨).
 const EVOLVE_COST := 30
 # B 스킬 배우기: 타워 1기마다 (진화처럼 개별).
-# 업그레이드 탭(같은 계열의 모든 타워에 적용): 항목 레벨 올리기 비용 (현재 레벨 1 -> 2, 2 -> 3, 항목마다 따로)
-const SKILL_LEARN_COST := 40
-const STAT_UPGRADE_COSTS := [30, 50]
+const SKILL_LEARN_COST := 50
+# 업그레이드 탭(같은 계열의 모든 타워에 적용): 항목 레벨 올리기 비용. 레벨 N으로 올리는 비용 = N x STAT_UPGRADE_COST_STEP
+# (20, 30, ... 500골드. 항목 하나를 Lv50까지 올리는 합계 12,740골드. 항목마다 따로 올린다. 최대 레벨은 Evolutions.MAX_LEVEL)
+const STAT_UPGRADE_COST_STEP := 10
 
 
 ## 기본 타워 종류 ID("long" 등)로 능력치 딕셔너리를 만든다.
