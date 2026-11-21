@@ -124,6 +124,8 @@ var play_effects := true
 func _on_sim_event(ev: Dictionary) -> void:
 	if not play_effects:
 		return
+	if ev["type"] == "skill_announced":
+		return  # 배너는 화면(MainGame)이 받아서 보여 준다
 	var lane_id: int = ev["lane"]
 	var shown: bool = (current_player_id == BOSS_LANE_ID) if lane_id == BOSS_LANE_ID else (lanes.has(lane_id) and lanes[lane_id].lane_visible)
 	var pos := Vector2(ev["pos"][0], ev["pos"][1])

@@ -1258,7 +1258,7 @@ func _connect_boss(boss: BossController) -> void:
 		my_lane.lives_changed.connect(_on_lives_changed)
 	boss.boss_defeated.connect(_on_boss_defeated)
 	boss.boss_failed.connect(_on_boss_failed)
-	boss.skill_announced.connect(_on_skill_announced)
+	game_field.session.events.emitted.connect(_on_sim_event)
 
 
 ## 보스 스킬 알림 배너 (하단 메시지 칸 맨 위에 뜬다)
@@ -1361,8 +1361,10 @@ func _check_boss_time_warning(boss: Dictionary) -> void:
 	_time_warning_tween.tween_callback(func(): time_warning.visible = false)
 
 
-func _on_skill_announced(info: Dictionary) -> void:
-	_banner_queue.append(info)
+## 시뮬레이션 이벤트 중 화면이 직접 보여 주는 것: 보스 스킬 배너
+func _on_sim_event(ev: Dictionary) -> void:
+	if ev["type"] == "skill_announced":
+		_banner_queue.append(ev["info"])
 
 
 ## 대기 중인 알림을 하나씩 보여 주고, 예고 시간이 있으면 발동까지 카운트다운을 붙인다

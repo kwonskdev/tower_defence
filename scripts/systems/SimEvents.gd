@@ -4,9 +4,15 @@ extends RefCounted
 ## 클라이언트가 이 이벤트를 받아 폭발/글자를 그린다. 이벤트는 순수 데이터라서 그대로 네트워크로 보낼 수 있다.
 ## 이벤트 모양: {"type": "fx_ring"|"fx_text", "lane": 레인 번호(보스 레인은 GameField.BOSS_LANE_ID), "pos": [x, y](셀 단위),
 ##              "radius"(링) / "text"(글자), "color": "RRGGBB"}
+##          {"type": "skill_announced", "info": {name, text, lane, delay, boss}}  보스 스킬 배너. delay>0이면 그 시간 뒤 발동
 ## 레인이 지금 화면에 보이는지는 클라이언트가 정한다 (서버는 보이는지 모른다).
 
 signal emitted(ev: Dictionary)
+
+
+## 보스 스킬을 HUD 배너로 알린다
+func announce(info: Dictionary) -> void:
+	emitted.emit({"type": "skill_announced", "info": info})
 
 
 ## 링 이펙트 (원이 퍼진다)

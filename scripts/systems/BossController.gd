@@ -19,7 +19,6 @@ signal level_started(level: int)
 signal level_cleared(level: int)
 signal boss_defeated        # 마지막 라운드까지 모두 처치
 signal boss_failed(reason: String)
-signal skill_announced(info: Dictionary)  # 스킬을 HUD 배너로 알린다: {name, text, lane, delay, boss}. delay>0이면 그 시간 뒤 발동
 
 enum State { WAITING, RUNNING, VICTORY, DEFEAT }  # WAITING: 시작 버튼을 누르기 전 (시간도 몬스터 파견도 멈춰 있음)
 
@@ -225,10 +224,10 @@ func phase_text() -> String:
 func _announce_level_skills() -> void:
 	if _phase > 0:
 		var info: Dictionary = BossSkills.phases_of(level)[_phase - 1]
-		skill_announced.emit({"name": info.name, "text": info.text, "lane": info.lane, "delay": 0.0, "boss": level_data.name})
+		events.announce({"name": info.name, "text": info.text, "lane": info.lane, "delay": 0.0, "boss": level_data.name})
 	for skill in _active_skills():
 		if not skill.get("quiet", false):
-			skill_announced.emit({"name": skill.name, "text": skill.text, "lane": skill.lane, "delay": 0.0, "boss": level_data.name})
+			events.announce({"name": skill.name, "text": skill.text, "lane": skill.lane, "delay": 0.0, "boss": level_data.name})
 
 
 ## 웨이브 주기를 바꾼다. 평소 주기(수입 주기)로 돌아올 때는 다음 수입 시점에 맞춰서 웨이브와 수입이 다시 같이 오게 한다.
@@ -409,7 +408,7 @@ func _enter_ghost_phase() -> void:
 	for lane in _lanes.values():
 		lane.start_ghost()
 	var is_last := level >= BossLevels.COUNT
-	skill_announced.emit({
+	events.announce({
 		"name": "유령 구간",
 		"text": "보스를 일찍 잡아서 남은 %d초 동안 유령이 나옵니다. 웨이브는 쉬고 수입은 그대로 들어옵니다. 타워가 유령에게 입힌 피해(레인 데미지)와 보스 앞 몬스터가 입힌 피해(보스 레인 데미지)가 점수가 됩니다. %s" % [
 			ceili(time_left), "구간이 끝나면 승리합니다." if is_last else "구간이 끝나면 다음 보스가 나옵니다."],
@@ -593,7 +592,7 @@ func _dispatch_wave() -> void:
 		"[%s] " % affix_id if affix_id != "" else "", current_wave_text, level, _level_wave_no])
 	if affix_id != "":  # 변형 웨이브는 도착할 때 한 번 더 알린다 (미리보기는 이미 한 웨이브 전부터 떠 있다)
 		var a: Dictionary = BossSkills.AFFIXES[affix_id]
-		skill_announced.emit({"name": "%s 웨이브" % a.name, "text": a.text, "lane": "player", "delay": 0.0, "boss": level_data.name})
+		events.announce({"name": "%s 웨이브" % a.name, "text": a.text, "lane": "player", "delay": 0.0, "boss": level_data.name})
 
 	var dispatch_level := level
 	# 몬스터마다 나오는 칸을 따로 랜덤으로 뽑는다 (spawn_cell을 안 주면 레인이 뽑는다). 같은 종류끼리는 연달아 나온다.
@@ -813,7 +812,7 @@ func _cast_skill(skill: Dictionary) -> void:
 		target.set_warn(warn)
 	var delay := float(skill.get("delay", 0.0))
 	_pending_casts.append({"skill": skill, "left": delay, "targets": targets, "cells": cells, "warnings": warnings})
-	skill_announced.emit({"name": skill.name, "text": text, "lane": skill.lane, "delay": delay, "boss": level_data.name})
+	events.announce({"name": skill.name, "text": text, "lane": skill.lane, "delay": delay, "boss": level_data.name})
 	Log.info(Log.Category.GAME, "보스 스킬 예고: %s (%.0f초 뒤, 대상 %d마리)" % [skill.name, delay, targets.size()])
 
 

@@ -93,6 +93,10 @@ func hud_matches_state(game: Node) -> void:
 	check(stats.boss_level == 1 and stats.final_gold == LaneController.whole(lane.gold), "통계: 보스 레벨/최종 골드 (%s)" % stats.final_gold)
 	check(stats.towers_built == lane.towers.size() and stats.final_income == lane.income, "통계: 타워 수/수입")
 	check(stats.boss_damage == 0.0 and stats.ghost.has("lane_ranking"), "통계: 보스 피해/유령 요약")
+	# 보스 스킬 배너는 시뮬레이션 이벤트(skill_announced)로 뜬다
+	gf.session.events.announce({"name": "테스트 스킬", "text": "설명", "lane": "both", "delay": 0.0, "boss": "시험 보스"})
+	await frames(5)
+	check(game.skill_banner.visible, "skill_announced 이벤트로 스킬 배너가 뜬다")
 	# 미니맵도 스냅샷으로 그려진다 (오류 없이 그려지는지)
 	for v in game.minimap_views.values():
 		v.queue_redraw()
