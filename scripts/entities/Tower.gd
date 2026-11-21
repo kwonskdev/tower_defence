@@ -265,7 +265,7 @@ func _shoot(target: Monster, power: float = 1.0) -> void:
 			if _shot_count >= int(_p("A", "every")):
 				_shot_count = 0
 				dmg *= _p("A", "mult")  # N번에 한 번 더 강한 공격
-				Effects.float_text(_renderer, center_cell_pos(), "강타!", evo_color(), lane.lane_visible)
+				lane.events.text(lane.player_id, center_cell_pos(), "강타!", evo_color())
 			if has_skill("B"):
 				fx.center = {"radius": _p("B", "radius"), "mult": _p("B", "mult")}
 		"skill":
@@ -276,7 +276,7 @@ func _shoot(target: Monster, power: float = 1.0) -> void:
 		"growth":
 			if lane.rng.randf() < crit_chance():
 				dmg *= Evolutions.CRIT_MULT
-				Effects.float_text(_renderer, center_cell_pos(), "치명!", evo_color(), lane.lane_visible)
+				lane.events.text(lane.player_id, center_cell_pos(), "치명!", evo_color())
 				if has_skill("B"):  # 광란: 치명타가 터지면 공격속도 중첩, 일정 시간 치명타가 없으면 초기화
 					haste_stacks = mini(haste_stacks + 1, Evolutions.HASTE_MAX_STACKS)
 					_haste_timer = _p("B", "time")
@@ -334,8 +334,8 @@ func _detonate() -> void:
 			m.take_damage(dmg, self)
 			if stun > 0.0 and not m.is_dead():
 				m.apply_stun(stun)
-	Effects.ring(_renderer, center_cell_pos(), r, evo_color(), lane.lane_visible)
-	Effects.float_text(_renderer, center_cell_pos(), "과충전!" if stun > 0.0 else "폭발!", evo_color(), lane.lane_visible)
+	lane.events.ring(lane.player_id, center_cell_pos(), r, evo_color())
+	lane.events.text(lane.player_id, center_cell_pos(), "과충전!" if stun > 0.0 else "폭발!", evo_color())
 	charge = 0.0
 	_recoil = 1.0
 

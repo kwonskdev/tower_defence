@@ -14,6 +14,8 @@ func _server_runs_without_ui() -> void:
 	print("[1] 서버: UI 없이 한 판이 끝난다")
 	var server := ServerMain.new()
 	server.session.rng.seed = 7
+	var events: Array = []
+	server.session.events.emitted.connect(func(ev): events.append(ev))
 	get_tree().root.add_child.call_deferred(server)
 	await frames(8)
 	check(server.field != null and server.field.boss != null, "GameField와 보스가 만들어졌다")
@@ -24,6 +26,14 @@ func _server_runs_without_ui() -> void:
 	Engine.time_scale = 1.0
 	check(done, "한 판이 끝났다 (결과: %s)" % [server.result])
 	check(server.result.has("victory") and server.result.has("boss_level"), "결과에 승패와 보스 레벨이 있다")
+	check(events.size() > 0, "시뮬레이션이 연출 이벤트를 내보냈다 (%d개)" % events.size())
+	check(events.all(func(ev): return ev.has("type") and ev.has("lane") and ev.has("pos") and ev.has("color")), "이벤트는 type/lane/pos/color를 가진 순수 데이터")
+	check(JSON.parse_string(JSON.stringify(events[0])) is Dictionary, "이벤트는 JSON이 된다")
+	var drawn := 0
+	for c in server.field.grid_renderer.get_children():
+		if c is Effects.FloatText or c is Effects.Ring:
+			drawn += 1
+	check(drawn == 0, "서버는 연출을 그리지 않는다 (그려진 이펙트 %d개)" % drawn)
 	server.queue_free()
 	await frames(3)
 

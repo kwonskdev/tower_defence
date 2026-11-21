@@ -43,6 +43,7 @@ func _ready():
 func setup_game_field():
 	current_player_id = session.local_player_id  # 처음에는 내 레인을 본다
 	bus = CommandBus.new(session, lanes)
+	session.events.emitted.connect(_on_sim_event)
 	grid_renderer = GridRenderer.new()
 	grid_renderer.name = "GridRenderer"
 	add_child(grid_renderer)
@@ -115,6 +116,25 @@ func snapshot(fresh := false) -> Dictionary:
 	return _snapshot
 
 
+## 연출을 그릴지. 서버(ServerMain)는 화면이 없으니 끈다: 시뮬레이션은 이벤트를 내보내기만 하고 그리지 않는다.
+var play_effects := true
+
+
+## 시뮬레이션이 내보낸 연출 이벤트(SimEvents)를 받아 그린다. 레인이 지금 보이는지는 여기(클라이언트)가 정한다.
+func _on_sim_event(ev: Dictionary) -> void:
+	if not play_effects:
+		return
+	var lane_id: int = ev["lane"]
+	var shown: bool = (current_player_id == BOSS_LANE_ID) if lane_id == BOSS_LANE_ID else (lanes.has(lane_id) and lanes[lane_id].lane_visible)
+	var pos := Vector2(ev["pos"][0], ev["pos"][1])
+	var color := Color.html(ev["color"])
+	match ev["type"]:
+		"fx_ring":
+			Effects.ring(grid_renderer, pos, ev["radius"], color, shown)
+		"fx_text":
+			Effects.float_text(grid_renderer, pos, ev["text"], color, shown)
+
+
 ## 연출 이벤트 재생. 모르는 이벤트(예: pause)는 무시한다 (MainGame이 직접 처리한다).
 func _play_events(events: Array) -> void:
 	for ev in events:
@@ -152,6 +172,7 @@ func start_lane(player_id: int):
 	var lane := LaneController.new()
 	lane.name = "Lane_" + str(player_id)
 	lane.rng = session.rng  # 시뮬레이션 랜덤은 세션 하나를 같이 쓴다
+	lane.events = session.events
 	add_child(lane)
 	lane.setup(player_id, grid_systems[player_id], grid_renderer)
 	lane.set_lane_visible(player_id == current_player_id)
@@ -162,6 +183,7 @@ func start_boss():
 	boss = BossController.new()
 	boss.name = "Boss"
 	boss.rng = session.rng
+	boss.events = session.events
 	add_child(boss)
 	bus.boss = boss
 	boss.setup(grid_systems[BOSS_LANE_ID], grid_renderer, lanes)

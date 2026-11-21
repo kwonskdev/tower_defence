@@ -16,6 +16,7 @@ var lives: float = float(Balance.START_LIVES)  # 소수점까지 들고 있다. 
 var active := true
 var started := false  # 시작 버튼을 눌렀는가 (누르기 전에는 타워를 전액 환급으로 팔 수 있다)
 var lane_visible := true
+var events := SimEvents.new()  # 연출 이벤트 통로 (GameField가 세션 것으로 바꿔 끼운다)
 var rng := RandomNumberGenerator.new()  # 이 레인의 시뮬레이션 랜덤 (GameField가 세션 것으로 바꿔 끼운다. 서버만 뽑는다)
 var monsters: Array[Monster] = []  # 필드 위 몬스터 (유령 구간의 유령도 들어 있다: 타워가 똑같이 조준한다)
 var towers: Array[Tower] = []  # 한 칸에 타워 1개
@@ -303,8 +304,8 @@ func sell_tower(tower: Tower) -> bool:
 func _remove_tower(tower: Tower, destroyed: bool) -> void:
 	towers.erase(tower)  # 칸을 비우기 전에 뺀다: 칸이 바뀌는 신호(_on_cell_changed)가 같은 타워를 또 치우지 않게
 	if destroyed:
-		Effects.ring(_renderer, tower.center_cell_pos(), 0.8, Color(1.0, 0.5, 0.2), lane_visible)
-		Effects.float_text(_renderer, tower.center_cell_pos(), "파괴!", Color(1.0, 0.4, 0.3), lane_visible)
+		events.ring(player_id, tower.center_cell_pos(), 0.8, Color(1.0, 0.5, 0.2))
+		events.text(player_id, tower.center_cell_pos(), "파괴!", Color(1.0, 0.4, 0.3))
 	tower.queue_free()
 	_grid.set_cell_state(tower.cell, GridSystem.CellState.EMPTY)  # 부서져서 온 경우는 이미 EMPTY라 아무 일도 없다. 판매면 몬스터가 신호를 받아 길을 다시 짠다
 	_on_tower_colors_changed()
@@ -386,6 +387,8 @@ func spawn_wave_monster(type_id: String = "grunt", level: int = 1, spawn_cell: V
 	# 체력/공격력은 몬스터마다 고정 (Monsters.gd). 공격형(또는 gnaws)은 시야 안의 벽 타워를 dps만큼 갉는다.
 	var wave_type: Dictionary = Monsters.DATA[type_id]
 	var monster := Monster.new()
+	monster.events = events
+	monster.fx_lane_id = player_id
 	monster.apply_look(wave_type)
 	monster.kind_id = type_id
 	monster.max_hp = Monsters.max_hp(type_id)
@@ -487,7 +490,7 @@ func _spread_marks(monster: Monster) -> void:
 	for m in near.slice(0, count):
 		var mk: Dictionary = SimRandom.pick(rng, spreadable)
 		m.add_mark(mk.src, float(mk.dmg))
-		Effects.ring(_renderer, m.cell_pos, 0.5, Color(0.8, 0.5, 1.0), lane_visible)
+		events.ring(player_id, m.cell_pos, 0.5, Color(0.8, 0.5, 1.0))
 
 
 func _on_monster_died(monster: Monster) -> void:
@@ -518,13 +521,13 @@ func _on_monster_died(monster: Monster) -> void:
 				if lives < Balance.MAX_LIVES and rng.randf() < chance:
 					var gain := cluster_multiplier(killer_tower)
 					add_lives(gain)
-					Effects.float_text(_renderer, monster.cell_pos, "+%s 생명!" % String.num(gain, 2), killer_tower.color_info.color, lane_visible)
+					events.text(player_id, monster.cell_pos, "+%s 생명!" % String.num(gain, 2), killer_tower.color_info.color)
 					Log.info(Log.Category.GAME, "[P%d] 보라 보너스: 체력 +%.2f (현재 %.2f)" % [player_id + 1, gain, lives])
 
 	gold += actual_reward
 	var text := "+%d" % actual_reward if actual_reward == base_reward else "+%d (보너스!)" % actual_reward
-	Effects.float_text(_renderer, monster.cell_pos, text, Color(1.0, 0.9, 0.3), lane_visible)
-	Effects.ring(_renderer, monster.cell_pos, 0.6, monster.body_color, lane_visible)
+	events.text(player_id, monster.cell_pos, text, Color(1.0, 0.9, 0.3))
+	events.ring(player_id, monster.cell_pos, 0.6, monster.body_color)
 	monster.queue_free()
 	Log.debug(Log.Category.ECONOMY, "[P%d] 몬스터#%d 처치 +%d골드 잔액=%.2f" % [
 		player_id + 1, monster.monster_id, actual_reward, gold])
@@ -729,9 +732,9 @@ func _reward_pattern(p: Dictionary) -> void:
 	var center := Vector2.ZERO
 	for c in p.cells:
 		center += Vector2(c) + Vector2(0.5, 0.5)
-		Effects.ring(_renderer, Vector2(c) + Vector2(0.5, 0.5), 0.9, color_at.get(c, Color.WHITE), lane_visible)
+		events.ring(player_id, Vector2(c) + Vector2(0.5, 0.5), 0.9, color_at.get(c, Color.WHITE))
 	center /= float(p.cells.size())
-	Effects.float_text(_renderer, center, "%s! %s" % [data.name, ColorPatterns.reward_text(p.id)], Color(1.0, 0.95, 0.5), lane_visible)
+	events.text(player_id, center, "%s! %s" % [data.name, ColorPatterns.reward_text(p.id)], Color(1.0, 0.95, 0.5))
 	Log.info(Log.Category.COLOR, "[P%d] 패턴 완성: %s %s (골드=%.2f 생명=%.2f)" % [
 		player_id + 1, data.name, ColorPatterns.reward_text(p.id), gold, lives])
 
@@ -754,5 +757,5 @@ func _empower_sent_monsters(count: int) -> void:
 	var actual_count := mini(count, my_monsters.size())
 	for i in range(actual_count):
 		my_monsters[i].add_empower(Balance.EMPOWER_DURATION, Balance.EMPOWER_BOOST)
-		Effects.float_text(_renderer, my_monsters[i].cell_pos, "강화!", Color(0.5, 0.5, 1.0), _boss_controller._lane_visible)
+		events.text(GameField.BOSS_LANE_ID, my_monsters[i].cell_pos, "강화!", Color(0.5, 0.5, 1.0))
 	Log.debug(Log.Category.GAME, "[P%d] 남색 보너스: 몬스터 %d마리 강화" % [player_id + 1, actual_count])

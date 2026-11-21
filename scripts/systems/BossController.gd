@@ -32,6 +32,7 @@ const MIN_WAVE_GAP := 10.0    # 웨이브 주기를 수입 시점에 다시 맞�
 
 var state: State = State.WAITING
 var level: int = 1
+var events := SimEvents.new()  # 연출 이벤트 통로 (GameField가 세션 것으로 바꿔 끼운다)
 var rng := RandomNumberGenerator.new()  # 보스의 시뮬레이션 랜덤 (GameField가 세션 것으로 바꿔 끼운다). 화면 흔들림 같은 연출 랜덤은 전역 randf()
 var level_data: Dictionary = {}
 var max_hp: float
@@ -145,8 +146,7 @@ func _start_level(new_level: int) -> void:
 	Log.info(Log.Category.GAME, "보스 Lv.%d/%d '%s' 등장: hp=%.0f (참여 %d명), 제한시간=%.0fs, 보스 수입=%d골드/%.0fs" % [
 		level, BossLevels.COUNT, level_data.name, max_hp, _lanes.size(), time_left, level_data.income,
 		Balance.INCOME_INTERVAL])
-	Effects.float_text(_renderer, Balance.BOSS_CENTER + Vector2(-1.2, 0.3), "BOSS Lv.%d  %s" % [level, level_data.name],
-		Color(1.0, 0.85, 0.3), _lane_visible)
+	events.text(GameField.BOSS_LANE_ID, Balance.BOSS_CENTER + Vector2(-1.2, 0.3), "BOSS Lv.%d  %s" % [level, level_data.name], Color(1.0, 0.85, 0.3))
 	_apply_level_skills()
 	level_started.emit(level)
 
@@ -353,7 +353,7 @@ func _recalc_dps() -> void:
 func _show_damage_text() -> void:
 	# 체력바(보스 머리 위)와 겹치지 않도록 몸통 위에서 떠오르게 한다
 	var at := Balance.BOSS_CENTER + Vector2(randf_range(-1.3, 1.0), randf_range(0.0, 0.9))
-	Effects.float_text(_renderer, at, "-%d" % int(_dmg_accum), Color(1.0, 0.9, 0.45), _lane_visible)
+	events.text(GameField.BOSS_LANE_ID, at, "-%d" % int(_dmg_accum), Color(1.0, 0.9, 0.45))
 	_dmg_accum = 0.0
 	_dmg_timer = 0.0
 
@@ -369,8 +369,7 @@ func _on_level_cleared() -> void:
 			if lane.active:
 				lane.gold += reward
 				Log.info(Log.Category.ECONOMY, "[P%d] 보스 처치 보상 +%d골드 잔액=%.2f" % [lane.player_id + 1, reward, lane.gold])  # 골드는 소수일 수 있다 (타워 판매 환급)
-		Effects.float_text(_renderer, Balance.BOSS_CENTER + Vector2(-1.0, -0.8), "처치! +%d골드" % reward,
-			Color(1.0, 0.9, 0.3), _lane_visible)
+		events.text(GameField.BOSS_LANE_ID, Balance.BOSS_CENTER + Vector2(-1.0, -0.8), "처치! +%d골드" % reward, Color(1.0, 0.9, 0.3))
 
 	if time_left > 0.0:
 		_enter_ghost_phase()  # 남은 시간은 버리지 않는다: 그 시간 동안 유령 구간이 이어지고, 끝나면 다음 보스(마지막이면 승리)
@@ -631,6 +630,8 @@ func spawn_player_monster(owner_id: int, kind_id: String) -> void:
 
 	var monster := Monster.new()
 	monster.apply_look(data)
+	monster.events = events
+	monster.fx_lane_id = GameField.BOSS_LANE_ID
 	monster.owner_id = owner_id
 	monster.kind_id = kind_id
 	monster.max_hp = Monsters.max_hp(kind_id)  # setup()이 hp를 가득 채운다
@@ -728,7 +729,7 @@ func _on_sent_monster_died(monster: Monster) -> void:
 	_sent_monsters.erase(monster)
 	if monster.slot_key != "":
 		_slots_taken.erase(monster.slot_key)  # 비운 자리는 다음에 오는 몬스터가 쓴다
-	Effects.ring(_renderer, monster.cell_pos, 0.6, monster.body_color, _lane_visible)
+	events.ring(GameField.BOSS_LANE_ID, monster.cell_pos, 0.6, monster.body_color)
 	Log.info(Log.Category.GAME, "[P%d] 보스 레인 몬스터#%d(%s) 사망 (공격 중 %d마리 남음)" % [
 		monster.owner_id + 1, monster.monster_id, monster.kind_id, _attackers.size()])
 	monster.queue_free()
@@ -836,7 +837,7 @@ func _resolve_skill(cast: Dictionary) -> void:
 		"seal":
 			for victim in victims:
 				victim.sealed_time = float(skill.duration)
-				Effects.ring(_renderer, victim.center_cell_pos(), 0.9, Color(0.75, 0.35, 0.95), victim.lane.lane_visible)
+				events.ring(victim.lane.player_id, victim.center_cell_pos(), 0.9, Color(0.75, 0.35, 0.95))
 		"split":
 			_spawn_slimelings(skill, cast.cells)
 		"execute":
@@ -846,7 +847,7 @@ func _resolve_skill(cast: Dictionary) -> void:
 		"dread":
 			for victim in victims:
 				victim.dread_time = float(skill.duration)
-				Effects.ring(_renderer, victim.cell_pos, 0.8, Color(0.75, 0.35, 0.95), _lane_visible)
+				events.ring(GameField.BOSS_LANE_ID, victim.cell_pos, 0.8, Color(0.75, 0.35, 0.95))
 			_recalc_dps()
 	Log.info(Log.Category.GAME, "보스 스킬 발동: %s (대상 %d마리)" % [skill.name, victims.size()])
 
@@ -868,8 +869,8 @@ func _execute_attacker(monster: Monster, refund_ratio: float) -> void:
 	var lane: LaneController = _lanes.get(monster.owner_id)
 	if lane != null and lane.active and refund > 0:
 		lane.gold += refund
-	Effects.ring(_renderer, monster.cell_pos, 1.0, Color(1.0, 0.2, 0.2), _lane_visible)
-	Effects.float_text(_renderer, monster.cell_pos, "처단! +%d골드" % refund, Color(1.0, 0.5, 0.4), _lane_visible)
+	events.ring(GameField.BOSS_LANE_ID, monster.cell_pos, 1.0, Color(1.0, 0.2, 0.2))
+	events.text(GameField.BOSS_LANE_ID, monster.cell_pos, "처단! +%d골드" % refund, Color(1.0, 0.5, 0.4))
 	Log.info(Log.Category.ECONOMY, "[P%d] %s 처단됨: 환급 +%d골드 (비용 %d)" % [monster.owner_id + 1, monster.kind_id, refund, cost])
 	monster.execute(null)  # 죽음 처리(자리 비우기, DPS 다시 계산)는 died 시그널을 받는 쪽이 한다
 
@@ -888,7 +889,7 @@ func _spawn_slimelings(skill: Dictionary, cells: Dictionary) -> void:
 	for lane in _lanes.values():
 		var cell: Vector2i = cells.get(lane, Pathfinder.NO_GOAL)
 		if cell != Pathfinder.NO_GOAL:
-			Effects.ring(_renderer, Vector2(cell) + Vector2(0.5, 0.5), 1.0, wave_type.color, lane.lane_visible)
+			events.ring(lane.player_id, Vector2(cell) + Vector2(0.5, 0.5), 1.0, wave_type.color)
 	for i in range(int(skill.count)):
 		if i > 0:
 			await get_tree().create_timer(Balance.WAVE_SPAWN_GAP, false).timeout  # false: 일시정지 중에는 멈춘다

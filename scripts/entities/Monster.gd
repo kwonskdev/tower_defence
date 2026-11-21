@@ -31,6 +31,8 @@ const GNAW_SEEK_RANGE := 4.0          # 갉는 몬스터가 타워를 목표로 
 const GNAW_DISTANCE := 1.15           # 타워 중심까지 이 거리 이하면 멈춰서 갉는다
 
 var monster_id: int = 0
+var events: SimEvents = null     # 연출 이벤트 통로 (없으면 연출 없이 시뮬레이션만)
+var fx_lane_id: int = -1         # 연출이 나올 레인 번호 (보스 레인이면 GameField.BOSS_LANE_ID)
 var owner_id: int = -1           # 보스 레인으로 보낸 플레이어 (보스가 보낸 몬스터는 -1)
 var kind_id: String = "wave"
 var shape: String = "horn"       # 외형 (decor 이름)
@@ -197,8 +199,9 @@ func _revive() -> void:
 	_revived = true
 	hp = max_hp * revive_ratio
 	_hit_flash = 0.25
-	Effects.ring(_renderer, cell_pos, 0.8, Color(0.9, 0.9, 0.8), visible)
-	Effects.float_text(_renderer, cell_pos, "부활!", Color(0.9, 0.9, 0.8), visible)
+	if events != null:
+		events.ring(fx_lane_id, cell_pos, 0.8, Color(0.9, 0.9, 0.8))
+		events.text(fx_lane_id, cell_pos, "부활!", Color(0.9, 0.9, 0.8))
 
 
 func _die() -> void:

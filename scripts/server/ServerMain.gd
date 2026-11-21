@@ -45,6 +45,7 @@ func _ready() -> void:
 
 	field = (load("res://scenes/ui/GameField.tscn") as PackedScene).instantiate() as GameField
 	field.session = session
+	field.play_effects = false  # 서버는 화면이 없다: 연출 이벤트는 그리지 않는다
 	add_child(field)
 	field.boss_ready.connect(_on_boss_ready, CONNECT_ONE_SHOT)
 
