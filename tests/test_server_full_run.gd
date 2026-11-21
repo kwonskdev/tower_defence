@@ -9,6 +9,7 @@ func run() -> void:
 	if not "full_run" in OS.get_cmdline_user_args():
 		print("  SKIP  서버 전체 한 판 (오래 걸려서 건너뜀. 인자 full_run으로 실행)")
 		pass_n += 1
+		await frames(1)  # 바로 끝나면 러너가 finished를 기다리기 전에 신호가 나가 버린다
 		return
 	var players := 2
 	var server := ServerMain.new()
