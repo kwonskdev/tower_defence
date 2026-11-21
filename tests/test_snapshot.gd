@@ -188,10 +188,8 @@ func shots_are_events() -> void:
 	check(saw_puppet_cloud, "클라이언트가 표식 구름을 그렸다 (껍데기)")
 	check(not sim_shot_visible, "서버 쪽 투사체 노드는 보이지 않는다")
 	check(shots.size() == 0 or JSON.parse_string(JSON.stringify(shots[0])) is Dictionary, "투사체 이벤트는 JSON이 된다")
-	var hurt := false
-	for m in lane.monsters:
-		if m.hp < m.max_hp:
-			hurt = true
-	check(hurt or lane.monsters.is_empty(), "피해는 서버 쪽에서 그대로 들어갔다")
+	var hurt := await wait_until(func():
+		return lane.monsters.is_empty() or lane.monsters.any(func(m): return is_instance_valid(m) and m.hp < m.max_hp), 20000)
+	check(hurt, "피해는 서버 쪽에서 그대로 들어갔다")
 	game.queue_free()
 	await frames(3)
