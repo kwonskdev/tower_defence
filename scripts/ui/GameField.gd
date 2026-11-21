@@ -95,13 +95,39 @@ func set_side_inset(value: float) -> void:
 
 
 ## 명령을 실행하고 결과({ok, reason, events})를 돌려준다. UI는 상태를 바꾸는 모든 행동을 여기로 보낸다.
+## 연출 이벤트는 여기(클라이언트)에서만 재생한다. 서버는 CommandBus를 직접 쓰고 이벤트를 무시한다.
 func execute(cmd: Dictionary) -> Dictionary:
-	return bus.execute(cmd)
+	var result := bus.execute(cmd)
+	_play_events(result["events"])
+	return result
+
+
+## 연출 이벤트 재생. 모르는 이벤트(예: pause)는 무시한다 (MainGame이 직접 처리한다).
+func _play_events(events: Array) -> void:
+	for ev in events:
+		var cell: Vector2i = ev.get("cell", Vector2i.ZERO)
+		var center := Vector2(cell) + Vector2(0.5, 0.5)
+		var lane: LaneController = lanes.get(ev.get("player_id", -1))
+		var shown: bool = lane != null and lane.lane_visible  # 보고 있는 레인에서만 보인다
+		match ev["type"]:
+			"tower_evolved", "skill_learned":
+				Effects.ring(grid_renderer, center, 0.8, Evolutions.DATA[ev["evo"]].color, shown)
+			"tower_recolored":
+				Effects.ring(grid_renderer, center, 0.8, _tower_color(ev["color_name"]), shown)
+			"tower_healed":
+				Effects.ring(grid_renderer, center, 0.8, Color(0.4, 1.0, 0.5), shown)
+
+
+func _tower_color(color_name: String) -> Color:
+	for c in Balance.TOWER_COLORS:
+		if c.name == color_name:
+			return c.color
+	return Color.WHITE
 
 
 ## 내 플레이어의 명령을 만들어 실행한다 (UI에서 가장 흔한 경우)
 func do_command(type: String, args: Dictionary = {}) -> Dictionary:
-	var result := bus.execute(Command.make(type, session.local_player_id, args))
+	var result := execute(Command.make(type, session.local_player_id, args))
 	if not result["ok"]:
 		Log.debug(Log.Category.UI, "명령 거절: %s -> %s" % [type, result["reason"]])
 	return result

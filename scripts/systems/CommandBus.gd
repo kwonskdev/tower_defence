@@ -53,14 +53,8 @@ func execute(cmd: Dictionary) -> Dictionary:
 			return _result(lane.try_build_tower(cmd["cell"], cmd["kind_id"], cmd["confirmed"]))
 		Command.SEND_MONSTER:
 			return _send_monster(lane, player_id, cmd["kind_id"])
-		Command.EVOLVE_TOWER:
-			return _result(lane.evolve_tower(lane.tower_at(cmd["cell"]), cmd["evo"]))
-		Command.LEARN_SKILL:
-			return _result(lane.learn_tower_skill(lane.tower_at(cmd["cell"])))
-		Command.RECOLOR_TOWER:
-			return _result(lane.recolor_tower(lane.tower_at(cmd["cell"])))
-		Command.HEAL_TOWER:
-			return _result(lane.heal_tower(lane.tower_at(cmd["cell"])))
+		Command.EVOLVE_TOWER, Command.LEARN_SKILL, Command.RECOLOR_TOWER, Command.HEAL_TOWER:
+			return _tower_command(lane, player_id, cmd)
 		Command.UPGRADE_STAT:
 			return _result(lane.upgrade_stat(cmd["evo"], cmd["skill"], cmd["key"]))
 		Command.UPGRADE_COLOR:
@@ -85,6 +79,36 @@ func _start_game() -> Dictionary:
 	boss.begin()
 	Log.info(Log.Category.GAME, "시작 버튼: 레인 %d개 동시 시작" % lanes.size())
 	return ok()
+
+
+## 칸 좌표로 타워 하나를 가리키는 명령 4가지. 성공하면 연출 이벤트(링 이펙트)를 붙인다.
+func _tower_command(lane: LaneController, player_id: int, cmd: Dictionary) -> Dictionary:
+	var cell: Vector2i = cmd["cell"]
+	var tower := lane.tower_at(cell)
+	var reason := ""
+	var event := {"player_id": player_id, "cell": cell}
+	match cmd["type"]:
+		Command.EVOLVE_TOWER:
+			reason = lane.evolve_tower(tower, cmd["evo"])
+			event["type"] = "tower_evolved"
+			event["evo"] = cmd["evo"]
+		Command.LEARN_SKILL:
+			reason = lane.learn_tower_skill(tower)
+			event["type"] = "skill_learned"
+		Command.RECOLOR_TOWER:
+			reason = lane.recolor_tower(tower)
+			event["type"] = "tower_recolored"
+		Command.HEAL_TOWER:
+			reason = lane.heal_tower(tower)
+			event["type"] = "tower_healed"
+	if reason != "":
+		return fail(reason)
+	# 성공했으므로 tower는 null이 아니다. 결과에 따라 정해지는 값은 지금 채운다
+	if cmd["type"] == Command.LEARN_SKILL:
+		event["evo"] = tower.evolution
+	elif cmd["type"] == Command.RECOLOR_TOWER:
+		event["color_name"] = tower.color_info.name
+	return ok([event])
 
 
 ## 몬스터를 생산해 보스 레인으로 보낸다 (수입 영구 증가). 검증을 모두 끝낸 뒤 차감 -> 수입 -> 파견을 이어서 한다.

@@ -125,7 +125,6 @@ func recolor_tower(tower: Tower) -> String:
 	var old_name: String = tower.color_info.name
 	var new_info: Dictionary = candidates.pick_random()
 	tower.set_color_info(new_info)
-	Effects.ring(_renderer, tower.center_cell_pos(), 0.8, new_info.color, lane_visible)
 	Log.info(Log.Category.COLOR, "[P%d] 타워 %s 색깔 변경: %s -> %s" % [player_id + 1, tower.cell, old_name, new_info.name])
 	_on_tower_colors_changed()
 	return ""
@@ -140,7 +139,6 @@ func heal_tower(tower: Tower) -> String:
 	if not try_spend(Balance.HEAL_COST, "타워 회복 %s" % tower.cell):
 		return spend_failure(Balance.HEAL_COST)
 	tower.durability = Balance.TOWER_DURABILITY
-	Effects.ring(_renderer, tower.center_cell_pos(), 0.8, Color(0.4, 1.0, 0.5), lane_visible)
 	Log.info(Log.Category.TOWER, "[P%d] 타워 회복 %s" % [player_id + 1, tower.cell])
 	return ""
 
@@ -173,7 +171,6 @@ func evolve_tower(tower: Tower, evo: String) -> String:
 		return spend_failure(Balance.EVOLVE_COST)
 	tower.set_evolution(evo)
 	tower.durability = Balance.TOWER_DURABILITY  # 진화하면 항상 풀피
-	Effects.ring(_renderer, tower.center_cell_pos(), 0.8, Evolutions.DATA[evo].color, lane_visible)
 	Log.info(Log.Category.TOWER, "[P%d] 타워 진화 %s: %s -> %s" % [player_id + 1, tower.cell, tower.kind.name, Evolutions.evo_name(evo)])
 	return ""
 
@@ -197,7 +194,6 @@ func learn_tower_skill(tower: Tower) -> String:
 		return spend_failure(cost)
 	tower.b_learned = true
 	tower.durability = Balance.TOWER_DURABILITY  # B 스킬을 배워도 풀피
-	Effects.ring(_renderer, tower.center_cell_pos(), 0.8, Evolutions.DATA[evo].color, lane_visible)
 	Log.info(Log.Category.TOWER, "[P%d] B 진화 %s: %s %s" % [player_id + 1, tower.cell, Evolutions.evo_name(evo), Evolutions.skill_name(evo, "B")])
 	return ""
 
