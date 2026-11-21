@@ -8,7 +8,7 @@ const BOSS_LANE_ID = 8  # grid_systems[8] = 보스 레인 (미니맵의 B)
 var grid_systems: Array[GridSystem] = []
 var lanes: Dictionary = {}  # player_id -> LaneController (참여한 플레이어만)
 var current_player_id: int = 0  # 지금 화면에 보고 있는 레인
-var local_player_id: int = 0    # 내 플레이어 (타워 건설/몬스터 생산은 내 레인에서만)
+var session := Session.new()    # 내 플레이어 번호와 참여자 목록 (add_child 전에 바꿔 끼울 수 있다. 기본값은 1인 플레이)
 var boss: BossController
 var lane_scroll_rows: Dictionary = {}  # 레인별로 마지막에 보던 위치 (맨 위 줄 번호). 레인을 바꿔도 각자 위치를 기억한다
 var selected_tower_kind: String = Balance.TOWER_KINDS[0]
@@ -40,6 +40,7 @@ func _ready():
 	setup_scroll_container()
 
 func setup_game_field():
+	current_player_id = session.local_player_id  # 처음에는 내 레인을 본다
 	grid_renderer = GridRenderer.new()
 	grid_renderer.name = "GridRenderer"
 	add_child(grid_renderer)
@@ -73,8 +74,9 @@ func setup_game_field():
 		if w > 0.0 and int(w / GridRenderer.GRID_WIDTH) != grid_renderer.CELL_SIZE:
 			grid_renderer.set_container_width(w))
 
-	# PvE 임시: 1번 플레이어만 참여 (나머지 레인은 비어 있음)
-	start_lane(0)
+	# 참여자의 레인만 만든다 (나머지 레인은 비어 있음)
+	for player_id in session.participants:
+		start_lane(player_id)
 	start_boss()
 
 ## 맵이 쓰는 폭. 레이아웃이 끝나기 전에도 틀리지 않도록 노드 크기 대신 화면 폭에서 좌우 여백을 뺀다
@@ -233,37 +235,37 @@ func select_tower(tower: Tower) -> void:
 
 ## 선택한 타워를 진화시킨다 (타워마다 한 번, 처음 계열을 고른다). 내 레인의 타워만 가능.
 func evolve_selected_tower(evo: String) -> bool:
-	var lane: LaneController = lanes.get(local_player_id)
+	var lane: LaneController = lanes.get(session.local_player_id)
 	return lane != null and lane.evolve_tower(get_selected_tower(), evo)
 
 
 ## 업그레이드 탭: 진화 항목 레벨을 올린다 (같은 계열의 모든 타워에 적용)
 func upgrade_stat(evo: String, skill: String, key: String) -> bool:
-	var lane: LaneController = lanes.get(local_player_id)
+	var lane: LaneController = lanes.get(session.local_player_id)
 	return lane != null and lane.upgrade_stat(evo, skill, key)
 
 
 ## 선택한 타워 1기의 색깔을 랜덤으로 바꾼다 (골드)
 func recolor_selected_tower() -> bool:
-	var lane: LaneController = lanes.get(local_player_id)
+	var lane: LaneController = lanes.get(session.local_player_id)
 	return lane != null and lane.recolor_tower(get_selected_tower())
 
 
 ## 선택한 타워 1기의 내구도를 가득 채운다 (골드)
 func heal_selected_tower() -> bool:
-	var lane: LaneController = lanes.get(local_player_id)
+	var lane: LaneController = lanes.get(session.local_player_id)
 	return lane != null and lane.heal_tower(get_selected_tower())
 
 
 ## 색깔 업그레이드 (골드, 그 색 타워 전체에 적용)
 func upgrade_color(color_name: String) -> bool:
-	var lane: LaneController = lanes.get(local_player_id)
+	var lane: LaneController = lanes.get(session.local_player_id)
 	return lane != null and lane.upgrade_color(color_name)
 
 
 ## 선택한 타워 1기의 B 스킬을 배운다 (골드, 타워마다 따로)
 func learn_selected_tower_skill() -> bool:
-	var lane: LaneController = lanes.get(local_player_id)
+	var lane: LaneController = lanes.get(session.local_player_id)
 	return lane != null and lane.learn_tower_skill(get_selected_tower())
 
 func get_current_grid_system() -> GridSystem:
@@ -316,11 +318,11 @@ func scroll_to_row(row: float):
 
 ## confirmed: 길이 막히는 걸 알고도 짓겠다고 사용자가 확인한 경우 true
 func place_tower(grid_position: Vector2i, confirmed: bool = false) -> bool:
-	if current_player_id != local_player_id:
+	if current_player_id != session.local_player_id:
 		Log.debug(Log.Category.TOWER, "내 레인이 아니라서 건설 불가 (보는 레인=%s)" % get_current_grid_system().lane_tag())
 		return false
 
-	var lane: LaneController = lanes.get(local_player_id)
+	var lane: LaneController = lanes.get(session.local_player_id)
 	if lane == null:
 		return false
 	var grid_system := get_current_grid_system()
@@ -356,7 +358,7 @@ func set_tower_kind(kind_id: String):
 
 ## 몬스터를 생산해 보스 레인으로 보낸다 (수입 영구 증가)
 func send_monster(kind_id: String) -> bool:
-	var lane: LaneController = lanes.get(local_player_id)
+	var lane: LaneController = lanes.get(session.local_player_id)
 	if lane == null or boss == null or boss.state != BossController.State.RUNNING:
 		return false
 	var kind: Dictionary = Monsters.DATA.get(kind_id, {})
@@ -370,7 +372,7 @@ func send_monster(kind_id: String) -> bool:
 		return false
 
 	lane.add_income(kind.income)
-	boss.spawn_player_monster(local_player_id, kind_id)
+	boss.spawn_player_monster(session.local_player_id, kind_id)
 	return true
 
 func get_current_tool() -> PlacementTool:

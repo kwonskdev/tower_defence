@@ -701,7 +701,7 @@ func _refresh_item_highlight() -> void:
 
 
 func _refresh_now() -> void:
-	var lane: LaneController = game_field.lanes.get(game_field.local_player_id)
+	var lane: LaneController = game_field.lanes.get(game_field.session.local_player_id)
 	var boss: BossController = game_field.boss
 	if lane:
 		_refresh_upgrade_views(lane)
@@ -1186,7 +1186,7 @@ func _create_game_over_screen() -> void:
 
 
 func _connect_boss(boss: BossController) -> void:
-	var my_lane: LaneController = game_field.lanes.get(game_field.local_player_id)
+	var my_lane: LaneController = game_field.lanes.get(game_field.session.local_player_id)
 	if my_lane != null:
 		_prev_lives = my_lane.lives
 		my_lane.lives_changed.connect(_on_lives_changed)
@@ -1332,7 +1332,7 @@ func _refresh_skill_banner_text() -> void:
 func _alert_minimaps(lane: String, seconds: float) -> void:
 	var targets: Array[int] = []
 	if lane == "player" or lane == "both":
-		targets.append(game_field.local_player_id)
+		targets.append(game_field.session.local_player_id)
 	if lane == "boss" or lane == "both":
 		targets.append(GameField.BOSS_LANE_ID)
 	for lane_id in targets:
@@ -1791,7 +1791,7 @@ func _process(delta):
 func _update_hud():
 	if not hud_label or not game_field:
 		return
-	var lane: LaneController = game_field.lanes.get(game_field.local_player_id)
+	var lane: LaneController = game_field.lanes.get(game_field.session.local_player_id)
 	var boss: BossController = game_field.boss
 	if lane == null or boss == null:
 		return
@@ -2074,7 +2074,7 @@ func _on_boss_failed(reason: String) -> void:
 ## 게임 통계 수집
 func _collect_game_stats(is_victory: bool) -> Dictionary:
 	var stats := {}
-	var lane: LaneController = game_field.lanes.get(game_field.local_player_id)
+	var lane: LaneController = game_field.lanes.get(game_field.session.local_player_id)
 	var boss: BossController = game_field.boss
 
 	if boss:
@@ -2107,8 +2107,8 @@ func _collect_game_stats(is_victory: bool) -> Dictionary:
 		stats.monsters_sent = boss.sent_count  # 죽은 몬스터도 센다
 
 		# 보스 피해 (내 기여도)
-		if boss.damage_by_player.has(game_field.local_player_id):
-			stats.boss_damage = boss.damage_by_player[game_field.local_player_id]
+		if boss.damage_by_player.has(game_field.session.local_player_id):
+			stats.boss_damage = boss.damage_by_player[game_field.session.local_player_id]
 		else:
 			stats.boss_damage = 0.0
 
