@@ -100,6 +100,7 @@ var marks: Array = []            # 표식 [{src: 타워, dmg: 추가 피해}] - 
 var death_marks: Array = []      # 죽는 순간 퍼뜨릴 표식 (표식 전파용)
 var armor_break_time: float = 0.0
 var armor_break_ratio: float = 0.0   # 방어구 파괴로 깎인 방어력 비율 (0~1). armor_break_time 동안만 적용
+var execute_cd: float = 0.0          # 처형(보스형 B 스킬) 판정 대기 시간. 0이 되어야 다음 판정을 한다 (타워가 몇 기든 이 몬스터는 쿨타임마다 한 번만 굴린다)
 var slow_time: float = 0.0
 var slow_mult: float = 1.0
 var stun_time: float = 0.0
@@ -333,6 +334,7 @@ func capture(duration: float) -> void:
 
 func _update_status(delta: float) -> void:
 	armor_break_time = maxf(0.0, armor_break_time - delta)
+	execute_cd = maxf(0.0, execute_cd - delta)
 	slow_time = maxf(0.0, slow_time - delta)
 	stun_time = maxf(0.0, stun_time - delta)
 	if captured_time > 0.0:
