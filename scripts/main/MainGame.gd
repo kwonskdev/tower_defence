@@ -1378,9 +1378,9 @@ class StatusIcon extends Control:
 
 
 func _on_start_pressed():
-	game_field.start_game()
-	_play_running = true
-	_refresh_start_button()
+	if game_field.do_command(Command.START_GAME)["ok"]:
+		_play_running = true
+		_refresh_start_button()
 
 
 ## 일시정지 화면 (일시정지 버튼은 위쪽 메인 줄의 [시작] 버튼이 시작 뒤에 바뀐 것)
@@ -1414,10 +1414,13 @@ func _toggle_pause() -> void:
 func _set_paused(on: bool) -> void:
 	if on == get_tree().paused:
 		return
+	# 끝난 게임, 길 막힘 확인창이 떠 있을 때는 멈추지 않는다 (확인창은 멈춘 화면에서 눌리지 않아 갇힌다)
+	if on and (game_over_screen.visible or confirm_dialog.visible):
+		return
+	# 일시정지 허용 여부는 명령이 정한다 (혼자 하는 판에서만 된다)
+	if not game_field.do_command(Command.SET_PAUSE, {"on": on})["ok"]:
+		return
 	if on:
-		# 끝난 게임, 길 막힘 확인창이 떠 있을 때는 멈추지 않는다 (확인창은 멈춘 화면에서 눌리지 않아 갇힌다)
-		if game_over_screen.visible or confirm_dialog.visible:
-			return
 		_paused_at_ms = Time.get_ticks_msec()
 	else:
 		Monster.pause_offset_ms += Time.get_ticks_msec() - _paused_at_ms

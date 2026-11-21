@@ -19,7 +19,7 @@ signal tower_selected(tower: Tower)           # 맵에서 지어진 타워를 �
 signal boss_ready(boss: BossController)    # 보스가 만들어졌다 (한 프레임 기다린 뒤라서 MainGame._ready 시점에는 아직 없다)
 
 var awaiting_confirm: bool = false  # 길 막힘 확인을 기다리는 중 (이 클릭으로는 타워 선택/해제를 하지 않는다)
-var game_started: bool = false  # 시작 버튼을 눌렀는지
+var bus: CommandBus  # 상태를 바꾸는 행동은 모두 여기를 지난다 (setup_game_field에서 만든다)
 var selected_tower: Tower = null  # 클릭해서 선택한 타워 (정보/업그레이드 대상)
 var side_inset: float = 0.0  # 화면 좌우 안전 여백의 합 (폰 노치/둥근 모서리). 맵이 쓰는 폭 = 화면 폭 - 이 값
 var ui_blockers: Array[Control] = []  # 이 영역 위의 클릭은 맵 클릭으로 처리하지 않는다 (필드 위에 겹친 UI)
@@ -41,6 +41,7 @@ func _ready():
 
 func setup_game_field():
 	current_player_id = session.local_player_id  # 처음에는 내 레인을 본다
+	bus = CommandBus.new(session, lanes)
 	grid_renderer = GridRenderer.new()
 	grid_renderer.name = "GridRenderer"
 	add_child(grid_renderer)
@@ -93,15 +94,14 @@ func set_side_inset(value: float) -> void:
 			grid_renderer.set_container_width(w)
 
 
-## 시작 버튼: 참여한 모든 레인과 보스가 동시에 시작한다 (수입, 보스 제한시간, 몬스터 파견)
-func start_game() -> void:
-	if game_started or boss == null:
-		return
-	game_started = true
-	for lane in lanes.values():
-		lane.begin()
-	boss.begin()
-	Log.info(Log.Category.GAME, "시작 버튼: 레인 %d개 동시 시작" % lanes.size())
+## 명령을 실행하고 결과({ok, reason, events})를 돌려준다. UI는 상태를 바꾸는 모든 행동을 여기로 보낸다.
+func execute(cmd: Dictionary) -> Dictionary:
+	return bus.execute(cmd)
+
+
+## 내 플레이어의 명령을 만들어 실행한다 (UI에서 가장 흔한 경우)
+func do_command(type: String, args: Dictionary = {}) -> Dictionary:
+	return bus.execute(Command.make(type, session.local_player_id, args))
 
 func start_lane(player_id: int):
 	var lane := LaneController.new()
@@ -115,6 +115,7 @@ func start_boss():
 	boss = BossController.new()
 	boss.name = "Boss"
 	add_child(boss)
+	bus.boss = boss
 	boss.setup(grid_systems[BOSS_LANE_ID], grid_renderer, lanes)
 	boss.set_lane_visible(current_player_id == BOSS_LANE_ID)
 	boss_ready.emit(boss)
