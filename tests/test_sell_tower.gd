@@ -153,9 +153,9 @@ func _invested_gold() -> void:
 	var g := lane.gold
 	var t := _build(Vector2i(7, 14))
 	var evo: String = Evolutions.TREE["long"][0]
-	check(lane.evolve_tower(t, evo), "진화 성공")
+	check(lane.evolve_tower(t, evo) == "", "진화 성공")
 	check(t.invested == 4 + Balance.EVOLVE_COST, "진화 후 invested = 4 + 30 (실제 %d)" % t.invested)
-	check(lane.learn_tower_skill(t), "B 스킬 배우기 성공")
+	check(lane.learn_tower_skill(t) == "", "B 스킬 배우기 성공")
 	check(t.invested == 4 + Balance.EVOLVE_COST + Balance.SKILL_LEARN_COST, "B 후 invested = 74 (실제 %d)" % t.invested)
 	near(lane.gold, g - 74, "총 74골드 썼다")
 	var before := t.invested
@@ -163,7 +163,7 @@ func _invested_gold() -> void:
 	t.durability = 10.0
 	lane.heal_tower(t)
 	var stat0: Dictionary = Evolutions.STATS[evo][0]
-	check(lane.upgrade_stat(evo, stat0.s, stat0.k), "(준비) 레인 스탯 업그레이드 구매")
+	check(lane.upgrade_stat(evo, stat0.s, stat0.k) == "", "(준비) 레인 스탯 업그레이드 구매")
 	check(t.invested == before, "색깔 바꾸기/회복/스탯 업그레이드는 invested에 안 더해진다")
 	check(lane.sell_needs_confirm(t), "진화한 타워는 판매 확인 필요")
 	near(lane.sell_value(t), 74.0, "시작 전이라 환급 74 (전액)")
@@ -377,7 +377,7 @@ func _ui_flow() -> void:
 ## 시작 후에는 70%. 환급은 반올림 없이 소수 그대로, 화면에는 내림한 정수만 보인다.
 func _after_start_ratio() -> void:
 	print("[11] 시작 후 70% (소수 그대로 계산, 표시는 정수)")
-	gf.start_game()
+	gf.do_command(Command.START_GAME)
 	check(lane.started, "시작 버튼 후 lane.started")
 	var t := _build(Vector2i(6, 30))
 	near(lane.sell_value(t), 2.8, "건설만(4골드) 환급 = 4 x 0.7 = 2.8 (반올림 안 함)")

@@ -8,18 +8,19 @@ const BOSS_LANE_ID = 8  # grid_systems[8] = 보스 레인 (미니맵의 B)
 var grid_systems: Array[GridSystem] = []
 var lanes: Dictionary = {}  # player_id -> LaneController (참여한 플레이어만)
 var current_player_id: int = 0  # 지금 화면에 보고 있는 레인
-var local_player_id: int = 0    # 내 플레이어 (타워 건설/몬스터 생산은 내 레인에서만)
+var session := Session.new()    # 내 플레이어 번호와 참여자 목록 (add_child 전에 바꿔 끼울 수 있다. 기본값은 1인 플레이)
 var boss: BossController
 var lane_scroll_rows: Dictionary = {}  # 레인별로 마지막에 보던 위치 (맨 위 줄 번호). 레인을 바꿔도 각자 위치를 기억한다
 var selected_tower_kind: String = Balance.TOWER_KINDS[0]
 
 var current_tool: PlacementTool = PlacementTool.NONE
 signal path_block_confirm(cell: Vector2i)  # 이 타워를 지으면 길이 막힌다: 사용자에게 확인을 받아야 한다
+signal command_failed(type: String, reason: String)  # 내가 보낸 명령이 거절됐다 (UI가 사유를 안내한다)
 signal tower_selected(tower: Tower)           # 맵에서 지어진 타워를 눌러 선택했다 (건설 모드 중이어도: 상단이 그 타워 화면으로 바뀐다)
 signal boss_ready(boss: BossController)    # 보스가 만들어졌다 (한 프레임 기다린 뒤라서 MainGame._ready 시점에는 아직 없다)
 
 var awaiting_confirm: bool = false  # 길 막힘 확인을 기다리는 중 (이 클릭으로는 타워 선택/해제를 하지 않는다)
-var game_started: bool = false  # 시작 버튼을 눌렀는지
+var bus: CommandBus  # 상태를 바꾸는 행동은 모두 여기를 지난다 (setup_game_field에서 만든다)
 var selected_tower: Tower = null  # 클릭해서 선택한 타워 (정보/업그레이드 대상)
 var side_inset: float = 0.0  # 화면 좌우 안전 여백의 합 (폰 노치/둥근 모서리). 맵이 쓰는 폭 = 화면 폭 - 이 값
 var ui_blockers: Array[Control] = []  # 이 영역 위의 클릭은 맵 클릭으로 처리하지 않는다 (필드 위에 겹친 UI)
@@ -40,6 +41,8 @@ func _ready():
 	setup_scroll_container()
 
 func setup_game_field():
+	current_player_id = session.local_player_id  # 처음에는 내 레인을 본다
+	bus = CommandBus.new(session, lanes)
 	grid_renderer = GridRenderer.new()
 	grid_renderer.name = "GridRenderer"
 	add_child(grid_renderer)
@@ -73,8 +76,9 @@ func setup_game_field():
 		if w > 0.0 and int(w / GridRenderer.GRID_WIDTH) != grid_renderer.CELL_SIZE:
 			grid_renderer.set_container_width(w))
 
-	# PvE 임시: 1번 플레이어만 참여 (나머지 레인은 비어 있음)
-	start_lane(0)
+	# 참여자의 레인만 만든다 (나머지 레인은 비어 있음)
+	for player_id in session.participants:
+		start_lane(player_id)
 	start_boss()
 
 ## 맵이 쓰는 폭. 레이아웃이 끝나기 전에도 틀리지 않도록 노드 크기 대신 화면 폭에서 좌우 여백을 뺀다
@@ -91,15 +95,44 @@ func set_side_inset(value: float) -> void:
 			grid_renderer.set_container_width(w)
 
 
-## 시작 버튼: 참여한 모든 레인과 보스가 동시에 시작한다 (수입, 보스 제한시간, 몬스터 파견)
-func start_game() -> void:
-	if game_started or boss == null:
-		return
-	game_started = true
-	for lane in lanes.values():
-		lane.begin()
-	boss.begin()
-	Log.info(Log.Category.GAME, "시작 버튼: 레인 %d개 동시 시작" % lanes.size())
+## 명령을 실행하고 결과({ok, reason, events})를 돌려준다. UI는 상태를 바꾸는 모든 행동을 여기로 보낸다.
+## 연출 이벤트는 여기(클라이언트)에서만 재생한다. 서버는 CommandBus를 직접 쓰고 이벤트를 무시한다.
+func execute(cmd: Dictionary) -> Dictionary:
+	var result := bus.execute(cmd)
+	_play_events(result["events"])
+	return result
+
+
+## 연출 이벤트 재생. 모르는 이벤트(예: pause)는 무시한다 (MainGame이 직접 처리한다).
+func _play_events(events: Array) -> void:
+	for ev in events:
+		var cell: Vector2i = ev.get("cell", Vector2i.ZERO)
+		var center := Vector2(cell) + Vector2(0.5, 0.5)
+		var lane: LaneController = lanes.get(ev.get("player_id", -1))
+		var shown: bool = lane != null and lane.lane_visible  # 보고 있는 레인에서만 보인다
+		match ev["type"]:
+			"tower_evolved", "skill_learned":
+				Effects.ring(grid_renderer, center, 0.8, Evolutions.DATA[ev["evo"]].color, shown)
+			"tower_recolored":
+				Effects.ring(grid_renderer, center, 0.8, _tower_color(ev["color_name"]), shown)
+			"tower_healed":
+				Effects.ring(grid_renderer, center, 0.8, Color(0.4, 1.0, 0.5), shown)
+
+
+func _tower_color(color_name: String) -> Color:
+	for c in Balance.TOWER_COLORS:
+		if c.name == color_name:
+			return c.color
+	return Color.WHITE
+
+
+## 내 플레이어의 명령을 만들어 실행한다 (UI에서 가장 흔한 경우)
+func do_command(type: String, args: Dictionary = {}) -> Dictionary:
+	var result := execute(Command.make(type, session.local_player_id, args))
+	if not result["ok"]:
+		Log.debug(Log.Category.UI, "명령 거절: %s -> %s" % [type, result["reason"]])
+		command_failed.emit(type, result["reason"])
+	return result
 
 func start_lane(player_id: int):
 	var lane := LaneController.new()
@@ -113,6 +146,7 @@ func start_boss():
 	boss = BossController.new()
 	boss.name = "Boss"
 	add_child(boss)
+	bus.boss = boss
 	boss.setup(grid_systems[BOSS_LANE_ID], grid_renderer, lanes)
 	boss.set_lane_visible(current_player_id == BOSS_LANE_ID)
 	boss_ready.emit(boss)
@@ -234,35 +268,47 @@ func select_tower(tower: Tower) -> void:
 		Log.info(Log.Category.UI, "타워 선택 %s: %s %s" % [tower.cell, tower.kind.name, Evolutions.evo_name(tower.evolution) if tower.evolution != "" else "(진화 전)"])
 
 
+## 선택한 타워를 가리키는 칸 좌표 인자. 선택이 없거나 남의 레인의 타워면 빈 Dictionary (명령은 내 레인의 타워만 가리킬 수 있다)
+func _selected_cell_args() -> Dictionary:
+	var t := get_selected_tower()
+	if t == null or t.lane == null or t.lane.player_id != session.local_player_id:
+		return {}
+	return {"cell": t.cell}
+
+
+## 선택한 타워에 하는 명령을 보낸다 (선택한 타워가 없으면 보내지 않고 false)
+func _do_on_selected(type: String, extra: Dictionary = {}) -> bool:
+	var args := _selected_cell_args()
+	if args.is_empty():
+		command_failed.emit(type, "no_tower")
+		return false
+	args.merge(extra)
+	return do_command(type, args)["ok"]
+
+
 ## 선택한 타워를 진화시킨다 (타워마다 한 번, 처음 계열을 고른다). 내 레인의 타워만 가능.
 func evolve_selected_tower(evo: String) -> bool:
-	var lane: LaneController = lanes.get(local_player_id)
-	return lane != null and lane.evolve_tower(get_selected_tower(), evo)
+	return _do_on_selected(Command.EVOLVE_TOWER, {"evo": evo})
 
 
 ## 업그레이드 탭: 진화 항목 레벨을 올린다 (같은 계열의 모든 타워에 적용)
 func upgrade_stat(evo: String, skill: String, key: String) -> bool:
-	var lane: LaneController = lanes.get(local_player_id)
-	return lane != null and lane.upgrade_stat(evo, skill, key)
+	return do_command(Command.UPGRADE_STAT, {"evo": evo, "skill": skill, "key": key})["ok"]
 
 
 ## 선택한 타워 1기의 색깔을 랜덤으로 바꾼다 (골드)
 func recolor_selected_tower() -> bool:
-	var lane: LaneController = lanes.get(local_player_id)
-	return lane != null and lane.recolor_tower(get_selected_tower())
+	return _do_on_selected(Command.RECOLOR_TOWER)
 
 
 ## 선택한 타워 1기의 내구도를 가득 채운다 (골드)
 func heal_selected_tower() -> bool:
-	var lane: LaneController = lanes.get(local_player_id)
-	return lane != null and lane.heal_tower(get_selected_tower())
+	return _do_on_selected(Command.HEAL_TOWER)
 
 
 ## 선택한 타워를 판다 (투입 골드의 일부 환급). 내 레인의 타워만 가능하고, 팔고 나면 선택이 풀린다.
 func sell_selected_tower() -> bool:
-	var lane: LaneController = lanes.get(local_player_id)
-	var tower := get_selected_tower()
-	if lane == null or tower == null or not lane.sell_tower(tower):
+	if not _do_on_selected(Command.SELL_TOWER):
 		return false
 	select_tower(null)  # 사라진 타워를 계속 선택하고 있지 않게 (사거리 표시, 타워 화면)
 	return true
@@ -270,14 +316,12 @@ func sell_selected_tower() -> bool:
 
 ## 색깔 업그레이드 (골드, 그 색 타워 전체에 적용)
 func upgrade_color(color_name: String) -> bool:
-	var lane: LaneController = lanes.get(local_player_id)
-	return lane != null and lane.upgrade_color(color_name)
+	return do_command(Command.UPGRADE_COLOR, {"color_name": color_name})["ok"]
 
 
 ## 선택한 타워 1기의 B 스킬을 배운다 (골드, 타워마다 따로)
 func learn_selected_tower_skill() -> bool:
-	var lane: LaneController = lanes.get(local_player_id)
-	return lane != null and lane.learn_tower_skill(get_selected_tower())
+	return _do_on_selected(Command.LEARN_SKILL)
 
 func get_current_grid_system() -> GridSystem:
 	return grid_systems[current_player_id]
@@ -327,64 +371,29 @@ func scroll_to_row(row: float):
 	var target := row * grid_renderer.CELL_SIZE - size.y * 0.5
 	set_v_scroll(maxi(0, int(target)))
 
-## confirmed: 길이 막히는 걸 알고도 짓겠다고 사용자가 확인한 경우 true
+## 건설 명령을 보낸다. confirmed: 길이 막히는 걸 알고도 짓겠다고 사용자가 확인한 경우 true
 func place_tower(grid_position: Vector2i, confirmed: bool = false) -> bool:
-	if current_player_id != local_player_id:
+	# 이미 타워가 있는 칸을 누른 건 건설 실패가 아니라 타워 선택이다 (호출한 쪽이 선택한다). 거절 안내를 띄우지 않는다.
+	if _tower_at(grid_position) != null:
+		return false
+	# 보고 있는 레인이 남의 레인이면 클릭한 칸은 내 레인의 칸이 아니다 (명령은 내 레인만 가리킨다)
+	if current_player_id != session.local_player_id:
 		Log.debug(Log.Category.TOWER, "내 레인이 아니라서 건설 불가 (보는 레인=%s)" % get_current_grid_system().lane_tag())
+		command_failed.emit(Command.BUILD_TOWER, "not_my_lane")
 		return false
-
-	var lane: LaneController = lanes.get(local_player_id)
-	if lane == null:
-		return false
-	var grid_system := get_current_grid_system()
-	var tag := grid_system.lane_tag()
-	var kind := Balance.tower_kind(selected_tower_kind)
-
-	var cell_state := grid_system.get_cell_state(grid_position)
-	# 한 칸에는 타워 1개만 (트랩도 겹쳐 지을 수 없다)
-	if cell_state != GridSystem.CellState.EMPTY:
-		Log.debug(Log.Category.TOWER, "[%s] 타워 건설 실패 %s: 빈 칸 아님(%s)" % [
-			tag, grid_position, grid_system.get_state_name(cell_state)])
-		return false
-	# 길을 막는 타워는 몬스터와 몸이 겹친 칸에 지을 수 없다 (트랩은 위로 지나가므로 가능)
-	if kind.blocks and lane.is_cell_occupied(grid_position):
-		Log.debug(Log.Category.TOWER, "[%s] 타워 건설 실패 %s: 몬스터가 있는 칸" % [tag, grid_position])
-		return false
-	# 이 타워 때문에 길이 완전히 막히면 한 번 확인한다 (막히면 몬스터가 타워를 부수며 돌파한다)
-	if kind.blocks and not confirmed and lane.would_block_path(grid_position):
+	var result := do_command(Command.BUILD_TOWER, {"cell": grid_position, "kind_id": selected_tower_kind, "confirmed": confirmed})
+	if result["reason"] == "path_blocked":  # 길이 막힌다: 사용자에게 확인받은 뒤 confirmed=true로 다시 보낸다
 		awaiting_confirm = true
 		path_block_confirm.emit(grid_position)
-		return false
-	var cost: int = kind.cost
-	if not lane.try_spend(cost, "타워 건설 %s(%s)" % [grid_position, kind.name]):
-		return false
-
-	lane.build_tower(grid_position, selected_tower_kind)
-	Log.info(Log.Category.TOWER, "[%s] 타워 건설 %s: %s" % [tag, grid_position, kind.name])
-	return true
+	return result["ok"]
 
 func set_tower_kind(kind_id: String):
 	selected_tower_kind = kind_id
 	Log.info(Log.Category.UI, "타워 종류 선택: %s" % Balance.tower_kind(kind_id).name)
 
-## 몬스터를 생산해 보스 레인으로 보낸다 (수입 영구 증가)
+## 몬스터 생산 명령을 보낸다
 func send_monster(kind_id: String) -> bool:
-	var lane: LaneController = lanes.get(local_player_id)
-	if lane == null or boss == null or boss.state != BossController.State.RUNNING:
-		return false
-	var kind: Dictionary = Monsters.DATA.get(kind_id, {})
-	if kind.is_empty():
-		Log.warn(Log.Category.GAME, "알 수 없는 몬스터 종류: %s" % kind_id)
-		return false
-	if not Monsters.can_send_in_pve(kind_id):  # 협력에서는 공격형과 지원형만 만들 수 있다
-		Log.warn(Log.Category.GAME, "협력에서는 %s(%s)를 만들 수 없음" % [kind.name, Monsters.CATEGORY_DATA[kind.category].name])
-		return false
-	if not lane.try_spend(kind.cost, "%s 생산" % kind.name):
-		return false
-
-	lane.add_income(kind.income)
-	boss.spawn_player_monster(local_player_id, kind_id)
-	return true
+	return do_command(Command.SEND_MONSTER, {"kind_id": kind_id})["ok"]
 
 func get_current_tool() -> PlacementTool:
 	return current_tool
