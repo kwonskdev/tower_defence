@@ -13,6 +13,8 @@ class_name Monsters
 ##   reward: 처치 골드 (없으면 비용의 1/10) / gnaws: true면 시야 안의 벽 타워를 찾아가 dps만큼 갉는다 (공격형은 모두 갉는다)
 ##   ramp, ramp_cap: 보스 앞에 선 뒤 초당 dps가 늘어나는 양과 상한 / aura_radius, aura_bonus: 주변(칸) 몬스터의 dps를 늘려 준다
 ##   보스가 웨이브로 뽑을 때: weight(가중치) / min_level(이 보스 라운드부터) / count(한 묶음 마릿수) / summon_only(스킬로만 나옴)
+##   ghost: true면 유령 (보스를 일찍 잡았을 때 남은 시간에 나온다). 체력이 무한이라 죽지 않고 hp 값은 안 쓴다. 생명을 깎지 않는다.
+##          breach_dps: 길이 완전히 막혔을 때만 앞을 막은 타워 내구도(Balance.TOWER_DURABILITY)를 초당 이만큼 깎는다. 길이 열려 있으면 타워를 안 건드린다.
 ##
 ## 유형(category)
 ##   attack 공격형: 보스를 때리러 가는 몬스터 (수입/화력/균형/특수 계열). 유저는 PvE에서 공격형과 지원형만 만들 수 있다.
@@ -129,6 +131,12 @@ const DATA := {
 	"slimeling": {"name": "슬라임 새끼", "category": "normal", "cost": 8, "income": 0, "hp": 400.0, "dps": 30.0, "speed": 3.4, "size": 0.7, "shape": "spike",
 		"reward": 1, "color": Color(0.3, 0.8, 0.35), "weight": 0.0, "count": 1, "min_level": 99, "summon_only": true, "gnaws": true,
 		"desc": "슬라임 대장이 분열하면 나온다. 시야 안의 벽 타워를 갉아 먹는다 (트랩 타워는 보지 못한다)."},
+	# 보스를 제한시간이 남은 채로 잡으면 그 시간 동안 나온다 (웨이브에 뽑히지 않는다: summon_only). 몬스터 배럭 칸(SLOTS)에는 없다.
+	# 공격하지 않고 미로 길만 따라간다. 길이 완전히 막혔을 때만 breach_dps로 앞을 막은 타워를 부순다 (150: 가득 찬 타워(내구도 300)를 2초에, 가장 센 공격형 거인이 95).
+	# 속도는 일반(grunt)과 같다. 그림은 GhostArt (보스 레인의 큰 유령과 똑같고 크기만 다르다).
+	"ghost": {"name": "유령", "category": "normal", "cost": 0, "income": 0, "hp": 1.0, "dps": null, "speed": 3.0, "size": 1.0, "shape": "ghost",
+		"life": 0, "reward": 0, "ghost": true, "breach_dps": 150.0, "color": Color(0.97, 0.98, 1.0), "weight": 0.0, "count": 1, "min_level": 99, "summon_only": true,
+		"desc": "보스를 일찍 잡으면 남은 시간에 나온다. 죽지 않고, 기지에 닿으면 처음부터 다시 나온다. 타워가 입힌 피해가 점수가 된다."},
 
 	# --- 공중형 (보스 웨이브) ---
 	"flyer": {"name": "비행", "category": "air", "cost": 20, "income": 1, "hp": 700.0, "dps": null, "speed": 4.0, "size": 0.9, "shape": "bird",

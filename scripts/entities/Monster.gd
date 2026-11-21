@@ -7,6 +7,9 @@ class_name Monster
 ## - 공중(flying): 미로/타워를 무시하고 맨 아래로 직선 이동. 대공 타워만 공격 가능.
 ## - 방어력(armor): 받는 피해 = 공격력 x 100 / (100 + 방어력). 갑옷병은 여기에 더해 최종 피해에서 flat_reduce를 뺀다.
 ##   재생(regen): 초당 최대체력 비율만큼 회복.
+## - 유령(ghost): 보스를 일찍 잡았을 때 남은 시간에 나온다. 체력이 무한이라 피해를 받아도 닳지 않고 (받은 피해는 ghost_hit로 알린다),
+##   기지에 닿아도 생명을 안 깎는다 (LaneController가 처음부터 다시 내보낸다). 길이 완전히 막혔을 때(breaching)만 앞을 막은
+##   타워의 내구도를 breach_dps만큼 깎고, 길이 열려 있으면 타워를 건드리지 않는다.
 ## - 보스 레인의 몬스터는 final_point(보스 주변 자리)에 도착하면 멈추고 보스를 지속 공격한다.
 ##   성장(ramp)과 오라(aura)는 BossController가 계산한다.
 ## - preview=true이면 아이콘용 미리보기: 길찾기 없이 제자리에서 애니메이션만 한다.
@@ -15,7 +18,8 @@ class_name Monster
 
 signal reached_exit(monster: Monster)
 signal died(monster: Monster)
-signal gnawed(cell: Vector2i, amount: float)  # 타워를 갉는 중: 이 칸의 타워 내구도를 amount(초)만큼 깎아 달라 (LaneController가 처리)
+signal gnawed(cell: Vector2i, amount: float)  # 타워를 갉는 중: 이 칸의 타워 내구도를 amount(초)만큼 깎아 달라 (LaneController가 처리). 길이 막혀 뚫는 유령도 같은 신호를 쓴다
+signal ghost_hit(amount: float, source)       # 유령이 타워에게 amount만큼 피해를 받았다 (source: 때린 타워, 이미 부서졌으면 null). LaneController가 점수로 센다
 
 const DEFAULT_SPEED := 3.0
 const ARRIVE_DISTANCE := 0.1
@@ -50,6 +54,10 @@ var _gnaw_cell: Vector2i = Pathfinder.NO_GOAL   # 지금 노리는 타워 칸 (�
 var _gnaw_retarget := 0.0
 var _gnaw_skip: Dictionary = {}    # 곁으로 갈 길이 없어서 포기한 타워 칸
 var _gnawing := false
+
+# 유령 (Monsters.DATA의 ghost: true). 체력이 무한이고, 길이 막혔을 때만 breach_dps로 타워 내구도를 깎아 부순다
+var ghost: bool = false
+var breach_dps: float = 0.0
 
 # 웨이브 변형 (보스 스킬이 웨이브 전체에 붙인다. BossSkills.AFFIXES)
 var speed_boost: float = 1.0     # 이동속도 배율 (돌격)
@@ -175,6 +183,9 @@ func _damage_after_armor(amount: float, source) -> float:
 func _lose_hp(amount: float, damage_source, kill_source) -> void:
 	if _dead:
 		return
+	if ghost:  # 체력이 무한이라 닳지도 죽지도 않는다. 받은 피해만 점수로 센다
+		ghost_hit.emit(amount, damage_source if is_instance_valid(damage_source) else null)
+		return
 	var applied := minf(amount, maxf(hp, 0.0))  # 남은 체력을 넘는 초과분은 피해로 치지 않는다
 	hp -= amount
 	if is_instance_valid(damage_source):  # 투사체가 날아가는 사이 타워가 부서졌을 수 있다
@@ -206,7 +217,7 @@ func _die() -> void:
 
 ## 처형: 남은 체력만큼의 피해로 즉사시킨다 (피해/킬은 source 몫)
 func execute(source) -> void:
-	if _dead:
+	if _dead or ghost:  # 유령은 처형되지 않는다
 		return
 	_lose_hp(maxf(hp, 0.0) + 0.001, source, source)
 
@@ -442,6 +453,8 @@ func _process(delta: float) -> void:
 	_update_status(delta)
 	if _dead:
 		return
+	if ghost:
+		_gnawing = false  # 타워를 뚫는 중인지는 아래에서 매 프레임 다시 정한다 (기절하거나 타워가 사라지면 풀린다)
 	if stun_time > 0.0 or captured_time > 0.0:
 		return  # 기절/포획 중에는 제자리에 멈춘다
 
@@ -468,9 +481,18 @@ func _process(delta: float) -> void:
 	# 다음 목적지가 타워 칸이면 가까워졌을 때 공격 (일반형: 공격력 무한대 -> 즉시 파괴, 환급 0원)
 	if not flying and _grid.get_cell_state(target_cell) == GridSystem.CellState.TOWER \
 			and cell_pos.distance_to(target) <= TOWER_ATTACK_DISTANCE:
-		Log.info(Log.Category.TOWER, "[%s] 몬스터#%d가 타워 파괴 %s" % [_grid.lane_tag(), monster_id, target_cell])
-		_grid.set_cell_state(target_cell, GridSystem.CellState.EMPTY)  # 경로 재계산은 신호로 처리됨
-		return
+		if ghost:
+			# 유령: 길이 막혀서 뚫어야 할 때만 멈춰서 내구도를 깎는다 (타워가 부서지면 LaneController가 칸을 비우고 길을 다시 짠다).
+			# 길이 열려 있으면(breaching이 아니면) 타워를 건드리지 않고 그냥 지나간다.
+			if breaching:
+				facing = (target - cell_pos).normalized()
+				_gnawing = true
+				gnawed.emit(target_cell, breach_dps * delta)
+				return
+		else:
+			Log.info(Log.Category.TOWER, "[%s] 몬스터#%d가 타워 파괴 %s" % [_grid.lane_tag(), monster_id, target_cell])
+			_grid.set_cell_state(target_cell, GridSystem.CellState.EMPTY)  # 경로 재계산은 신호로 처리됨
+			return
 
 	var to_target := target - cell_pos
 	var step := speed * speed_mult() * speed_boost * delta
@@ -610,23 +632,32 @@ func _draw() -> void:
 	draw_circle(Vector2.ZERO, r * (0.7 if flying else 1.0), Color(0, 0, 0, 0.18 if flying else 0.3))
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
-	_draw_decor_back(c, r, color)
+	if ghost:
+		# 유령은 보스 레인의 큰 유령과 똑같은 그림이다 (GhostArt). 길을 뚫는 중이면 노랗게, 맞으면 붉게 물든다
+		var ghost_body := GhostArt.BODY
+		if breaching:
+			ghost_body = Color(1.0, 0.92, 0.55)
+		if _hit_flash > 0.0:
+			ghost_body = Color(1.0, 0.8, 0.8)
+		GhostArt.draw_ghost(self, c, r, _anim, facing, ghost_body)
+	else:
+		_draw_decor_back(c, r, color)
 
-	# 몸통
-	draw_circle(c, r, color)
-	draw_arc(c, r, 0.0, TAU, 24, color.darkened(0.45), 2.0)
-	draw_circle(c + Vector2(-r * 0.3, -r * 0.35), r * 0.28, color.lightened(0.35))  # 하이라이트
+		# 몸통
+		draw_circle(c, r, color)
+		draw_arc(c, r, 0.0, TAU, 24, color.darkened(0.45), 2.0)
+		draw_circle(c + Vector2(-r * 0.3, -r * 0.35), r * 0.28, color.lightened(0.35))  # 하이라이트
 
-	_draw_decor_front(c, r, color)
+		_draw_decor_front(c, r, color)
 
-	# 눈 (이동 방향을 쳐다봄)
-	var dir := facing if facing.length() > 0.01 else Vector2.DOWN
-	var perp := Vector2(-dir.y, dir.x)
-	var eye_center := c + dir * r * 0.3
-	for side in [-1.0, 1.0]:
-		var e: Vector2 = eye_center + perp * r * 0.38 * side
-		draw_circle(e, r * 0.24, Color.WHITE)
-		draw_circle(e + dir * r * 0.09, r * 0.12, Color(0.05, 0.05, 0.1))
+		# 눈 (이동 방향을 쳐다봄)
+		var dir := facing if facing.length() > 0.01 else Vector2.DOWN
+		var perp := Vector2(-dir.y, dir.x)
+		var eye_center := c + dir * r * 0.3
+		for side in [-1.0, 1.0]:
+			var e: Vector2 = eye_center + perp * r * 0.38 * side
+			draw_circle(e, r * 0.24, Color.WHITE)
+			draw_circle(e + dir * r * 0.09, r * 0.12, Color(0.05, 0.05, 0.1))
 
 	# 상태이상 표시: 독=초록 / 감속=하늘 / 기절·포획=노랑 고리, 방어구 파괴=빨간 조각, 표식=보라 마름모
 	if not preview:

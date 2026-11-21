@@ -11,6 +11,7 @@ const START_GOLD := 150
 const BASE_INCOME := 30            # 수입 틱마다 기본으로 들어오는 골드
 const INCOME_INTERVAL := 30.0      # 수입 지급 주기(초)
 const START_LIVES := 10
+const MAX_PLAYERS := 8             # 최대 참여 인원 (레인 수). 유령 점수를 인원이 달라도 비교되게 환산할 때 기준이 된다
 
 # --- 타워 ---
 # 기본 타워 4종. 지은 뒤 타워마다 진화 계열을 하나 골라 진화한다 (Evolutions.gd).
