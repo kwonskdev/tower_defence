@@ -30,6 +30,8 @@ var pause_button: Button                 # 맵 오른쪽 위의 [시작/일시�
 var pause_icon: PauseIcon
 const PAUSE_SIZE := 48.0
 var confirm_dialog: ConfirmationDialog   # 타워를 지으면 길이 막힐 때 확인창
+var sell_confirm_dialog: ConfirmationDialog  # 진화/B 스킬에 투자한 타워를 팔 때 확인창
+var sell_button: Button                  # 타워 화면의 [판매 (N골드)] 버튼
 var _pending_cell := Vector2i.ZERO
 var tower_buttons: Dictionary = {}       # 기본 타워 종류 -> 타워 배럭 버튼
 var _highlighted_kind := ""              # 지금 강조 표시 중인 건설 타워 종류
@@ -801,12 +803,12 @@ func _refresh_action_buttons(lane: LaneController, boss: BossController) -> void
 			else:
 				var cost: int = Monsters.DATA[_sel_monster].cost
 				text = "생성\n%d골드" % cost
-				enabled = Monsters.can_send_in_pve(_sel_monster) and lane.gold >= cost and boss.state == BossController.State.RUNNING
+				enabled = Monsters.can_send_in_pve(_sel_monster) and lane.gold_shown() >= cost and boss.state == BossController.State.RUNNING
 		"detail":
 			if _sel.size() == 4 and _sel[1] == "stat":
 				var cost := lane.stat_upgrade_cost(_sel[0], _sel[2], _sel[3])
 				text = "업그레이드\n최대" if cost < 0 else "업그레이드\n%d골드" % cost
-				enabled = cost >= 0 and lane.gold >= cost
+				enabled = cost >= 0 and lane.gold_shown() >= cost
 			else:
 				text = "업그레이드"
 		"tower_sel":
@@ -816,12 +818,12 @@ func _refresh_action_buttons(lane: LaneController, boss: BossController) -> void
 				text = "진화"
 			else:
 				text = "진화\n%d골드" % cost
-				enabled = t.lane == lane and lane.gold >= cost
+				enabled = t.lane == lane and lane.gold_shown() >= cost
 		"colors":
 			if _sel.size() == 4 and _sel[1] == "color":
 				var cost := lane.color_upgrade_cost(_sel[0])
 				text = "업그레이드\n최대" if cost < 0 else "업그레이드\n%d골드" % cost
-				enabled = cost >= 0 and lane.gold >= cost
+				enabled = cost >= 0 and lane.gold_shown() >= cost
 			else:
 				text = "업그레이드"
 		_:
@@ -940,7 +942,7 @@ func _create_hud():
 	hud_panel = panel
 
 
-## 맵에서 내 타워를 눌렀을 때 상단에 나오는 화면: [←] + 격자(진화 2개 / B 스킬 배우기 / 색깔 바꾸기).
+## 맵에서 내 타워를 눌렀을 때 상단에 나오는 화면: [←] + 격자(진화 2개 / 회복 / 색깔 바꾸기 / 판매 / [진화]).
 ## 타워 정보는 하단 메시지 칸에 나온다. [←]를 누르면 선택이 풀린다.
 func _create_tower_sel_view() -> void:
 	tower_sel_view = HBoxContainer.new()
@@ -966,9 +968,9 @@ func _create_tower_sel_view() -> void:
 	recolor_button = _make_view_button("", FONT_SMALL)  # 아랫줄 왼쪽: 색깔 바꾸기 (바로 실행)
 	recolor_button.pressed.connect(_on_recolor_selected_pressed)
 	grid.add_child(recolor_button)
-	var gap := Control.new()
-	gap.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	grid.add_child(gap)
+	sell_button = _make_view_button("", FONT_SMALL)  # 아랫줄 가운데: 판매 (건설만 한 타워는 바로, 투자한 타워는 확인 후)
+	sell_button.pressed.connect(_on_sell_pressed)
+	grid.add_child(sell_button)
 	tower_action = _make_action_button()  # 아랫줄 오른쪽: [진화]
 	grid.add_child(tower_action)
 
@@ -1114,7 +1116,7 @@ func _status_icon(kind: String, color: Color, px: int = 24) -> StatusIcon:
 
 func _update_status_panel(lane: LaneController, boss: BossController) -> void:
 	status_lives_label.text = "%d" % lane.lives_shown()
-	status_gold_label.text = "%d" % lane.gold
+	status_gold_label.text = "%d" % lane.gold_shown()
 	var left := lane.income_time_left() if boss.state == BossController.State.RUNNING else -1.0
 	status_income_label.text = "수입 +%d\n%s" % [lane.income, "%d초 뒤" % ceili(left) if left >= 0.0 else "대기"]
 
@@ -1143,22 +1145,33 @@ func _update_status_panel(lane: LaneController, boss: BossController) -> void:
 
 ## 타워를 지으면 길이 완전히 막힐 때 한 번 확인하는 창
 func _create_confirm_dialog() -> void:
-	confirm_dialog = ConfirmationDialog.new()
-	confirm_dialog.title = "길이 막힙니다"
-	confirm_dialog.dialog_text = "이 타워를 지으면 몬스터가 지나갈 길이 완전히 막힙니다.\n막히면 몬스터가 타워를 부수면서 뚫고 옵니다.\n그래도 지을까요?"
-	confirm_dialog.dialog_autowrap = true
-	confirm_dialog.ok_button_text = "지을래요"
-	confirm_dialog.cancel_button_text = "취소"
-	confirm_dialog.min_size = Vector2i(520, 0)
-	confirm_dialog.add_theme_constant_override("buttons_min_width", 160)
-	confirm_dialog.add_theme_constant_override("buttons_min_height", 64)
-	confirm_dialog.get_label().add_theme_font_size_override("font_size", FONT_BODY)
-	for b in [confirm_dialog.get_ok_button(), confirm_dialog.get_cancel_button()]:
+	confirm_dialog = _make_confirm_dialog("길이 막힙니다",
+		"이 타워를 지으면 몬스터가 지나갈 길이 완전히 막힙니다.\n막히면 몬스터가 타워를 부수면서 뚫고 옵니다.\n그래도 지을까요?", "지을래요")
+	confirm_dialog.confirmed.connect(_on_path_block_confirmed)
+	game_field.path_block_confirm.connect(_on_path_block_confirm)
+
+	# 진화/B 스킬에 골드를 쓴 타워를 팔 때 한 번 더 묻는다 (내용은 팔 타워에 맞춰 열 때마다 바꾼다)
+	sell_confirm_dialog = _make_confirm_dialog("타워를 팝니다", "", "팔래요")
+	sell_confirm_dialog.confirmed.connect(_on_sell_confirmed)
+
+
+## 폰에서도 누르기 쉬운 큰 확인창 (둘 다 화면 가운데에 뜬다)
+func _make_confirm_dialog(title: String, text: String, ok_text: String) -> ConfirmationDialog:
+	var dialog := ConfirmationDialog.new()
+	dialog.title = title
+	dialog.dialog_text = text
+	dialog.dialog_autowrap = true
+	dialog.ok_button_text = ok_text
+	dialog.cancel_button_text = "취소"
+	dialog.min_size = Vector2i(520, 0)
+	dialog.add_theme_constant_override("buttons_min_width", 160)
+	dialog.add_theme_constant_override("buttons_min_height", 64)
+	dialog.get_label().add_theme_font_size_override("font_size", FONT_BODY)
+	for b in [dialog.get_ok_button(), dialog.get_cancel_button()]:
 		b.add_theme_font_size_override("font_size", FONT_BODY)
 		b.custom_minimum_size = Vector2(160, 64)
-	confirm_dialog.confirmed.connect(_on_path_block_confirmed)
-	add_child(confirm_dialog)
-	game_field.path_block_confirm.connect(_on_path_block_confirm)
+	add_child(dialog)
+	return dialog
 
 
 func _on_path_block_confirm(cell: Vector2i) -> void:
@@ -1415,8 +1428,8 @@ func _set_paused(on: bool) -> void:
 	if on == get_tree().paused:
 		return
 	if on:
-		# 끝난 게임, 길 막힘 확인창이 떠 있을 때는 멈추지 않는다 (확인창은 멈춘 화면에서 눌리지 않아 갇힌다)
-		if game_over_screen.visible or confirm_dialog.visible:
+		# 끝난 게임, 길 막힘/판매 확인창이 떠 있을 때는 멈추지 않는다 (확인창은 멈춘 화면에서 눌리지 않아 갇힌다)
+		if game_over_screen.visible or confirm_dialog.visible or sell_confirm_dialog.visible:
 			return
 		_paused_at_ms = Time.get_ticks_msec()
 	else:
@@ -1855,11 +1868,15 @@ func _update_tower_info(lane: LaneController):
 
 	recolor_button.text = "색깔 바꾸기 (%d골드)" % Balance.RECOLOR_COST
 	recolor_button.tooltip_text = "이 타워의 색깔을 지금 색을 뺀 6색 중 랜덤으로 바꿉니다. 색깔 보너스는 그 색의 업그레이드를 따라갑니다."
-	recolor_button.disabled = t.lane != lane or lane.gold < Balance.RECOLOR_COST
+	recolor_button.disabled = t.lane != lane or lane.gold_shown() < Balance.RECOLOR_COST
 	var hurt := t.durability < Balance.TOWER_DURABILITY - 0.001
 	heal_button.text = "회복 (%d골드)
 내구도 %d/%d" % [Balance.HEAL_COST, roundi(t.durability), roundi(Balance.TOWER_DURABILITY)]
-	heal_button.disabled = t.lane != lane or not hurt or lane.gold < Balance.HEAL_COST
+	heal_button.disabled = t.lane != lane or not hurt or lane.gold_shown() < Balance.HEAL_COST
+
+	sell_button.text = "판매 (%d골드)" % lane.sell_value_shown(t)
+	sell_button.tooltip_text = "타워에 쓴 골드(건설 + 진화 + B 스킬)의 %d%%를 돌려받고 타워를 치웁니다 (시작 전에는 전액). 스탯/색깔 업그레이드는 레인 전체 공유라 환급되지 않습니다." % roundi(Balance.SELL_REFUND_RATIO * 100.0)
+	sell_button.disabled = t.lane != lane or not lane.active
 
 	# 진화 선택: 진화 전이면 계열 2개 중 하나, 진화했는데 B가 남았으면 B 진화 하나. 고르면 하단에 설명이 나오고 [진화]를 눌러야 진화한다.
 	if _pick_tower != t:
@@ -1901,6 +1918,26 @@ func _pick_cost(t: Tower, lane: LaneController) -> int:
 ## 선택한 타워의 색깔 바꾸기 (골드, 랜덤)
 func _on_recolor_selected_pressed():
 	game_field.recolor_selected_tower()
+
+
+## [판매]: 건설만 한 타워는 바로 팔고, 진화/B 스킬에 골드를 쓴 타워는 환급액을 보여 주며 한 번 더 확인한다
+func _on_sell_pressed() -> void:
+	var t := game_field.get_selected_tower()
+	var lane: LaneController = game_field.lanes.get(game_field.local_player_id)
+	if t == null or lane == null or t.lane != lane:
+		return
+	if not lane.sell_needs_confirm(t):
+		game_field.sell_selected_tower()
+		return
+	var title: String = t.kind.name + " · " + Evolutions.evo_name(t.evolution)
+	if t.b_learned:
+		title += " (B 스킬: %s)" % Evolutions.skill_name(t.evolution, "B")
+	sell_confirm_dialog.dialog_text = "%s 타워를 팝니다.\n투입한 %d골드 중 %d골드를 돌려받고, 타워는 사라집니다.\n그래도 팔까요?" % [title, t.invested, lane.sell_value_shown(t)]
+	sell_confirm_dialog.popup_centered()
+
+
+func _on_sell_confirmed() -> void:
+	game_field.sell_selected_tower()
 
 
 ## 진화 선택 버튼: 고르기만 한다 (하단에 설명). 실제 진화는 오른쪽 아래 [진화] 버튼
@@ -2099,7 +2136,7 @@ func _collect_game_stats(is_victory: bool) -> Dictionary:
 		stats.total_tower_kills = total_kills
 
 		# 경제
-		stats.final_gold = lane.gold
+		stats.final_gold = lane.gold_shown()
 		stats.final_income = lane.income
 
 	# 몬스터 파견 통계
