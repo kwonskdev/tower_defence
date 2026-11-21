@@ -21,7 +21,7 @@ grow_horizontal = 2
 grow_vertical = 2
 
 [node name="TopUI" type="Panel" parent="VBoxContainer"]
-custom_minimum_size = Vector2(0, 180)
+custom_minimum_size = Vector2(0, 220)
 layout_mode = 2
 
 [node name="HBoxContainer" type="HBoxContainer" parent="VBoxContainer/TopUI"]
@@ -32,38 +32,41 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="LeftPanel" type="Control" parent="VBoxContainer/TopUI/HBoxContainer"]
+[node name="LeftColumn" type="VBoxContainer" parent="VBoxContainer/TopUI/HBoxContainer"]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
+theme_override_constants/separation = 0
 
-[node name="MainView" type="HBoxContainer" parent="VBoxContainer/TopUI/HBoxContainer/LeftPanel"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
+[node name="TabBar" type="HBoxContainer" parent="VBoxContainer/TopUI/HBoxContainer/LeftColumn"]
+custom_minimum_size = Vector2(0, 40)
+layout_mode = 2
+theme_override_constants/separation = 2
 
-[node name="TowerButton" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftPanel/MainView"]
+[node name="TowerTab" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftColumn/TabBar"]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 text = "타워"
 
-[node name="MonsterButton" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftPanel/MainView"]
+[node name="MonsterTab" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftColumn/TabBar"]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 text = "몬스터"
 
-[node name="Empty2Button" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftPanel/MainView"]
+[node name="UpgradeTab" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftColumn/TabBar"]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
-text = "빈칸2"
+text = "업그레이드"
 
-[node name="MonsterView" type="GridContainer" parent="VBoxContainer/TopUI/HBoxContainer/LeftPanel"]
+[node name="LeftPanel" type="Control" parent="VBoxContainer/TopUI/HBoxContainer/LeftColumn"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="MonsterView" type="GridContainer" parent="VBoxContainer/TopUI/HBoxContainer/LeftColumn/LeftPanel"]
 visible = false
 layout_mode = 1
 anchors_preset = 15
@@ -73,7 +76,7 @@ grow_horizontal = 2
 grow_vertical = 2
 columns = 9
 
-[node name="Monster1" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftPanel/MonsterView"]
+[node name="Monster1" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftColumn/LeftPanel/MonsterView"]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
@@ -81,7 +84,7 @@ theme_override_font_sizes/font_size = 10
 text = "←"
 clip_text = true
 
-[node name="Monster2" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftPanel/MonsterView"]
+[node name="Monster2" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftColumn/LeftPanel/MonsterView"]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
@@ -89,7 +92,7 @@ theme_override_font_sizes/font_size = 10
 text = "M2"
 clip_text = true
 
-[node name="Monster3" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftPanel/MonsterView"]
+[node name="Monster3" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftColumn/LeftPanel/MonsterView"]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
@@ -97,7 +100,7 @@ theme_override_font_sizes/font_size = 10
 text = "M3"
 clip_text = true
 
-[node name="Monster4" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftPanel/MonsterView"]
+[node name="Monster4" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftColumn/LeftPanel/MonsterView"]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
@@ -105,7 +108,7 @@ theme_override_font_sizes/font_size = 10
 text = "M4"
 clip_text = true
 
-[node name="Monster5" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftPanel/MonsterView"]
+[node name="Monster5" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftColumn/LeftPanel/MonsterView"]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
@@ -113,7 +116,7 @@ theme_override_font_sizes/font_size = 10
 text = "M5"
 clip_text = true
 
-[node name="Monster6" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftPanel/MonsterView"]
+[node name="Monster6" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftColumn/LeftPanel/MonsterView"]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
@@ -121,7 +124,7 @@ theme_override_font_sizes/font_size = 10
 text = "M6"
 clip_text = true
 
-[node name="Monster7" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftPanel/MonsterView"]
+[node name="Monster7" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftColumn/LeftPanel/MonsterView"]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
@@ -129,7 +132,7 @@ theme_override_font_sizes/font_size = 10
 text = "M7"
 clip_text = true
 
-[node name="Monster8" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftPanel/MonsterView"]
+[node name="Monster8" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftColumn/LeftPanel/MonsterView"]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
@@ -137,7 +140,7 @@ theme_override_font_sizes/font_size = 10
 text = "M8"
 clip_text = true
 
-[node name="Monster9" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftPanel/MonsterView"]
+[node name="Monster9" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftColumn/LeftPanel/MonsterView"]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
@@ -145,7 +148,7 @@ theme_override_font_sizes/font_size = 10
 text = "M9"
 clip_text = true
 
-[node name="Monster10" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftPanel/MonsterView"]
+[node name="Monster10" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftColumn/LeftPanel/MonsterView"]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
@@ -153,7 +156,7 @@ theme_override_font_sizes/font_size = 10
 text = "M10"
 clip_text = true
 
-[node name="Monster11" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftPanel/MonsterView"]
+[node name="Monster11" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftColumn/LeftPanel/MonsterView"]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
@@ -161,7 +164,7 @@ theme_override_font_sizes/font_size = 10
 text = "M11"
 clip_text = true
 
-[node name="Monster12" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftPanel/MonsterView"]
+[node name="Monster12" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftColumn/LeftPanel/MonsterView"]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
@@ -169,7 +172,7 @@ theme_override_font_sizes/font_size = 10
 text = "M12"
 clip_text = true
 
-[node name="Monster13" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftPanel/MonsterView"]
+[node name="Monster13" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftColumn/LeftPanel/MonsterView"]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
@@ -177,7 +180,7 @@ theme_override_font_sizes/font_size = 10
 text = "M13"
 clip_text = true
 
-[node name="Monster14" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftPanel/MonsterView"]
+[node name="Monster14" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftColumn/LeftPanel/MonsterView"]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
@@ -185,7 +188,7 @@ theme_override_font_sizes/font_size = 10
 text = "M14"
 clip_text = true
 
-[node name="Monster15" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftPanel/MonsterView"]
+[node name="Monster15" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftColumn/LeftPanel/MonsterView"]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
@@ -193,7 +196,7 @@ theme_override_font_sizes/font_size = 10
 text = "M15"
 clip_text = true
 
-[node name="Monster16" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftPanel/MonsterView"]
+[node name="Monster16" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftColumn/LeftPanel/MonsterView"]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
@@ -201,7 +204,7 @@ theme_override_font_sizes/font_size = 10
 text = "M16"
 clip_text = true
 
-[node name="Monster17" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftPanel/MonsterView"]
+[node name="Monster17" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftColumn/LeftPanel/MonsterView"]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
@@ -209,7 +212,7 @@ theme_override_font_sizes/font_size = 10
 text = "M17"
 clip_text = true
 
-[node name="Monster18" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftPanel/MonsterView"]
+[node name="Monster18" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftColumn/LeftPanel/MonsterView"]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
@@ -217,7 +220,7 @@ theme_override_font_sizes/font_size = 10
 text = "M18"
 clip_text = true
 
-[node name="Monster19" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftPanel/MonsterView"]
+[node name="Monster19" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftColumn/LeftPanel/MonsterView"]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
@@ -225,7 +228,7 @@ theme_override_font_sizes/font_size = 10
 text = "M19"
 clip_text = true
 
-[node name="Monster20" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftPanel/MonsterView"]
+[node name="Monster20" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftColumn/LeftPanel/MonsterView"]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
@@ -233,7 +236,7 @@ theme_override_font_sizes/font_size = 10
 text = "M20"
 clip_text = true
 
-[node name="Monster21" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftPanel/MonsterView"]
+[node name="Monster21" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftColumn/LeftPanel/MonsterView"]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
@@ -241,7 +244,7 @@ theme_override_font_sizes/font_size = 10
 text = "M21"
 clip_text = true
 
-[node name="Monster22" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftPanel/MonsterView"]
+[node name="Monster22" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftColumn/LeftPanel/MonsterView"]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
@@ -249,7 +252,7 @@ theme_override_font_sizes/font_size = 10
 text = "M22"
 clip_text = true
 
-[node name="Monster23" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftPanel/MonsterView"]
+[node name="Monster23" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftColumn/LeftPanel/MonsterView"]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
@@ -257,7 +260,7 @@ theme_override_font_sizes/font_size = 10
 text = "M23"
 clip_text = true
 
-[node name="Monster24" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftPanel/MonsterView"]
+[node name="Monster24" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftColumn/LeftPanel/MonsterView"]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
@@ -265,7 +268,7 @@ theme_override_font_sizes/font_size = 10
 text = "M24"
 clip_text = true
 
-[node name="Monster25" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftPanel/MonsterView"]
+[node name="Monster25" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftColumn/LeftPanel/MonsterView"]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
@@ -273,7 +276,7 @@ theme_override_font_sizes/font_size = 10
 text = "M25"
 clip_text = true
 
-[node name="Monster26" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftPanel/MonsterView"]
+[node name="Monster26" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftColumn/LeftPanel/MonsterView"]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
@@ -281,7 +284,7 @@ theme_override_font_sizes/font_size = 10
 text = "M26"
 clip_text = true
 
-[node name="Monster27" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftPanel/MonsterView"]
+[node name="Monster27" type="Button" parent="VBoxContainer/TopUI/HBoxContainer/LeftColumn/LeftPanel/MonsterView"]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
