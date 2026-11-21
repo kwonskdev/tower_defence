@@ -6,6 +6,7 @@ func run() -> void:
 	await _server_runs_without_ui()
 	await _rng_is_shared()
 	await _empower_expires_by_delta()
+	await _pause_only_solo()
 	Engine.time_scale = 1.0
 
 
@@ -73,3 +74,26 @@ func _empower_expires_by_delta() -> void:
 	m._tick_empower(0.6)
 	near(m.get_total_empower(), 0.0, "1.2초 뒤에는 만료")
 	m.free()
+
+
+## 멀티(참여자 2명 이상)에서는 전체 일시정지가 없고, 혼자 하는 판에서는 예전처럼 멈춘다
+func _pause_only_solo() -> void:
+	print("[4] 일시정지는 혼자 하는 판에서만")
+	var game := (load("res://scenes/main/MainGame.tscn") as PackedScene).instantiate()
+	get_tree().root.add_child.call_deferred(game)
+	await frames(8)
+	game._on_start_pressed()
+	await frames(3)
+	game._set_paused(true)
+	check(get_tree().paused, "혼자 하는 판: 일시정지가 된다")
+	game._set_paused(false)
+	check(not get_tree().paused and game.pause_button.visible, "혼자 하는 판: 풀리고 버튼이 보인다")
+	game.game_field.session.participants.append(1)  # 둘이 하는 판이 되었다
+	game._set_paused(true)
+	check(not get_tree().paused, "멀티: 일시정지 요청이 거절된다")
+	game._notification(NOTIFICATION_WM_WINDOW_FOCUS_OUT)  # 창이 포커스를 잃어도 멈추지 않는다
+	check(not get_tree().paused, "멀티: 포커스를 잃어도 멈추지 않는다")
+	game._refresh_start_button()
+	check(not game.pause_button.visible, "멀티: 시작한 뒤에는 일시정지 버튼이 숨는다")
+	game.queue_free()
+	await frames(3)

@@ -1497,7 +1497,8 @@ func _set_paused(on: bool) -> void:
 
 ## 맵 오른쪽 위 버튼: 시작 전에는 재생(▶) 아이콘으로 [시작], 시작한 뒤에는 막대(⏸) 아이콘으로 [일시정지]. 게임이 끝나면 숨긴다
 func _refresh_start_button() -> void:
-	pause_button.visible = not game_over_screen.visible
+	# 여럿이 하는 판에는 일시정지가 없어서(서버는 계속 돈다) 시작한 뒤에는 버튼을 숨긴다
+	pause_button.visible = not game_over_screen.visible and (not _play_running or game_field.session.is_solo())
 	if pause_icon.playing == _play_running:  # 아이콘이 상태와 다르면 갱신
 		pause_icon.playing = not _play_running
 		pause_icon.queue_redraw()
@@ -2081,7 +2082,7 @@ func _input(event):
 ## 앱이 백그라운드로 가거나 창이 포커스를 잃으면 진행 중인 게임을 자동으로 멈춘다.
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_APPLICATION_PAUSED or what == NOTIFICATION_WM_WINDOW_FOCUS_OUT:
-		if _play_running and pause_overlay != null:
+		if _play_running and pause_overlay != null and game_field.session.is_solo():  # 여럿이 하는 판은 멈출 수 없다
 			_set_paused(true)
 		return
 	if what != NOTIFICATION_WM_GO_BACK_REQUEST or get_tree().paused:
