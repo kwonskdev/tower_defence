@@ -124,6 +124,9 @@ func start_boss():
 func setup_scroll_container():
 	# 가로 스크롤 비활성화 (세로 드래그 스크롤만 사용)
 	horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	# 세로 스크롤바는 숨긴다 (스크롤은 드래그/휠로 하고 위치는 미니맵이 보여 준다).
+	# 보이는 스크롤바가 폭을 8px 차지해서 맵 최소 폭이 화면 폭(600)을 넘어 상단 UI까지 좌우 4px씩 잘렸다.
+	vertical_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_NEVER
 	follow_focus = true
 	# 스크롤은 handle_mouse_input()이 직접 한다. ScrollContainer 자체의 터치 스크롤까지 같이 켜져 있으면
 	# 폰에서 손가락 하나로 두 번 스크롤되어 떨리므로 이 노드는 입력을 직접 받지 않게 한다 (_input은 그대로 받는다).
