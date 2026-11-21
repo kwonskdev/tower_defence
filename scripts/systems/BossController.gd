@@ -1,7 +1,9 @@
 extends Node
 class_name BossController
 ## 보스 레인 담당 (협력 모드).
-## - 보스는 총 BossLevels.COUNT(10) 라운드. 한 라운드를 깨면 보상 골드를 주고 다음 보스가 바로 나온다.
+## - 보스는 총 BossLevels.COUNT(10) 라운드. 한 라운드를 깨면 보상 골드를 주고, 남은 제한시간 동안 "유령 구간"이 이어진 뒤 다음 보스가 나온다.
+## - 유령 구간: 일반 웨이브는 멈추고 수입은 그대로 들어온다. 모든 참여 레인과 보스 자리에 체력 무한의 유령이 나오고, 타워가/보스 앞 몬스터가
+##   유령에게 준 피해가 점수가 된다 (레인 데미지 / 보스 레인 데미지를 따로 센다. GhostScore). 마지막 보스(Lv.10)도 같고, 구간이 끝나면 승리한다.
 ## - 보스는 레인 한가운데에 크게 서 있고, 내가 보낸 몬스터들이 걸어와서 보스를 둘러싸고 공격한다.
 ##   보스 앞에 선 몬스터는 사라지지 않고 다음 라운드 보스도 계속 공격한다 (수 제한 없음).
 ## - 수입이 들어오는 시점(INCOME_INTERVAL)마다 모든 참여 플레이어 레인에 몬스터 웨이브가 한꺼번에 온다 (PvE).
@@ -38,6 +40,9 @@ var total_dps: float = 0.0
 var damage_by_player: Dictionary = {}  # player_id -> 누적 피해
 var current_wave_text: String = "-"    # HUD 표시용: 지금 파견 중인 몬스터
 var level_flash: float = 0.0           # 새 보스 등장 연출
+var in_ghost_phase := false            # 보스를 잡고 남은 시간 동안의 유령 구간인가 (이 동안 time_left는 "다음 보스까지"의 시간)
+var ghost_length := 0.0                # 이번 유령 구간의 전체 길이 (초. 남은 시간 막대용)
+var ghost_boss_damage_by_player: Dictionary = {}  # player_id -> 보스 레인 유령에게 준 피해 누적 (게임 전체. damage_by_player와 따로 센다)
 
 var _grid: GridSystem
 var _renderer: GridRenderer
@@ -68,6 +73,7 @@ var _since_wave := 999.0              # 마지막 웨이브를 보낸 뒤 지난
 var _phase := 0                       # 지금 페이즈 (1부터. 페이즈가 없는 보스는 0)
 var _triggered: Array = []            # 지금 페이즈의 발동형 스킬 [{skill, fired: Array, timer: float}]
 var _pending_casts: Array = []        # 예고 중인 발동 [{skill, left, targets: Array}]
+var _wave_serial := 0                 # 유령 구간이 시작될 때마다 오른다. 파견 중이던 웨이브/분열 소환은 번호가 바뀌면 멈춘다
 
 
 func setup(boss_grid: GridSystem, renderer: GridRenderer, lanes: Dictionary) -> void:
@@ -98,6 +104,7 @@ func setup(boss_grid: GridSystem, renderer: GridRenderer, lanes: Dictionary) -> 
 
 	for lane in lanes.values():
 		lane.lane_failed.connect(_on_lane_failed)
+		ghost_boss_damage_by_player[lane.player_id] = 0.0  # 아직 못 쳤어도 순위에 올라 있게
 
 	_start_level(1)
 	_plan_next_wave()
@@ -266,6 +273,9 @@ func _process(delta: float) -> void:
 	if _dps_timer <= 0.0:
 		_dps_timer = DPS_RECALC_INTERVAL
 		_recalc_dps()
+	if in_ghost_phase:
+		_process_ghost_phase(delta)  # 보스는 이미 죽었다: 스킬도 보스 체력도 제한시간 패배도 없다
+		return
 	_update_skills(delta)
 
 	# 도착한 몬스터들이 보스를 지속 공격 (비늘 보호막이 있으면 필드 위 웨이브 몬스터 수만큼 피해가 줄어든다)
@@ -300,7 +310,7 @@ func _guard_reduction() -> float:
 	var lane_count := 0
 	for lane in _lanes.values():
 		if lane.active:
-			alive += lane.monsters.size()
+			alive += lane.wave_monster_count()  # 유령은 웨이브 몬스터가 아니다
 			lane_count += 1
 	if lane_count == 0:
 		return 0.0
@@ -351,20 +361,130 @@ func _on_level_cleared() -> void:
 	Log.info(Log.Category.GAME, "보스 Lv.%d '%s' 처치! (남은시간 %.0fs)" % [level, level_data.name, time_left])
 	level_cleared.emit(level)
 
+	# 보상 지급 (마지막 보스는 보상이 0)
+	var reward: int = level_data.reward
+	if reward > 0:
+		for lane in _lanes.values():
+			if lane.active:
+				lane.gold += reward
+				Log.info(Log.Category.ECONOMY, "[P%d] 보스 처치 보상 +%d골드 잔액=%d" % [lane.player_id + 1, reward, lane.gold])
+		Effects.float_text(_renderer, Balance.BOSS_CENTER + Vector2(-1.0, -0.8), "처치! +%d골드" % reward,
+			Color(1.0, 0.9, 0.3), _lane_visible)
+
+	if time_left > 0.0:
+		_enter_ghost_phase()  # 남은 시간은 버리지 않는다: 그 시간 동안 유령 구간이 이어지고, 끝나면 다음 보스(마지막이면 승리)
+	else:
+		_advance_level()
+
+
+## 다음 보스를 내보낸다 (마지막 보스를 잡았으면 승리). 보스 앞에 선 몬스터는 그대로 남아 다음 보스를 공격한다.
+func _advance_level() -> void:
 	if level >= BossLevels.COUNT:
 		_finish(State.VICTORY, "모든 보스 처치")
 		return
-
-	# 보상 지급 -> 다음 보스 즉시 등장 (보스 앞에 선 몬스터는 그대로 남아 다음 보스를 공격)
-	var reward: int = level_data.reward
-	for lane in _lanes.values():
-		if lane.active:
-			lane.gold += reward
-			Log.info(Log.Category.ECONOMY, "[P%d] 보스 처치 보상 +%d골드 잔액=%d" % [lane.player_id + 1, reward, lane.gold])
-	Effects.float_text(_renderer, Balance.BOSS_CENTER + Vector2(-1.0, -0.8), "처치! +%d골드" % reward,
-		Color(1.0, 0.9, 0.3), _lane_visible)
 	_start_level(level + 1)
 	_announce_level_skills()
+
+
+# --- 유령 구간 (보스를 일찍 잡고 남은 시간) ---
+
+## 보스를 잡았는데 제한시간이 남았다: 남은 시간만큼 유령 구간을 연다.
+## 웨이브는 멈추고 (수입 타이머는 레인 것이라 그대로 돈다), 보스의 스킬은 모두 꺼지고, 모든 참여 레인과 보스 자리에 유령이 나온다.
+func _enter_ghost_phase() -> void:
+	in_ghost_phase = true
+	ghost_length = time_left
+	hp = 0.0
+	level_flash = 0.6
+	_wave_serial += 1          # 파견 중이던 웨이브와 분열 소환이 더 나오지 않게 끊는다
+	_dispatch_timer.stop()
+	_clear_pending_casts()
+	_triggered.clear()
+	_guard_per_monster = 0.0   # 죽은 보스의 보호막/동상은 더 이상 없다
+	_guard_cap = 0.0
+	_chill_max = 0.0
+	damage_mult = 1.0
+	_dmg_accum = 0.0
+	_dmg_timer = 0.0
+	_recalc_dps()
+	for lane in _lanes.values():
+		lane.start_ghost()
+	var is_last := level >= BossLevels.COUNT
+	skill_announced.emit({
+		"name": "유령 구간",
+		"text": "보스를 일찍 잡아서 남은 %d초 동안 유령이 나옵니다. 웨이브는 쉬고 수입은 그대로 들어옵니다. 타워가 유령에게 입힌 피해(레인 데미지)와 보스 앞 몬스터가 입힌 피해(보스 레인 데미지)가 점수가 됩니다. %s" % [
+			ceili(time_left), "구간이 끝나면 승리합니다." if is_last else "구간이 끝나면 다음 보스가 나옵니다."],
+		"lane": "both", "delay": 0.0, "boss": level_data.name})
+	Log.info(Log.Category.GAME, "유령 구간 시작: 보스 Lv.%d 처치 후 남은 %.1fs 동안 (참여 %d명, %s)" % [
+		level, time_left, _lanes.size(), "구간이 끝나면 승리" if is_last else "구간이 끝나면 Lv.%d" % (level + 1)])
+
+
+## 유령 구간 한 프레임: 보스 앞에 선 몬스터들이 보스 자리의 유령을 때린다 (피해는 보스 레인 데미지로 따로 센다). 시간이 다 되면 다음 보스.
+func _process_ghost_phase(delta: float) -> void:
+	damage_mult = 1.0
+	if total_dps > 0.0:
+		_dmg_accum += total_dps * delta
+		for m in _attackers:
+			ghost_boss_damage_by_player[m.owner_id] = ghost_boss_damage_by_player.get(m.owner_id, 0.0) + m.current_dps * delta
+		_dmg_timer += delta
+		if _dmg_timer >= 1.0:
+			_show_damage_text()
+	time_left -= delta
+	_view.queue_redraw()
+	if time_left <= 0.0:
+		time_left = 0.0
+		_end_ghost_phase()
+
+
+## 유령 구간이 끝났다: 유령을 치우고 다음 보스를 내보낸다 (마지막 보스면 승리). 웨이브는 수입 시점에 맞춰 다시 시작한다.
+func _end_ghost_phase() -> void:
+	in_ghost_phase = false
+	for lane in _lanes.values():
+		lane.stop_ghost()
+	Log.info(Log.Category.GAME, "유령 구간 끝: 레인 데미지 %s / 보스 레인 데미지 %s" % [ghost_lane_damage_by_player(), ghost_boss_damage_by_player])
+	_advance_level()
+	if state == State.RUNNING:
+		_resume_waves()
+
+
+## 멈춰 있던 웨이브 타이머를 다시 켠다. _advance_level -> _start_level이 이 보스의 웨이브 주기를 wait_time에 이미 넣어 두었다.
+## 평소 주기(수입 주기)면 다음 수입 시점에 맞춰 첫 웨이브가 오게 한다 (직전 웨이브와 MIN_WAVE_GAP보다 가까우면 그다음 수입 시점으로 미룬다).
+func _resume_waves() -> void:
+	var interval := _dispatch_timer.wait_time
+	var first_wait := interval
+	if is_equal_approx(interval, Balance.INCOME_INTERVAL):
+		var left := _income_time_left()
+		if left > 0.0:
+			if _since_wave + left < MIN_WAVE_GAP:
+				left += Balance.INCOME_INTERVAL
+			first_wait = left
+	_dispatch_timer.start(first_wait)     # start(시간)은 wait_time도 그 값으로 바꾼다
+	_dispatch_timer.wait_time = interval  # 첫 대기가 끝난 뒤부터는 원래 주기로 되돌려 놓는다
+
+
+## 지금 유령 구간이 진행 중인가 (구간 중에 패배해서 끝난 게임은 아니다). HUD 안내는 이 값을 본다.
+func ghost_running() -> bool:
+	return in_ghost_phase and state == State.RUNNING
+
+
+## 플레이어별 레인 데미지 누적 {player_id: 피해}. 각 레인의 타워들이 유령에게 준 피해 (부서진 타워의 몫 포함)
+func ghost_lane_damage_by_player() -> Dictionary:
+	var result := {}
+	for lane in _lanes.values():
+		result[lane.player_id] = lane.ghost_damage
+	return result
+
+
+## 플레이어별 보스 레인 데미지 누적 {player_id: 피해} (참여한 모든 플레이어가 들어 있다)
+func ghost_boss_damage_totals() -> Dictionary:
+	var result := ghost_boss_damage_by_player.duplicate()
+	for pid in _lanes:
+		result[pid] = result.get(pid, 0.0)
+	return result
+
+
+## 유령 점수 요약 (GhostScore.summary). 실시간 랭킹과 결과 화면이 같은 값을 쓴다.
+func ghost_summary() -> Dictionary:
+	return GhostScore.summary(ghost_lane_damage_by_player(), ghost_boss_damage_totals(), _lanes.size())
 
 
 ## 다음 웨이브를 미리 정한다 (HUD 미리보기용). 보스에게는 수입이 있어서, 그 돈 안에서 이번 라운드에 살 수 있는 몬스터를
@@ -459,6 +579,7 @@ func _dispatch_wave() -> void:
 	if state != State.RUNNING:
 		return
 	_since_wave = 0.0
+	var serial := _wave_serial
 	var wave := _next_wave.duplicate()
 	var preview := get_next_wave_preview()
 	var affix_id := _next_affix
@@ -482,7 +603,7 @@ func _dispatch_wave() -> void:
 			if not first:
 				var gap := Balance.WAVE_SPAWN_GAP if i > 0 else Balance.WAVE_GROUP_GAP
 				await get_tree().create_timer(gap, false).timeout  # (false: 일시정지 중에는 멈춘다) 촘촘하게 연달아 나온다 (종류 사이는 조금 더 띄운다)
-				if state != State.RUNNING:
+				if state != State.RUNNING or serial != _wave_serial:  # 보스를 잡아서 유령 구간이 되면 남은 몬스터는 더 나오지 않는다
 					return
 			first = false
 			for lane in _lanes.values():
@@ -757,6 +878,7 @@ func _spawn_phantoms(skill: Dictionary) -> void:
 ## 분열: 모든 참여 레인의, 예고 때 정해 둔 칸(cells)에서 슬라임 새끼가 촘촘히 연달아 나온다 (웨이브와 같은 방식)
 func _spawn_slimelings(skill: Dictionary, cells: Dictionary) -> void:
 	var wave_type: Dictionary = Monsters.DATA["slimeling"]
+	var serial := _wave_serial
 	for lane in _lanes.values():
 		var cell: Vector2i = cells.get(lane, Pathfinder.NO_GOAL)
 		if cell != Pathfinder.NO_GOAL:
@@ -764,7 +886,7 @@ func _spawn_slimelings(skill: Dictionary, cells: Dictionary) -> void:
 	for i in range(int(skill.count)):
 		if i > 0:
 			await get_tree().create_timer(Balance.WAVE_SPAWN_GAP, false).timeout  # false: 일시정지 중에는 멈춘다
-			if state != State.RUNNING:
+			if state != State.RUNNING or serial != _wave_serial:  # 유령 구간이 되면 남은 새끼는 더 나오지 않는다
 				return
 		for lane in _lanes.values():
 			lane.spawn_wave_monster("slimeling", level, cells.get(lane, Pathfinder.NO_GOAL))
@@ -864,8 +986,23 @@ class BossView extends Node2D:
 		_t += delta
 		queue_redraw()
 
+	## 유령 구간: 죽은 보스 자리에 보스 몸통과 같은 크기(BOSS_RADIUS)의 큰 유령이 선다. 보스 앞의 몬스터들이 이 유령을 때린다.
+	func _draw_ghost() -> void:
+		var cell: float = renderer.CELL_SIZE
+		var R: float = Balance.BOSS_RADIUS * cell
+		var pressure := minf(1.0, boss.total_dps / 12.0)
+		var shake := Vector2(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0)) * cell * 0.04 * pressure  # 맞을수록 몸을 떤다
+		var c: Vector2 = Balance.BOSS_CENTER * cell + Vector2(0.0, sin(_t * 2.0) * R * 0.06) + shake
+		draw_circle(c, R * 1.3, Color(GhostArt.BODY, 0.10 + 0.06 * sin(_t * 3.0)))  # 기운
+		GhostArt.draw_ghost(self, c, R, _t)  # 플레이어 레인의 유령과 똑같은 그림을 보스 크기로
+		if boss.level_flash > 0.0:
+			draw_circle(c, R * 1.3, Color(1, 1, 1, 0.6 * boss.level_flash))
+
 	func _draw() -> void:
 		if boss.level_data.is_empty():
+			return
+		if boss.in_ghost_phase:
+			_draw_ghost()
 			return
 		var cell: float = renderer.CELL_SIZE
 		var R: float = Balance.BOSS_RADIUS * cell
@@ -933,6 +1070,15 @@ class BossBar extends Node2D:
 		var c: Vector2 = Balance.BOSS_CENTER * cell
 		var bar_w := R * 2.2
 		var bar_y := c.y - R * 1.7
+		if boss.in_ghost_phase:  # 보스 체력 대신 유령 구간이 끝날 때까지 남은 시간을 보여 준다
+			var left_ratio := clampf(boss.time_left / maxf(boss.ghost_length, 0.001), 0.0, 1.0)
+			draw_rect(Rect2(c.x - bar_w * 0.5 - 3, bar_y - 20, bar_w + 6, 36), Color(0, 0, 0, 0.8))
+			draw_rect(Rect2(c.x - bar_w * 0.5, bar_y, bar_w, 10), Color(0.1, 0.12, 0.25))
+			draw_rect(Rect2(c.x - bar_w * 0.5, bar_y, bar_w * left_ratio, 10), Color(0.6, 0.7, 1.0))
+			draw_string(ThemeDB.fallback_font, Vector2(c.x - bar_w * 0.5, bar_y - 6), "Lv.%d 처치!  유령 구간 %d초" % [
+				boss.level, ceili(boss.time_left)], HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.85, 0.9, 1.0))
+			_draw_contribution(c, R, cell)
+			return
 		var ratio := clampf(boss.hp / boss.max_hp, 0.0, 1.0)
 		draw_rect(Rect2(c.x - bar_w * 0.5 - 3, bar_y - 20, bar_w + 6, 36), Color(0, 0, 0, 0.8))
 		draw_rect(Rect2(c.x - bar_w * 0.5, bar_y, bar_w, 10), Color(0.25, 0.05, 0.05))
@@ -951,9 +1097,10 @@ class BossBar extends Node2D:
 		_draw_contribution(c, R, cell)
 
 	func _draw_contribution(c: Vector2, R: float, _cell: float) -> void:
-		# 전체 피해 계산
+		# 전체 피해 계산 (유령 구간에는 보스 레인 유령에게 준 피해를 보여 준다)
+		var source: Dictionary = boss.ghost_boss_damage_by_player if boss.in_ghost_phase else boss.damage_by_player
 		var total_dmg := 0.0
-		for dmg in boss.damage_by_player.values():
+		for dmg in source.values():
 			total_dmg += dmg
 
 		if total_dmg <= 0.0:
@@ -961,8 +1108,8 @@ class BossBar extends Node2D:
 
 		# 플레이어별 기여도 정렬 (내림차순)
 		var entries: Array = []
-		for player_id in boss.damage_by_player:
-			var dmg: float = boss.damage_by_player[player_id]
+		for player_id in source:
+			var dmg: float = source[player_id]
 			entries.append({"player_id": player_id, "damage": dmg, "percent": dmg / total_dmg * 100.0})
 		entries.sort_custom(func(a, b): return a.damage > b.damage)
 
@@ -973,7 +1120,8 @@ class BossBar extends Node2D:
 		var line_h := 16.0
 
 		# 제목
-		draw_string(font, Vector2(start_x, start_y), "플레이어 기여도", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.8, 0.9, 1.0))
+		draw_string(font, Vector2(start_x, start_y), "유령 피해 (보스 레인)" if boss.in_ghost_phase else "플레이어 기여도",
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.8, 0.9, 1.0))
 		start_y += line_h
 
 		# 각 플레이어

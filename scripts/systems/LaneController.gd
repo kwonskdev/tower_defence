@@ -15,8 +15,10 @@ var income: int = Balance.BASE_INCOME   # 수입 틱마다 받는 골드
 var lives: float = float(Balance.START_LIVES)  # 소수점까지 들고 있다. 화면/패배 판정은 lives_shown() (내림)
 var active := true
 var lane_visible := true
-var monsters: Array[Monster] = []
+var monsters: Array[Monster] = []  # 필드 위 몬스터 (유령 구간의 유령도 들어 있다: 타워가 똑같이 조준한다)
 var towers: Array[Tower] = []  # 한 칸에 타워 1개
+var ghost_active := false      # 지금 유령 구간인가 (보스를 일찍 잡은 뒤 남은 시간). 켜져 있는 동안 유령 1마리가 끝까지 가면 다시 나온다
+var ghost_damage := 0.0        # 이 레인의 타워들이 유령에게 준 피해 누적 (게임 전체, 구간마다 쌓인다. 부서진 타워가 준 몫도 남는다)
 
 # 진화 업그레이드 (레인 전체 공유, 같은 계열의 모든 타워에 적용)
 var stat_levels: Dictionary = {} # "계열.스킬.키" -> 레벨 1~3 (없으면 1). B 스킬은 타워마다 배우지만 항목 레벨은 계열 공통
@@ -294,7 +296,10 @@ func spawn_wave_monster(type_id: String = "grunt", level: int = 1, spawn_cell: V
 	monster.dps = Monsters.dps(type_id)
 	monster.gnaws_towers = monster.dps > 0.0 and (bool(wave_type.get("gnaws", false)) or wave_type.category == "attack")  # 공격력 0(응원단 등)은 갉을 게 없다
 	monster.gnaw_rate = monster.dps
+	monster.ghost = bool(wave_type.get("ghost", false))
+	monster.breach_dps = float(wave_type.get("breach_dps", 0.0))
 	monster.gnawed.connect(_on_tower_gnawed)
+	monster.ghost_hit.connect(_on_ghost_hit)
 	if affix != "":
 		var affix_data: Dictionary = BossSkills.AFFIXES[affix]
 		monster.speed_boost = float(affix_data.get("speed_mult", 1.0))
@@ -311,14 +316,54 @@ func spawn_wave_monster(type_id: String = "grunt", level: int = 1, spawn_cell: V
 	_next_monster_id += 1
 
 
-## 슬라임 새끼가 타워를 갉았다: 내구도를 깎고, 바닥나면 타워를 부순다 (칸을 비우면 _on_cell_changed가 타워를 치운다)
+## 슬라임 새끼가 갉거나 길이 막혀서 유령이 뚫는 중이다: 내구도를 깎고, 바닥나면 타워를 부순다 (칸을 비우면 _on_cell_changed가 타워를 치운다)
 func _on_tower_gnawed(cell: Vector2i, amount: float) -> void:
 	for tower in towers:
 		if tower.cell == cell:
 			if tower.gnaw(amount):
-				Log.info(Log.Category.TOWER, "[P%d] 타워 %s가 갉아 먹혀 부서짐" % [player_id + 1, cell])
+				Log.info(Log.Category.TOWER, "[P%d] 타워 %s 내구도 바닥나 부서짐" % [player_id + 1, cell])
 				_grid.set_cell_state(cell, GridSystem.CellState.EMPTY)
 			return
+
+
+# --- 유령 구간 (보스를 일찍 잡고 남은 시간) ---
+
+## 유령 구간을 시작한다: 이 레인에 유령 1마리가 나온다. BossController가 부른다.
+func start_ghost() -> void:
+	if not active:
+		return  # 이미 무너진 레인에는 나오지 않는다
+	ghost_active = true
+	spawn_ghost()
+
+
+## 유령 구간이 끝났다: 필드의 유령을 치운다 (남은 일반 몬스터는 그대로)
+func stop_ghost() -> void:
+	ghost_active = false
+	for m in monsters.duplicate():
+		if m.ghost:
+			monsters.erase(m)
+			m.queue_free()
+
+
+## 출발점에서 유령 1마리를 내보낸다 (참여 중인 레인만). 유령은 일반(grunt)과 같은 속도로 끝까지 가고, 닿으면 다시 이 함수로 나온다.
+func spawn_ghost(level: int = 1) -> void:
+	spawn_wave_monster("ghost", level)
+
+
+## 유령이 타워에게 맞았다: 레인 점수에 더하고, 때린 타워의 몫도 센다 (source가 null이면 이미 부서진 타워)
+func _on_ghost_hit(amount: float, source) -> void:
+	ghost_damage += amount
+	if source != null and is_instance_valid(source):
+		source.record_ghost_damage(amount)
+
+
+## 필드 위 몬스터 수 (유령 제외). 비늘 보호막처럼 "웨이브 몬스터가 얼마나 남았나"를 볼 때 쓴다.
+func wave_monster_count() -> int:
+	var count := 0
+	for m in monsters:
+		if not m.ghost:
+			count += 1
+	return count
 
 
 ## 지원형 B: 표식이 걸린 적이 죽으면 근처 표식 없는 적에게 표식을 옮긴다
@@ -387,6 +432,10 @@ func _on_monster_died(monster: Monster) -> void:
 func _on_monster_reached_exit(monster: Monster) -> void:
 	monsters.erase(monster)
 	monster.queue_free()
+	if monster.ghost:  # 유령은 생명을 깎지 않는다. 끝까지 갔으니 출발점에서 다시 나온다
+		if ghost_active and active:
+			spawn_ghost()
+		return
 	lives -= monster.life_damage
 	Log.info(Log.Category.GAME, "[P%d] 몬스터#%d(%s) 기지 도달! 생명 -%d -> %.2f" % [
 		player_id + 1, monster.monster_id, monster.kind_id, monster.life_damage, lives])

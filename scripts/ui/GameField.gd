@@ -3,7 +3,7 @@ class_name GameField
 
 var grid_renderer: GridRenderer
 
-const MAX_PLAYERS = 8
+const MAX_PLAYERS = Balance.MAX_PLAYERS
 const BOSS_LANE_ID = 8  # grid_systems[8] = 보스 레인 (미니맵의 B)
 var grid_systems: Array[GridSystem] = []
 var lanes: Dictionary = {}  # player_id -> LaneController (참여한 플레이어만)
