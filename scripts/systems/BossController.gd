@@ -360,7 +360,7 @@ func _on_level_cleared() -> void:
 	for lane in _lanes.values():
 		if lane.active:
 			lane.gold += reward
-			Log.info(Log.Category.ECONOMY, "[P%d] 보스 처치 보상 +%d골드 잔액=%d" % [lane.player_id + 1, reward, lane.gold_shown()])
+			Log.info(Log.Category.ECONOMY, "[P%d] 보스 처치 보상 +%d골드 잔액=%.2f" % [lane.player_id + 1, reward, lane.gold])
 	Effects.float_text(_renderer, Balance.BOSS_CENTER + Vector2(-1.0, -0.8), "처치! +%d골드" % reward,
 		Color(1.0, 0.9, 0.3), _lane_visible)
 	_start_level(level + 1)

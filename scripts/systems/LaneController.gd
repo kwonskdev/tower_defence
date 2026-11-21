@@ -10,10 +10,11 @@ signal lives_changed(lives: int)
 signal lane_failed(player_id: int)
 
 var player_id: int = 0
-var gold: float = float(Balance.START_GOLD)  # 소수점까지 들고 있다 (초록 보너스). 화면에는 gold_shown() (내림)
+var gold: float = float(Balance.START_GOLD)  # 소수점까지 들고 있다 (초록 보너스, 판매 환급 70% 등). 화면/구매 가능 판정은 gold_shown() (내림)
 var income: int = Balance.BASE_INCOME   # 수입 틱마다 받는 골드
 var lives: float = float(Balance.START_LIVES)  # 소수점까지 들고 있다. 화면/패배 판정은 lives_shown() (내림)
 var active := true
+var started := false  # 시작 버튼을 눌렀는가 (누르기 전에는 타워를 전액 환급으로 팔 수 있다)
 var lane_visible := true
 var monsters: Array[Monster] = []
 var towers: Array[Tower] = []  # 한 칸에 타워 1개
@@ -47,12 +48,13 @@ func setup(p_player_id: int, grid: GridSystem, renderer: GridRenderer) -> void:
 	_income_timer.timeout.connect(_on_income_tick)
 	add_child(_income_timer)  # 수입 타이머는 시작 버튼을 누를 때 돈다 (begin)
 
-	Log.info(Log.Category.GAME, "[P%d] 레인 시작: 골드=%d, 수입=%d/%.0fs, 생명=%d" % [
-		player_id + 1, gold_shown(), income, Balance.INCOME_INTERVAL, lives])
+	Log.info(Log.Category.GAME, "[P%d] 레인 시작: 골드=%.2f, 수입=%d/%.0fs, 생명=%d" % [
+		player_id + 1, gold, income, Balance.INCOME_INTERVAL, lives])
 
 
 ## 시작 버튼: 수입 지급이 시작된다
 func begin() -> void:
+	started = true
 	if active and _income_timer.is_stopped():
 		_income_timer.start()
 
@@ -70,6 +72,7 @@ func build_tower(cell: Vector2i, kind_id: String) -> Tower:
 	tower.setup(cell, kind, color_info, self, _renderer)
 	tower.visible = lane_visible
 	tower.z_index = 1
+	tower.invested = int(kind.cost)  # 건설 골드는 호출한 쪽(GameField.place_tower)이 이미 냈다
 	_renderer.add_child(tower)
 	towers.append(tower)
 
@@ -131,6 +134,7 @@ func evolve_tower(tower: Tower, evo: String) -> bool:
 	if not try_spend(Balance.EVOLVE_COST, "타워 진화 %s(%s) -> %s" % [tower.cell, tower.kind.name, Evolutions.evo_name(evo)]):
 		return false
 	tower.set_evolution(evo)
+	tower.invested += Balance.EVOLVE_COST
 	tower.durability = Balance.TOWER_DURABILITY  # 진화하면 항상 풀피
 	Effects.ring(_renderer, tower.center_cell_pos(), 0.8, Evolutions.DATA[evo].color, lane_visible)
 	Log.info(Log.Category.TOWER, "[P%d] 타워 진화 %s: %s -> %s" % [player_id + 1, tower.cell, tower.kind.name, Evolutions.evo_name(evo)])
@@ -155,6 +159,7 @@ func learn_tower_skill(tower: Tower) -> bool:
 	if not try_spend(cost, "타워 %s(%s) B 진화: %s" % [tower.cell, Evolutions.evo_name(evo), Evolutions.skill_name(evo, "B")]):
 		return false
 	tower.b_learned = true
+	tower.invested += cost
 	tower.durability = Balance.TOWER_DURABILITY  # B 스킬을 배워도 풀피
 	Effects.ring(_renderer, tower.center_cell_pos(), 0.8, Evolutions.DATA[evo].color, lane_visible)
 	Log.info(Log.Category.TOWER, "[P%d] B 진화 %s: %s %s" % [player_id + 1, tower.cell, Evolutions.evo_name(evo), Evolutions.skill_name(evo, "B")])
@@ -212,17 +217,65 @@ func find_target(from_cell_pos: Vector2, range_cells: float, anti_air: bool = fa
 	return best
 
 
+## 골드를 화면에 보이는 정수로 (소수점은 내림. 2.8이면 2). 부동소수 오차로 3.0이 2.9999999가 되어 2로 보이지 않도록 아주 작은 값을 더한다.
+static func whole(amount: float) -> int:
+	return floori(amount + 0.000001)
+
+
+## 화면에 보이고 구매 가능 판정에 쓰는 골드 (소수점은 내림)
+func gold_shown() -> int:
+	return whole(gold)
+
+
+## 이 타워를 지금 팔면 받는 골드. 반올림하지 않고 소수까지 그대로 더한다 (2.8골드면 gold에 2.8이 들어간다).
+func sell_value(tower: Tower) -> float:
+	var ratio := Balance.SELL_REFUND_RATIO if started else Balance.SELL_REFUND_RATIO_BEFORE_START
+	return tower.invested * ratio
+
+
+## 판매 버튼/확인창에 보이는 환급액 (소수점은 내림)
+func sell_value_shown(tower: Tower) -> int:
+	return whole(sell_value(tower))
+
+
+## 팔 때 한 번 더 확인해야 하는가 (진화/B 스킬에 골드를 쓴 타워. 건설만 한 타워는 바로 판다)
+func sell_needs_confirm(tower: Tower) -> bool:
+	return tower.evolution != ""
+
+
+## 타워를 판다: 투입 골드의 일부를 돌려받고 타워를 치운 뒤 칸을 비운다. 내 레인의 타워만 가능.
+## 몬스터가 부술 때와 달리 "파괴!" 연출이 뜨지 않는다.
+func sell_tower(tower: Tower) -> bool:
+	if not active or not is_instance_valid(tower) or tower.lane != self or not towers.has(tower):
+		return false
+	var refund := sell_value(tower)
+	gold += refund
+	Effects.float_text(_renderer, tower.center_cell_pos(), "판매 +%d" % whole(refund), Color(1.0, 0.9, 0.3), lane_visible)
+	Log.info(Log.Category.ECONOMY, "[P%d] 타워 판매 %s(%s%s): +%.2f골드 (투입 %d) 잔액=%.2f" % [
+		player_id + 1, tower.cell, tower.kind.name,
+		" · " + Evolutions.evo_name(tower.evolution) if tower.evolution != "" else "", refund, tower.invested, gold])
+	_remove_tower(tower, false)
+	return true
+
+
+## 타워를 치운다. destroyed=true(몬스터가 부숨)이면 "파괴!" 연출을 띄우고, false(판매)이면 조용히 치운다.
+func _remove_tower(tower: Tower, destroyed: bool) -> void:
+	towers.erase(tower)  # 칸을 비우기 전에 뺀다: 칸이 바뀌는 신호(_on_cell_changed)가 같은 타워를 또 치우지 않게
+	if destroyed:
+		Effects.ring(_renderer, tower.center_cell_pos(), 0.8, Color(1.0, 0.5, 0.2), lane_visible)
+		Effects.float_text(_renderer, tower.center_cell_pos(), "파괴!", Color(1.0, 0.4, 0.3), lane_visible)
+	tower.queue_free()
+	_grid.set_cell_state(tower.cell, GridSystem.CellState.EMPTY)  # 부서져서 온 경우는 이미 EMPTY라 아무 일도 없다. 판매면 몬스터가 신호를 받아 길을 다시 짠다
+	_on_tower_colors_changed()
+
+
 func _on_cell_changed(position: Vector2i, _old_state, new_state) -> void:
 	# 몬스터가 타워를 부수면 칸이 EMPTY가 된다 (부술 수 있는 건 길을 막는 타워뿐)
 	if new_state != GridSystem.CellState.EMPTY:
 		return
 	for tower in towers:
 		if tower.cell == position:
-			Effects.ring(_renderer, tower.center_cell_pos(), 0.8, Color(1.0, 0.5, 0.2), lane_visible)
-			Effects.float_text(_renderer, tower.center_cell_pos(), "파괴!", Color(1.0, 0.4, 0.3), lane_visible)
-			tower.queue_free()
-			towers.erase(tower)
-			_on_tower_colors_changed()
+			_remove_tower(tower, true)
 			break
 
 
@@ -236,17 +289,12 @@ func income_time_left() -> float:
 func try_spend(amount: int, reason: String) -> bool:
 	if not active:
 		return false
-	if gold < amount:
+	if gold_shown() < amount:  # 화면에 보이는 정수 골드로 판정 (보이는 돈으로 살 수 있으면 산다)
 		Log.info(Log.Category.ECONOMY, "[P%d] 골드 부족: %s 필요=%d 보유=%d" % [player_id + 1, reason, amount, gold_shown()])
 		return false
 	gold -= amount
-	Log.info(Log.Category.ECONOMY, "[P%d] -%d골드 (%s) 잔액=%d" % [player_id + 1, amount, reason, gold_shown()])
+	Log.info(Log.Category.ECONOMY, "[P%d] -%d골드 (%s) 잔액=%.2f" % [player_id + 1, amount, reason, gold])
 	return true
-
-
-## 화면에 보이는 골드 (소수점은 내림)
-func gold_shown() -> int:
-	return floori(gold)
 
 
 func add_income(amount: int) -> void:
@@ -258,7 +306,7 @@ func _on_income_tick() -> void:
 	if not active:
 		return
 	gold += income
-	Log.info(Log.Category.ECONOMY, "[P%d] 수입 지급 +%d 잔액=%d" % [player_id + 1, income, gold_shown()])
+	Log.info(Log.Category.ECONOMY, "[P%d] 수입 지급 +%d 잔액=%.2f" % [player_id + 1, income, gold])
 
 
 # --- 몬스터 ---
@@ -389,8 +437,8 @@ func _on_monster_died(monster: Monster) -> void:
 	Effects.float_text(_renderer, monster.cell_pos, text, Color(1.0, 0.9, 0.3), lane_visible)
 	Effects.ring(_renderer, monster.cell_pos, 0.6, monster.body_color, lane_visible)
 	monster.queue_free()
-	Log.debug(Log.Category.ECONOMY, "[P%d] 몬스터#%d 처치 +%.2f골드 잔액=%d" % [
-		player_id + 1, monster.monster_id, actual_reward, gold_shown()])
+	Log.debug(Log.Category.ECONOMY, "[P%d] 몬스터#%d 처치 +%.2f골드 잔액=%.2f" % [
+		player_id + 1, monster.monster_id, actual_reward, gold])
 
 
 func _on_monster_reached_exit(monster: Monster) -> void:
@@ -583,8 +631,8 @@ func _reward_pattern(p: Dictionary) -> void:
 		Effects.ring(_renderer, Vector2(c) + Vector2(0.5, 0.5), 0.9, color_at.get(c, Color.WHITE), lane_visible)
 	center /= float(p.cells.size())
 	Effects.float_text(_renderer, center, "%s! %s" % [data.name, ColorPatterns.reward_text(p.id)], Color(1.0, 0.95, 0.5), lane_visible)
-	Log.info(Log.Category.COLOR, "[P%d] 패턴 완성: %s %s (골드=%d 생명=%.2f)" % [
-		player_id + 1, data.name, ColorPatterns.reward_text(p.id), gold_shown(), lives])
+	Log.info(Log.Category.COLOR, "[P%d] 패턴 완성: %s %s (골드=%.2f 생명=%.2f)" % [
+		player_id + 1, data.name, ColorPatterns.reward_text(p.id), gold, lives])
 
 
 ## 보스 레인에 보낸 몬스터 중 랜덤 N마리 강화 (남색 색깔 보너스)

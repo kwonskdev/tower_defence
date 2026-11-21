@@ -124,6 +124,9 @@ func start_boss():
 func setup_scroll_container():
 	# 가로 스크롤 비활성화 (세로 드래그 스크롤만 사용)
 	horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	# 세로 스크롤바는 숨긴다 (스크롤은 드래그/휠로 하고 위치는 미니맵이 보여 준다).
+	# 보이는 스크롤바가 폭을 8px 차지해서 맵 최소 폭이 화면 폭(600)을 넘어 상단 UI까지 좌우 4px씩 잘렸다.
+	vertical_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_NEVER
 	follow_focus = true
 	# 스크롤은 handle_mouse_input()이 직접 한다. ScrollContainer 자체의 터치 스크롤까지 같이 켜져 있으면
 	# 폰에서 손가락 하나로 두 번 스크롤되어 떨리므로 이 노드는 입력을 직접 받지 않게 한다 (_input은 그대로 받는다).
@@ -253,6 +256,16 @@ func recolor_selected_tower() -> bool:
 func heal_selected_tower() -> bool:
 	var lane: LaneController = lanes.get(local_player_id)
 	return lane != null and lane.heal_tower(get_selected_tower())
+
+
+## 선택한 타워를 판다 (투입 골드의 일부 환급). 내 레인의 타워만 가능하고, 팔고 나면 선택이 풀린다.
+func sell_selected_tower() -> bool:
+	var lane: LaneController = lanes.get(local_player_id)
+	var tower := get_selected_tower()
+	if lane == null or tower == null or not lane.sell_tower(tower):
+		return false
+	select_tower(null)  # 사라진 타워를 계속 선택하고 있지 않게 (사거리 표시, 타워 화면)
+	return true
 
 
 ## 색깔 업그레이드 (골드, 그 색 타워 전체에 적용)

@@ -14,6 +14,7 @@ var lane: LaneController
 
 var evolution: String = ""     # 진화 계열 ID ("" = 아직 진화 안 함)
 var b_learned: bool = false    # B 스킬을 배웠는가 (진화처럼 타워마다 돈을 내고 따로 배운다. 항목 업그레이드만 계열 공통)
+var invested: int = 0          # 이 타워에 쓴 골드 (건설 + 진화 + B 스킬 배우기). 판매 환급액의 기준. 레인 공유 업그레이드/색깔 바꾸기/회복은 안 센다
 
 # 전적
 var total_damage: float = 0.0  # 누적 피해 (맞은 시점에 오른다. 독/표식 피해도 건 타워 몫)

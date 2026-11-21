@@ -2,12 +2,12 @@ extends Control
 class_name MainGame
 
 @onready var game_field: GameField = $VBoxContainer/GameField
-@onready var main_view: HBoxContainer = $VBoxContainer/TopUI/HBoxContainer/LeftPanel/MainView
-@onready var monster_view: GridContainer = $VBoxContainer/TopUI/HBoxContainer/LeftPanel/MonsterView
+@onready var left_panel: Control = $VBoxContainer/TopUI/HBoxContainer/LeftColumn/LeftPanel  # 상단 왼쪽 칸: 여기서 화면(타워/몬스터/업그레이드)이 바뀐다. 그 위의 탭 줄은 늘 고정
+@onready var monster_view: GridContainer = $VBoxContainer/TopUI/HBoxContainer/LeftColumn/LeftPanel/MonsterView
 
-@onready var tower_button: Button = $VBoxContainer/TopUI/HBoxContainer/LeftPanel/MainView/TowerButton
-@onready var monster_button: Button = $VBoxContainer/TopUI/HBoxContainer/LeftPanel/MainView/MonsterButton
-@onready var empty2_button: Button = $VBoxContainer/TopUI/HBoxContainer/LeftPanel/MainView/Empty2Button
+@onready var tower_tab: Button = $VBoxContainer/TopUI/HBoxContainer/LeftColumn/TabBar/TowerTab
+@onready var monster_tab: Button = $VBoxContainer/TopUI/HBoxContainer/LeftColumn/TabBar/MonsterTab
+@onready var upgrade_tab: Button = $VBoxContainer/TopUI/HBoxContainer/LeftColumn/TabBar/UpgradeTab
 @onready var boss_button: Button = $VBoxContainer/TopUI/HBoxContainer/RightPanel/BonusButton
 
 # 몬스터 버튼은 monster_buttons[0]이 뒤로 가기, [1]부터 지금 고른 유형의 Monsters.SLOTS 순서대로 몬스터 종류 (계열별로 묶고 사이에 빈칸).
@@ -16,10 +16,9 @@ var hud_panel: PanelContainer            # 맵 아래 별도 메시지 영역 (�
 var hud_label: Label
 var hud_box: VBoxContainer               # 하단 메시지 영역 안의 세로 줄 (알림 / 설명 / 타워 정보 / 상태)
 var explain_label: Label                 # 지금 고른 타워/몬스터/업그레이드 항목의 설명 (고르기만 하고 바로 실행하지 않는다)
-var left_panel: Control                  # 상단 왼쪽 칸: 여기서 화면(메인/타워/몬스터/업그레이드)이 바뀐다
 var map_overlay: Control                 # 맵 왼쪽 위에 겹치는 상태 표시 (생명/골드/수입 + 다음 웨이브). 입력은 통과
 var tower_sel_view: HBoxContainer        # 맵에서 타워를 눌렀을 때 상단에 나오는 화면: [←] + 진화/B 스킬/색깔 바꾸기
-var _view := "main"                      # 상단에 지금 보이는 화면
+var _view := "tower"                     # 상단에 지금 보이는 화면 (시작 화면은 타워)
 var _sel: Array = []                     # 고른 업그레이드 항목: [계열, "stat", 스킬, 키] 또는 [색, "color", "", ""]
 var _sel_monster := ""                   # 고른 몬스터 종류 (생성 버튼으로 보낸다)
 var action_buttons: Array[Button] = []   # 미니맵 바로 왼쪽 우하단의 [생성]/[업그레이드] 버튼 (화면마다 하나씩, 같은 일을 한다)
@@ -30,6 +29,8 @@ var pause_button: Button                 # 맵 오른쪽 위의 [시작/일시�
 var pause_icon: PauseIcon
 const PAUSE_SIZE := 48.0
 var confirm_dialog: ConfirmationDialog   # 타워를 지으면 길이 막힐 때 확인창
+var sell_confirm_dialog: ConfirmationDialog  # 진화/B 스킬에 투자한 타워를 팔 때 확인창
+var sell_button: Button                  # 타워 화면의 [판매 (N골드)] 버튼
 var _pending_cell := Vector2i.ZERO
 var tower_buttons: Dictionary = {}       # 기본 타워 종류 -> 타워 배럭 버튼
 var _highlighted_kind := ""              # 지금 강조 표시 중인 건설 타워 종류
@@ -48,13 +49,13 @@ var _monster_slots: Array = []           # 지금 열려 있는 유형의 칸 �
 var tower_info_label: Label
 var evolve_buttons: Array[Button] = []   # 선택한 타워의 진화 선택 버튼 2개 (진화 전: 계열 2개 / 진화 후 B가 남았으면: B 진화 1개)
 var heal_button: Button                  # 타워 화면의 [회복] 버튼 (골드로 내구도 가득)
-var _view_before_tower := "main"          # 맵에서 타워를 누르기 전에 보던 상단 화면 (뒤로 가면 여기로 돌아간다)
+var _view_before_tower := "tower"         # 맵에서 타워를 누르기 전에 보던 상단 화면 (뒤로 가면 여기로 돌아간다)
 var tower_action: Button                 # 오른쪽 아래 [진화] 버튼 (고른 진화를 실행)
 var _tower_pick := ""                    # 고른 진화: 계열 이름 또는 "B"
 var _pick_tower: Tower = null            # _tower_pick을 고른 타워 (다른 타워를 누르면 선택을 지운다)
 var recolor_button: Button               # 선택한 타워의 색깔을 랜덤으로 바꾸는 버튼 (항상 보인다)
 var evolve_ids: Array[String] = ["", ""]     # 진화 선택 버튼이 가리키는 값 ("" = 안 쓰는 칸)
-var upgrade_menu: HBoxContainer          # 업그레이드 탭: [←] [타워] [색깔]
+var upgrade_menu: HBoxContainer          # 업그레이드 탭의 첫 화면: [타워] [색깔]
 var evo_view: HBoxContainer              # 타워 업그레이드 1단계: [←] + 4x2 격자 (진화 계열 8개 중 고르기)
 var evo_buttons: Dictionary = {}         # 계열 -> Button
 var evo_frames: Control                  # 계열 선택 화면에서 같은 기본 타워의 두 계열을 묶는 외곽선
@@ -71,7 +72,9 @@ var _hud_timer := 0.0
 const FONT_BODY := 20
 const FONT_SMALL := 16
 const FONT_TINY := 14
-const TOP_HEIGHT := 180.0                # 위쪽 UI 줄 높이 (MainGame.tscn의 TopUI와 같아야 한다). 타워/몬스터/업그레이드 화면은 모두 이 안에서 해결한다
+const TAB_HEIGHT := 40.0                 # 맨 위 탭 줄 높이 (MainGame.tscn의 TabBar와 같아야 한다)
+const CONTENT_HEIGHT := 180.0            # 탭 줄 아래 화면(4x2 격자 + 버튼) 높이
+const TOP_HEIGHT := TAB_HEIGHT + CONTENT_HEIGHT  # 위쪽 UI 전체 높이 (MainGame.tscn의 TopUI와 같아야 한다). 오른쪽 미니맵은 이 전체 높이를 쓴다
 const CORNER_MARGIN := 10.0              # 폰 화면 모서리가 둥글게 잘려도 UI가 가리지 않는 최소 여백
 const BOTTOM_HEIGHT := 170.0             # 맵 아래 메시지 영역 높이 (맵은 그만큼 줄어든다)
 const OVERLAY_MARGIN := 6.0              # 맵 왼쪽 위 상태 표시와 맵 가장자리 사이 간격
@@ -156,14 +159,14 @@ func setup_ui():
 
 	# LeftPanel MonsterView 몬스터 버튼들 초기화
 	for i in range(1, 28):
-		var button = get_node_or_null("VBoxContainer/TopUI/HBoxContainer/LeftPanel/MonsterView/Monster" + str(i))
+		var button = get_node_or_null("VBoxContainer/TopUI/HBoxContainer/LeftColumn/LeftPanel/MonsterView/Monster" + str(i))
 		if button:
 			monster_buttons.append(button)
 
-	empty2_button.text = "업그레이드"
-	for b in [tower_button, monster_button, empty2_button]:
+	for b in [tower_tab, monster_tab, upgrade_tab]:
 		b.add_theme_font_size_override("font_size", FONT_BODY)
-	left_panel = main_view.get_parent()
+		b.clip_text = true
+		b.focus_mode = Control.FOCUS_NONE  # 탭은 눌러서 강조만 하고, 키보드 포커스 테두리는 쓰지 않는다
 	monster_view.move_child(monster_buttons[0], BACK_CELL)  # 뒤로 가기는 왼쪽 아래 칸
 	_create_family_frames()
 	_create_monster_type_view()
@@ -178,6 +181,7 @@ func setup_ui():
 	_create_game_over_screen()
 	_create_pause_ui()
 	_create_alerts()
+	_show_view("tower")  # 시작 화면은 타워 (탭 강조도 여기서 맞춘다)
 
 ## 미니맵 바로 왼쪽 우하단에 놓는 실행 버튼 ([생성] / [업그레이드]). 고르기만 해서는 아무 일도 일어나지 않고 이 버튼을 눌러야 실행된다.
 func _make_action_button() -> Button:
@@ -220,16 +224,13 @@ func _decorate_unit_button(b: Button, icon: UnitIcon, cost: int, tooltip: String
 		tag_label.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
 		tag_label.position += Vector2(3, 0)  # 테두리에 붙지 않게 살짝 안쪽으로
 
-## 몬스터 배럭은 두 단계다. 1단계: 유형 버튼(공격형/일반형/공중형). 2단계: 고른 유형의 몬스터 종류 버튼.
+## 몬스터 배럭은 두 단계다. 1단계: 유형 버튼(공격형/일반형/공중형) - [몬스터] 탭의 첫 화면이라 [←]가 없다. 2단계: 고른 유형의 몬스터 종류 버튼 ([←]로 1단계로).
 ## 보스가 보내는 몬스터(일반형/공중형)도 여기서 볼 수 있다. 협력(PvE)에서 만들 수 없는 것은 회색이고, 눌러도 설명만 나온다.
 func _create_monster_type_view() -> void:
 	monster_type_view = HBoxContainer.new()
 	monster_type_view.visible = false
 	left_panel.add_child(monster_type_view)
 	monster_type_view.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	var back := _make_back_column("monster_back")
-	back.pressed.connect(_show_view.bind("main"))
-	monster_type_view.add_child(back)
 	var grid := GridContainer.new()
 	grid.columns = 4
 	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -257,8 +258,9 @@ const TILE_COLS := 9
 const TILE_CELLS := 27                   # 9열 x 3줄
 const BACK_CELL := 18                    # 뒤로 가기: 왼쪽 아래 1칸
 
-## 타워/몬스터 화면의 9x3 타일 격자: 빈 칸으로 채워 두고, 왼쪽 아래(18번)에 [←]를 놓는다. 나머지 칸은 _set_tile로 채운다.
-func _make_tile_grid(on_back: Callable) -> GridContainer:
+## 타워/몬스터 화면의 9x3 타일 격자: 빈 칸으로 채워 둔다. on_back을 주면 왼쪽 아래(18번)에 [←]를 놓는다 (탭의 첫 화면인 타워 화면은 [←]가 없다).
+## 나머지 칸은 _set_tile로 채운다.
+func _make_tile_grid(on_back: Callable = Callable()) -> GridContainer:
 	var grid := GridContainer.new()
 	grid.columns = TILE_COLS
 	grid.visible = false
@@ -270,13 +272,14 @@ func _make_tile_grid(on_back: Callable) -> GridContainer:
 		spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		grid.add_child(spacer)
-	var back := Button.new()
-	back.text = "←"
-	back.add_theme_font_size_override("font_size", 24)
-	back.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	back.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	back.pressed.connect(on_back)
-	_set_tile(grid, BACK_CELL, back)
+	if on_back.is_valid():
+		var back := Button.new()
+		back.text = "←"
+		back.add_theme_font_size_override("font_size", 24)
+		back.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		back.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		back.pressed.connect(on_back)
+		_set_tile(grid, BACK_CELL, back)
 	return grid
 
 
@@ -289,7 +292,7 @@ func _set_tile(grid: GridContainer, cell: int, node: Control) -> void:
 	grid.move_child(node, cell)
 
 
-## 내용 번호 -> 격자 칸 번호 (뒤로 가기 칸을 건너뜀)
+## 내용 번호 -> 격자 칸 번호 (뒤로 가기 칸을 건너뜀. 몬스터 종류 화면용: 타워 화면은 [←]가 없어서 번호 그대로 쓴다)
 func _slot_cell(slot_idx: int) -> int:
 	return slot_idx if slot_idx < BACK_CELL else slot_idx + 1
 
@@ -430,8 +433,8 @@ func _apply_family_style(b: Button, fam_color: Color) -> void:
 		b.add_theme_stylebox_override(state, sb)
 
 func _create_tower_view():
-	# 타워 배럭: 9x3 타일. 기본 타워를 왼쪽 위부터 차례대로, 뒤로 가기는 왼쪽 아래
-	tower_view = _make_tile_grid(_on_tower_back_pressed)
+	# 타워 배럭: 9x3 타일. 기본 타워를 왼쪽 위부터 차례대로. [타워] 탭의 첫 화면이라 [←]가 없다
+	tower_view = _make_tile_grid()
 	var i := 0
 	for kind_id in Balance.TOWER_KINDS:
 		var kind := Balance.tower_kind(kind_id)
@@ -439,7 +442,7 @@ func _create_tower_view():
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		b.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		b.pressed.connect(_on_tower_kind_selected.bind(kind_id))
-		_set_tile(tower_view, _slot_cell(i), b)
+		_set_tile(tower_view, i, b)
 		i += 1
 		tower_buttons[kind_id] = b
 		var icon := UnitIcon.new()
@@ -447,27 +450,24 @@ func _create_tower_view():
 		_decorate_unit_button(b, icon, kind.cost, "")  # 설명은 하단 메시지 칸에 나온다
 
 
-## 업그레이드 탭 (타워 / 색깔).
+## 업그레이드 탭 (타워 / 색깔). 첫 화면(upgrade_menu)에는 [←]가 없고, 그 아래 단계(계열/항목/색깔)의 [←]는 한 단계 위로만 간다.
 ## 타워 탭: 진화 계열 8개 중 하나를 고르면 그 계열의 업그레이드 항목(관통 수, 독 피해 ...)이 나온다.
 ## 항목을 고르면 하단 메시지 칸에 설명이 나오고, 오른쪽 아래 [업그레이드] 버튼을 눌러야 올라간다 (같은 계열의 모든 타워에 적용).
 ## 색깔 탭: 7색 중 하나를 고르면 설명이 나오고, [업그레이드]를 누르면 그 색 타워의 고유 보너스 레벨이 오른다 (레인 공유).
 ## (진화와 B 스킬 배우기는 타워마다 개별: 맵에서 타워를 누르면 상단에 나오는 버튼으로 한다.)
-## 모든 화면은 상단 왼쪽 칸(180px) 안에서 해결한다: [←] 한 칸 + 4x2 격자, 격자 8번째(오른쪽 아래) 칸이 [업그레이드] 버튼.
+## 모든 화면은 상단 왼쪽 칸(탭 줄 아래 180px) 안에서 해결한다: [←] 한 칸 + 4x2 격자, 격자 8번째(오른쪽 아래) 칸이 [업그레이드] 버튼.
 func _create_upgrade_views():
 	upgrade_menu = HBoxContainer.new()
 	upgrade_menu.visible = false
 	left_panel.add_child(upgrade_menu)
 	upgrade_menu.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	var back := _make_back_column("upgrade_back")
-	back.pressed.connect(_show_view.bind("main"))
-	upgrade_menu.add_child(back)
-	var tower_tab := _make_view_button("타워", 26)
-	tower_tab.pressed.connect(_show_view.bind("evos"))
-	upgrade_menu.add_child(tower_tab)
-	var color_tab := _make_view_button("색깔", 26)
-	color_tab.tooltip_text = "색깔별 업그레이드: 색을 고르면 그 색 타워의 고유 보너스가 강해진다"
-	color_tab.pressed.connect(_show_view.bind("colors"))
-	upgrade_menu.add_child(color_tab)
+	var evos_entry := _make_view_button("타워", 26)
+	evos_entry.pressed.connect(_show_view.bind("evos"))
+	upgrade_menu.add_child(evos_entry)
+	var colors_entry := _make_view_button("색깔", 26)
+	colors_entry.tooltip_text = "색깔별 업그레이드: 색을 고르면 그 색 타워의 고유 보너스가 강해진다"
+	colors_entry.pressed.connect(_show_view.bind("colors"))
+	upgrade_menu.add_child(colors_entry)
 
 	# 색깔 화면: 7색 버튼 (4x2 격자) + 8번째 칸의 [업그레이드]
 	color_view = HBoxContainer.new()
@@ -591,14 +591,14 @@ func _make_back_column(_id: String) -> Button:
 	return b
 
 
-## 상단 왼쪽 칸에 보여줄 화면을 하나만 켠다: main / tower / tower_sel(맵에서 고른 타워) / monster(유형 고르기) / monster_kinds(종류 고르기) / upgrade / evos / detail / colors.
-## 화면은 전부 상단 안에서 바뀐다 (맵 위에 아무것도 뜨지 않는다).
+## 상단 왼쪽 칸에 보여줄 화면을 하나만 켠다: tower / tower_sel(맵에서 고른 타워) / monster(유형 고르기) / monster_kinds(종류 고르기) / upgrade / evos / detail / colors.
+## 화면은 전부 상단 안에서 바뀐다 (맵 위에 아무것도 뜨지 않는다). 맨 위 탭 줄은 어느 화면에서도 그대로 있고, 지금 화면이 속한 탭만 강조한다.
 ## 타워 화면을 떠나면 건설 모드도 꺼진다: 타워를 골라 둔 상태(타워 화면)에서만 맵 타일을 눌러 지을 수 있다.
 func _show_view(view: String) -> void:
 	_view = view
 	if view != "tower" and game_field.current_tool == GameField.PlacementTool.TOWER:
 		game_field.set_current_tool(GameField.PlacementTool.NONE)
-	main_view.visible = view == "main"
+	_refresh_tabs()
 	tower_view.visible = view == "tower"
 	tower_sel_view.visible = view == "tower_sel"
 	monster_type_view.visible = view == "monster"
@@ -618,6 +618,48 @@ func _show_view(view: String) -> void:
 	_refresh_item_highlight()
 	_refresh_tower_highlight()
 	_request_refresh()
+
+
+## 각 화면이 속한 탭. 맵에서 고른 타워 화면(tower_sel)은 타워 쪽 화면이라 [타워] 탭이 강조된다.
+const TAB_OF_VIEW := {
+	"tower": "tower", "tower_sel": "tower",
+	"monster": "monster", "monster_kinds": "monster",
+	"upgrade": "upgrade", "evos": "upgrade", "detail": "upgrade", "colors": "upgrade",
+}
+
+
+## 지금 화면이 속한 탭만 강조한다 (노란 테두리 + 밝은 바탕)
+func _refresh_tabs() -> void:
+	var on: String = TAB_OF_VIEW.get(_view, "tower")
+	var tabs := {"tower": tower_tab, "monster": monster_tab, "upgrade": upgrade_tab}
+	for id in tabs:
+		var b: Button = tabs[id]
+		if id == on:
+			for state in ["normal", "hover", "pressed"]:
+				var sb := StyleBoxFlat.new()
+				sb.bg_color = Color(0.32, 0.27, 0.05)
+				sb.border_color = Color(1.0, 0.9, 0.2)
+				sb.set_border_width_all(3)
+				sb.set_corner_radius_all(4)
+				b.add_theme_stylebox_override(state, sb)
+			b.add_theme_color_override("font_color", Color(1.0, 0.95, 0.5))
+			b.add_theme_color_override("font_hover_color", Color(1.0, 0.95, 0.5))
+			b.add_theme_color_override("font_pressed_color", Color(1.0, 0.95, 0.5))
+		else:
+			for state in ["normal", "hover", "pressed"]:
+				b.remove_theme_stylebox_override(state)
+			for c in ["font_color", "font_hover_color", "font_pressed_color"]:
+				b.remove_theme_color_override(c)
+
+
+## 탭을 눌렀다: 그 탭의 첫 화면으로 간다 (업그레이드 안에서 몇 단계를 들어가 있어도 한 번에).
+## 맵에서 고른 타워 화면에서 눌렀다면 타워 선택도 풀어 준다. 선택이 남아 있으면 _update_hud가 다시 타워 화면으로 되돌린다.
+func _on_tab_pressed(tab: String) -> void:
+	Log.info(Log.Category.UI, "탭 열기: %s" % tab)
+	if game_field.get_selected_tower() != null:
+		game_field.select_tower(null)
+	_view_before_tower = "tower"
+	_show_view(tab)
 
 
 ## 고른 계열의 업그레이드 항목 화면을 만든다. 4x2 격자의 왼쪽 2x2는 A 스킬 항목, 오른쪽 2x2는 B 스킬 항목 (각각 1 2 / 3 4 순서).
@@ -801,12 +843,12 @@ func _refresh_action_buttons(lane: LaneController, boss: BossController) -> void
 			else:
 				var cost: int = Monsters.DATA[_sel_monster].cost
 				text = "생성\n%d골드" % cost
-				enabled = Monsters.can_send_in_pve(_sel_monster) and lane.gold >= cost and boss.state == BossController.State.RUNNING
+				enabled = Monsters.can_send_in_pve(_sel_monster) and lane.gold_shown() >= cost and boss.state == BossController.State.RUNNING
 		"detail":
 			if _sel.size() == 4 and _sel[1] == "stat":
 				var cost := lane.stat_upgrade_cost(_sel[0], _sel[2], _sel[3])
 				text = "업그레이드\n최대" if cost < 0 else "업그레이드\n%d골드" % cost
-				enabled = cost >= 0 and lane.gold >= cost
+				enabled = cost >= 0 and lane.gold_shown() >= cost
 			else:
 				text = "업그레이드"
 		"tower_sel":
@@ -816,12 +858,12 @@ func _refresh_action_buttons(lane: LaneController, boss: BossController) -> void
 				text = "진화"
 			else:
 				text = "진화\n%d골드" % cost
-				enabled = t.lane == lane and lane.gold >= cost
+				enabled = t.lane == lane and lane.gold_shown() >= cost
 		"colors":
 			if _sel.size() == 4 and _sel[1] == "color":
 				var cost := lane.color_upgrade_cost(_sel[0])
 				text = "업그레이드\n최대" if cost < 0 else "업그레이드\n%d골드" % cost
-				enabled = cost >= 0 and lane.gold >= cost
+				enabled = cost >= 0 and lane.gold_shown() >= cost
 			else:
 				text = "업그레이드"
 		_:
@@ -940,7 +982,7 @@ func _create_hud():
 	hud_panel = panel
 
 
-## 맵에서 내 타워를 눌렀을 때 상단에 나오는 화면: [←] + 격자(진화 2개 / B 스킬 배우기 / 색깔 바꾸기).
+## 맵에서 내 타워를 눌렀을 때 상단에 나오는 화면: [←] + 격자(진화 2개 / 회복 / 색깔 바꾸기 / 판매 / [진화]).
 ## 타워 정보는 하단 메시지 칸에 나온다. [←]를 누르면 선택이 풀린다.
 func _create_tower_sel_view() -> void:
 	tower_sel_view = HBoxContainer.new()
@@ -966,9 +1008,9 @@ func _create_tower_sel_view() -> void:
 	recolor_button = _make_view_button("", FONT_SMALL)  # 아랫줄 왼쪽: 색깔 바꾸기 (바로 실행)
 	recolor_button.pressed.connect(_on_recolor_selected_pressed)
 	grid.add_child(recolor_button)
-	var gap := Control.new()
-	gap.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	grid.add_child(gap)
+	sell_button = _make_view_button("", FONT_SMALL)  # 아랫줄 가운데: 판매 (건설만 한 타워는 바로, 투자한 타워는 확인 후)
+	sell_button.pressed.connect(_on_sell_pressed)
+	grid.add_child(sell_button)
 	tower_action = _make_action_button()  # 아랫줄 오른쪽: [진화]
 	grid.add_child(tower_action)
 
@@ -983,7 +1025,7 @@ func _on_tower_selected(_tower: Tower) -> void:
 func _enter_tower_sel() -> void:
 	if _view == "tower_sel":
 		return
-	_view_before_tower = _view if _view != "tower" else "main"
+	_view_before_tower = _view  # 건설 모드는 _show_view가 끈다. 돌아오면 같은 화면(타워 화면이면 아무것도 안 고른 상태)이다
 	_show_view("tower_sel")
 
 
@@ -994,11 +1036,10 @@ func _on_tower_sel_back_pressed() -> void:
 
 func _leave_tower_sel() -> void:
 	var prev := _view_before_tower
-	_view_before_tower = "main"
+	_view_before_tower = "tower"
 	_show_view(prev)
 
 ## 지금 건설하려고 고른 타워를 타워 배럭에서 굵은 노란 테두리로 강조한다 (건설 도구가 꺼지면 해제).
-## 메인 화면의 "타워" 버튼에도 고른 타워 이름을 보여준다.
 func _refresh_tower_highlight() -> void:
 	if game_field == null or tower_buttons.is_empty():
 		return
@@ -1020,7 +1061,6 @@ func _refresh_tower_highlight() -> void:
 				b.add_theme_stylebox_override(state, sb)
 			else:
 				b.remove_theme_stylebox_override(state)
-	tower_button.text = "타워" if kind == "" else "타워\n(%s)" % Balance.TOWER_DEFS[kind].name
 
 
 ## 맵 왼쪽 위에 겹치는 상태 표시. 맵 위에는 이것만 올린다 (입력은 통과시켜서 맵 조작을 막지 않는다).
@@ -1143,22 +1183,33 @@ func _update_status_panel(lane: LaneController, boss: BossController) -> void:
 
 ## 타워를 지으면 길이 완전히 막힐 때 한 번 확인하는 창
 func _create_confirm_dialog() -> void:
-	confirm_dialog = ConfirmationDialog.new()
-	confirm_dialog.title = "길이 막힙니다"
-	confirm_dialog.dialog_text = "이 타워를 지으면 몬스터가 지나갈 길이 완전히 막힙니다.\n막히면 몬스터가 타워를 부수면서 뚫고 옵니다.\n그래도 지을까요?"
-	confirm_dialog.dialog_autowrap = true
-	confirm_dialog.ok_button_text = "지을래요"
-	confirm_dialog.cancel_button_text = "취소"
-	confirm_dialog.min_size = Vector2i(520, 0)
-	confirm_dialog.add_theme_constant_override("buttons_min_width", 160)
-	confirm_dialog.add_theme_constant_override("buttons_min_height", 64)
-	confirm_dialog.get_label().add_theme_font_size_override("font_size", FONT_BODY)
-	for b in [confirm_dialog.get_ok_button(), confirm_dialog.get_cancel_button()]:
+	confirm_dialog = _make_confirm_dialog("길이 막힙니다",
+		"이 타워를 지으면 몬스터가 지나갈 길이 완전히 막힙니다.\n막히면 몬스터가 타워를 부수면서 뚫고 옵니다.\n그래도 지을까요?", "지을래요")
+	confirm_dialog.confirmed.connect(_on_path_block_confirmed)
+	game_field.path_block_confirm.connect(_on_path_block_confirm)
+
+	# 진화/B 스킬에 골드를 쓴 타워를 팔 때 한 번 더 묻는다 (내용은 팔 타워에 맞춰 열 때마다 바꾼다)
+	sell_confirm_dialog = _make_confirm_dialog("타워를 팝니다", "", "팔래요")
+	sell_confirm_dialog.confirmed.connect(_on_sell_confirmed)
+
+
+## 폰에서도 누르기 쉬운 큰 확인창 (둘 다 화면 가운데에 뜬다)
+func _make_confirm_dialog(title: String, text: String, ok_text: String) -> ConfirmationDialog:
+	var dialog := ConfirmationDialog.new()
+	dialog.title = title
+	dialog.dialog_text = text
+	dialog.dialog_autowrap = true
+	dialog.ok_button_text = ok_text
+	dialog.cancel_button_text = "취소"
+	dialog.min_size = Vector2i(520, 0)
+	dialog.add_theme_constant_override("buttons_min_width", 160)
+	dialog.add_theme_constant_override("buttons_min_height", 64)
+	dialog.get_label().add_theme_font_size_override("font_size", FONT_BODY)
+	for b in [dialog.get_ok_button(), dialog.get_cancel_button()]:
 		b.add_theme_font_size_override("font_size", FONT_BODY)
 		b.custom_minimum_size = Vector2(160, 64)
-	confirm_dialog.confirmed.connect(_on_path_block_confirmed)
-	add_child(confirm_dialog)
-	game_field.path_block_confirm.connect(_on_path_block_confirm)
+	add_child(dialog)
+	return dialog
 
 
 func _on_path_block_confirm(cell: Vector2i) -> void:
@@ -1383,7 +1434,7 @@ func _on_start_pressed():
 	_refresh_start_button()
 
 
-## 일시정지 화면 (일시정지 버튼은 위쪽 메인 줄의 [시작] 버튼이 시작 뒤에 바뀐 것)
+## 일시정지 화면 (일시정지 버튼은 맵 오른쪽 위의 [시작] 버튼이 시작 뒤에 바뀐 것)
 func _create_pause_ui() -> void:
 	pause_button = Button.new()
 	pause_button.z_index = 85  # 상태 표시와 같은 높이: 타워/몬스터(1~4)보다 위
@@ -1415,8 +1466,8 @@ func _set_paused(on: bool) -> void:
 	if on == get_tree().paused:
 		return
 	if on:
-		# 끝난 게임, 길 막힘 확인창이 떠 있을 때는 멈추지 않는다 (확인창은 멈춘 화면에서 눌리지 않아 갇힌다)
-		if game_over_screen.visible or confirm_dialog.visible:
+		# 끝난 게임, 길 막힘/판매 확인창이 떠 있을 때는 멈추지 않는다 (확인창은 멈춘 화면에서 눌리지 않아 갇힌다)
+		if game_over_screen.visible or confirm_dialog.visible or sell_confirm_dialog.visible:
 			return
 		_paused_at_ms = Time.get_ticks_msec()
 	else:
@@ -1795,7 +1846,7 @@ func _update_hud():
 	var boss: BossController = game_field.boss
 	if lane == null or boss == null:
 		return
-	# 맵에서 타워를 누르면 상단이 그 타워 화면으로 바뀌고, 선택이 풀리면 메인으로 돌아온다
+	# 맵에서 타워를 누르면 상단이 그 타워 화면으로 바뀌고, 선택이 풀리면 원래 보던 화면으로 돌아온다
 	var picked := game_field.get_selected_tower()
 	if picked != null:
 		_enter_tower_sel()
@@ -1855,11 +1906,15 @@ func _update_tower_info(lane: LaneController):
 
 	recolor_button.text = "색깔 바꾸기\n(%d골드)" % Balance.RECOLOR_COST  # 한 줄이면 칸 폭에서 잘린다 (회복 버튼과 같은 두 줄 형식)
 	recolor_button.tooltip_text = "이 타워의 색깔을 지금 색을 뺀 6색 중 랜덤으로 바꿉니다. 색깔 보너스는 그 색의 업그레이드를 따라갑니다."
-	recolor_button.disabled = t.lane != lane or lane.gold < Balance.RECOLOR_COST
+	recolor_button.disabled = t.lane != lane or lane.gold_shown() < Balance.RECOLOR_COST
 	var hurt := t.durability < Balance.TOWER_DURABILITY - 0.001
 	heal_button.text = "회복 (%d골드)
 내구도 %d/%d" % [Balance.HEAL_COST, roundi(t.durability), roundi(Balance.TOWER_DURABILITY)]
-	heal_button.disabled = t.lane != lane or not hurt or lane.gold < Balance.HEAL_COST
+	heal_button.disabled = t.lane != lane or not hurt or lane.gold_shown() < Balance.HEAL_COST
+
+	sell_button.text = "판매 (%d골드)" % lane.sell_value_shown(t)
+	sell_button.tooltip_text = "타워에 쓴 골드(건설 + 진화 + B 스킬)의 %d%%를 돌려받고 타워를 치웁니다 (시작 전에는 전액). 스탯/색깔 업그레이드는 레인 전체 공유라 환급되지 않습니다." % roundi(Balance.SELL_REFUND_RATIO * 100.0)
+	sell_button.disabled = t.lane != lane or not lane.active
 
 	# 진화 선택: 진화 전이면 계열 2개 중 하나, 진화했는데 B가 남았으면 B 진화 하나. 고르면 하단에 설명이 나오고 [진화]를 눌러야 진화한다.
 	if _pick_tower != t:
@@ -1903,6 +1958,26 @@ func _on_recolor_selected_pressed():
 	game_field.recolor_selected_tower()
 
 
+## [판매]: 건설만 한 타워는 바로 팔고, 진화/B 스킬에 골드를 쓴 타워는 환급액을 보여 주며 한 번 더 확인한다
+func _on_sell_pressed() -> void:
+	var t := game_field.get_selected_tower()
+	var lane: LaneController = game_field.lanes.get(game_field.local_player_id)
+	if t == null or lane == null or t.lane != lane:
+		return
+	if not lane.sell_needs_confirm(t):
+		game_field.sell_selected_tower()
+		return
+	var title: String = t.kind.name + " · " + Evolutions.evo_name(t.evolution)
+	if t.b_learned:
+		title += " (B 스킬: %s)" % Evolutions.skill_name(t.evolution, "B")
+	sell_confirm_dialog.dialog_text = "%s 타워를 팝니다.\n투입한 %d골드 중 %d골드를 돌려받고, 타워는 사라집니다.\n그래도 팔까요?" % [title, t.invested, lane.sell_value_shown(t)]
+	sell_confirm_dialog.popup_centered()
+
+
+func _on_sell_confirmed() -> void:
+	game_field.sell_selected_tower()
+
+
 ## 진화 선택 버튼: 고르기만 한다 (하단에 설명). 실제 진화는 오른쪽 아래 [진화] 버튼
 func _on_evolve_pressed(index: int):
 	if evolve_ids[index] != "":
@@ -1911,13 +1986,10 @@ func _on_evolve_pressed(index: int):
 
 
 func connect_signals():
-	# 버튼 클릭 이벤트 연결
-	if tower_button:
-		tower_button.pressed.connect(_on_tower_button_pressed)
-	if monster_button:
-		monster_button.pressed.connect(_on_monster_button_pressed)
-	if empty2_button:
-		empty2_button.pressed.connect(_on_empty2_button_pressed)
+	# 탭 줄: 어느 화면에서든 눌러서 그 탭의 첫 화면으로 간다
+	tower_tab.pressed.connect(_on_tab_pressed.bind("tower"))
+	monster_tab.pressed.connect(_on_tab_pressed.bind("monster"))
+	upgrade_tab.pressed.connect(_on_tab_pressed.bind("upgrade"))
 	if boss_button:
 		boss_button.pressed.connect(_on_boss_button_pressed)
 
@@ -1947,7 +2019,7 @@ func _input(event):
 			KEY_ESCAPE, KEY_P:
 				_toggle_pause()  # 종료는 일시정지 화면의 [종료] 버튼으로
 
-## 폰의 뒤로 가기: 상단 화면을 한 단계 뒤로 (타워 화면이면 건설도 끝) -> 타워 선택 해제 -> 그래도 없으면 일시정지 화면
+## 폰의 뒤로 가기: 상단 화면을 한 단계 뒤로 (몬스터/업그레이드 탭의 첫 화면에서는 타워 탭으로) -> 건설 모드 끝 -> 타워 선택 해제 -> 그래도 없으면 일시정지 화면
 ## (일시정지 중의 뒤로 가기는 PauseOverlay가 "계속하기"로 처리한다)
 ## 앱이 백그라운드로 가거나 창이 포커스를 잃으면 진행 중인 게임을 자동으로 멈춘다.
 func _notification(what: int) -> void:
@@ -1975,8 +2047,8 @@ func _notification(what: int) -> void:
 		"tower_sel":
 			_on_tower_sel_back_pressed()
 			return
-		"tower", "monster", "upgrade":
-			_show_view("main")
+		"monster", "upgrade":
+			_show_view("tower")  # 타워가 기본 화면이다
 			return
 	if game_field.current_tool != GameField.PlacementTool.NONE:
 		game_field.set_current_tool(GameField.PlacementTool.NONE)
@@ -1994,18 +2066,10 @@ func reset_game():
 		_set_paused(false)  # 멈춘 채로 다시 불러오면 새 장면도 멈춰 있다
 	get_tree().reload_current_scene()
 
-# 버튼 클릭 이벤트 핸들러들
-func _on_tower_button_pressed():
-	# 타워 배럭으로 전환
-	Log.info(Log.Category.UI, "타워 배럭 열기")
-	_show_view("tower")
-
-## 타워 화면의 [←]: 메인으로 돌아가고 건설 모드도 끝난다 (_show_view가 건설 도구를 끈다)
-func _on_tower_back_pressed():
-	_show_view("main")
+# 버튼 클릭 이벤트 핸들러들 (탭은 _on_tab_pressed)
 
 ## 건설할 타워를 고른다. 바로 짓지 않고, 하단 메시지 칸에 설명이 나온다. 이 상태에서 맵의 빈 타일을 누르면 지어진다.
-## [←]로 타워 화면을 나가면 더는 지어지지 않는다.
+## 다른 탭으로 나가면 더는 지어지지 않는다.
 func _on_tower_kind_selected(kind_id: String):
 	if game_field:
 		# 이미 고른 타워를 한 번 더 누르면 건설 모드 해제 (폰에는 우클릭이 없다)
@@ -2016,16 +2080,6 @@ func _on_tower_kind_selected(kind_id: String):
 			game_field.set_current_tool(GameField.PlacementTool.TOWER)
 	_refresh_tower_highlight()
 	_request_refresh()
-
-func _on_monster_button_pressed():
-	# 몬스터 뷰로 전환
-	Log.info(Log.Category.UI, "몬스터 배럭 열기")
-	_show_view("monster")
-
-func _on_empty2_button_pressed():
-	# 업그레이드 탭 열기 (건설 도구 취소는 마우스 우클릭)
-	Log.info(Log.Category.UI, "업그레이드 탭 열기")
-	_show_view("upgrade")
 
 # 플레이어 전환 핸들러
 func _on_player_button_pressed(player_id: int):
