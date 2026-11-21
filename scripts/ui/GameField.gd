@@ -122,6 +122,8 @@ func snapshot(fresh := false) -> Dictionary:
 ## 연출을 그릴지 (= 화면이 있는 클라이언트인지). 서버(ServerMain)는 화면이 없으니 끈다: 시뮬레이션은 이벤트를 내보내기만 하고 그리지 않는다.
 var play_effects := true
 var map_view: MapView = null  # 스냅샷으로 타워/몬스터를 그리는 껍데기들 (서버에는 없다)
+var boss_view: BossController.BossView = null  # 보스 몸통 (스냅샷으로 그린다)
+var boss_bar: BossController.BossBar = null    # 보스 체력바/기여도 (스냅샷으로 그린다)
 
 
 func _process(_delta: float) -> void:
@@ -129,7 +131,13 @@ func _process(_delta: float) -> void:
 		return
 	var sel := get_selected_tower()
 	var sel_key := "" if sel == null else "%d:%d:%d" % [sel.lane.player_id, sel.cell.x, sel.cell.y]
-	map_view.sync(snapshot(), current_player_id, sel_key)
+	var snap := snapshot()
+	map_view.sync(snap, current_player_id, sel_key)
+	if boss_view != null:
+		boss_view.state = snap.boss
+		boss_bar.state = snap.boss
+		boss_view.visible = current_player_id == BOSS_LANE_ID
+		boss_bar.visible = boss_view.visible
 
 
 ## 시뮬레이션이 내보낸 연출 이벤트(SimEvents)를 받아 그린다. 레인이 지금 보이는지는 여기(클라이언트)가 정한다.
@@ -208,6 +216,15 @@ func start_boss():
 	boss.setup(grid_systems[BOSS_LANE_ID], grid_renderer, lanes)
 	boss.set_lane_visible(current_player_id == BOSS_LANE_ID)
 	_snapshot_frame = -1
+	if play_effects:  # 화면이 있는 클라이언트: 보스 몸통과 체력바는 스냅샷으로 그린다
+		boss_view = BossController.BossView.new()
+		boss_view.renderer = grid_renderer
+		boss_view.z_index = 0
+		grid_renderer.add_child(boss_view)
+		boss_bar = BossController.BossBar.new()
+		boss_bar.renderer = grid_renderer
+		boss_bar.z_index = 5
+		grid_renderer.add_child(boss_bar)
 	boss_ready.emit(boss)
 
 	# 각 레인에 boss 참조 설정 (남색 색깔 보너스용)

@@ -55,8 +55,6 @@ var _attackers: Array[Monster] = []
 var _sent_monsters: Array[Monster] = []
 var _slots_taken: Dictionary = {}  # "고리:번호" -> true
 var _next_monster_id := 1
-var _view: BossView
-var _bar: BossBar
 var _lane_visible := false
 var _dmg_accum := 0.0
 var _dmg_timer := 0.0
@@ -84,20 +82,6 @@ func setup(boss_grid: GridSystem, renderer: GridRenderer, lanes: Dictionary) -> 
 	_lanes = lanes
 	_pathfinder = Pathfinder.new(_grid)
 	_mark_boss_body()
-
-	_view = BossView.new()
-	_view.boss = self
-	_view.renderer = renderer
-	_view.visible = _lane_visible
-	_view.z_index = 0
-	renderer.add_child(_view)
-
-	_bar = BossBar.new()
-	_bar.boss = self
-	_bar.renderer = renderer
-	_bar.visible = _lane_visible
-	_bar.z_index = 5
-	renderer.add_child(_bar)
 
 	_dispatch_timer = Timer.new()
 	_dispatch_timer.wait_time = Balance.INCOME_INTERVAL  # 수입 지급과 같은 주기: 수입이 들어올 때 웨이브도 온다
@@ -293,7 +277,6 @@ func _process(delta: float) -> void:
 			_show_damage_text()
 
 	time_left -= delta
-	_view.queue_redraw()
 
 	if hp <= 0.0:
 		hp = 0.0
@@ -429,7 +412,6 @@ func _process_ghost_phase(delta: float) -> void:
 		if _dmg_timer >= 1.0:
 			_show_damage_text()
 	time_left -= delta
-	_view.queue_redraw()
 	if time_left <= 0.0:
 		time_left = 0.0
 		_end_ghost_phase()
@@ -975,17 +957,13 @@ func get_attacker_count() -> int:
 
 func set_lane_visible(is_shown: bool) -> void:
 	_lane_visible = is_shown
-	if _view:
-		_view.visible = is_shown
-	if _bar:
-		_bar.visible = is_shown
 	for m in _sent_monsters:
 		m.visible = is_shown and show_nodes
 
 
 ## 보스 레인 한가운데의 커다란 보스. 라운드마다 색이 다르다.
 class BossView extends Node2D:
-	var boss: BossController
+	var state: Dictionary = {}  # 서버 스냅샷의 보스 항목 (GameField가 매 프레임 넣어 준다). 보스 객체를 직접 읽지 않는다
 	var renderer: GridRenderer
 	var _t := 0.0
 
@@ -997,27 +975,27 @@ class BossView extends Node2D:
 	func _draw_ghost() -> void:
 		var cell: float = renderer.CELL_SIZE
 		var R: float = Balance.BOSS_RADIUS * cell
-		var pressure := minf(1.0, boss.total_dps / 12.0)
+		var pressure := minf(1.0, state.total_dps / 12.0)
 		var shake := Vector2(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0)) * cell * 0.04 * pressure  # 맞을수록 몸을 떤다
 		var c: Vector2 = Balance.BOSS_CENTER * cell + Vector2(0.0, sin(_t * 2.0) * R * 0.06) + shake
 		draw_circle(c, R * 1.3, Color(GhostArt.BODY, 0.10 + 0.06 * sin(_t * 3.0)))  # 기운
 		GhostArt.draw_ghost(self, c, R, _t)  # 플레이어 레인의 유령과 똑같은 그림을 보스 크기로
-		if boss.level_flash > 0.0:
-			draw_circle(c, R * 1.3, Color(1, 1, 1, 0.6 * boss.level_flash))
+		if state.level_flash > 0.0:
+			draw_circle(c, R * 1.3, Color(1, 1, 1, 0.6 * state.level_flash))
 
 	func _draw() -> void:
-		if boss.level_data.is_empty():
+		if not state.get("has_level", false):
 			return
-		if boss.in_ghost_phase:
+		if state.in_ghost:
 			_draw_ghost()
 			return
 		var cell: float = renderer.CELL_SIZE
 		var R: float = Balance.BOSS_RADIUS * cell
-		var pressure := minf(1.0, boss.total_dps / 12.0)  # 공격받을수록 몸을 떤다
+		var pressure := minf(1.0, state.total_dps / 12.0)  # 공격받을수록 몸을 떤다
 		var shake := Vector2(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0)) * cell * 0.04 * pressure
 		var breathe := 1.0 + 0.03 * sin(_t * 2.0)
 		var c: Vector2 = Balance.BOSS_CENTER * cell + shake
-		var body: Color = boss.level_data.color
+		var body: Color = Color.html(state.color)
 
 		# 바닥 그림자 + 기운
 		draw_set_transform(c + Vector2(0, R * 0.95), 0.0, Vector2(1.0, 0.3))
@@ -1057,47 +1035,47 @@ class BossView extends Node2D:
 			]), Color(0.95, 0.95, 0.9))
 
 		# 새 보스 등장 연출: 하얗게 번쩍임
-		if boss.level_flash > 0.0:
-			draw_circle(c, R * 1.3, Color(1, 1, 1, 0.6 * boss.level_flash))
+		if state.level_flash > 0.0:
+			draw_circle(c, R * 1.3, Color(1, 1, 1, 0.6 * state.level_flash))
 
 
 ## 보스 체력바 + 이름 + 플레이어 기여도. 몬스터들이 보스 위쪽에 몰려 서도 가려지지 않게 몬스터(z_index 2)보다 위에 그린다.
 class BossBar extends Node2D:
-	var boss: BossController
+	var state: Dictionary = {}  # 서버 스냅샷의 보스 항목 (GameField가 매 프레임 넣어 준다). 보스 객체를 직접 읽지 않는다
 	var renderer: GridRenderer
 
 	func _process(_delta: float) -> void:
 		queue_redraw()
 
 	func _draw() -> void:
-		if boss.level_data.is_empty():
+		if not state.get("has_level", false):
 			return
 		var cell: float = renderer.CELL_SIZE
 		var R: float = Balance.BOSS_RADIUS * cell
 		var c: Vector2 = Balance.BOSS_CENTER * cell
 		var bar_w := R * 2.2
 		var bar_y := c.y - R * 1.7
-		if boss.in_ghost_phase:  # 보스 체력 대신 유령 구간이 끝날 때까지 남은 시간을 보여 준다
-			var left_ratio := clampf(boss.time_left / maxf(boss.ghost_length, 0.001), 0.0, 1.0)
+		if state.in_ghost:  # 보스 체력 대신 유령 구간이 끝날 때까지 남은 시간을 보여 준다
+			var left_ratio := clampf(state.time_left / maxf(state.ghost_length, 0.001), 0.0, 1.0)
 			draw_rect(Rect2(c.x - bar_w * 0.5 - 3, bar_y - 20, bar_w + 6, 36), Color(0, 0, 0, 0.8))
 			draw_rect(Rect2(c.x - bar_w * 0.5, bar_y, bar_w, 10), Color(0.1, 0.12, 0.25))
 			draw_rect(Rect2(c.x - bar_w * 0.5, bar_y, bar_w * left_ratio, 10), Color(0.6, 0.7, 1.0))
 			draw_string(ThemeDB.fallback_font, Vector2(c.x - bar_w * 0.5, bar_y - 6), "Lv.%d 처치!  유령 구간 %d초" % [
-				boss.level, ceili(boss.time_left)], HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.85, 0.9, 1.0))
+				state.level, ceili(state.time_left)], HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.85, 0.9, 1.0))
 			_draw_contribution(c, R, cell)
 			return
-		var ratio := clampf(boss.hp / boss.max_hp, 0.0, 1.0)
+		var ratio := clampf(state.hp / state.max_hp, 0.0, 1.0)
 		draw_rect(Rect2(c.x - bar_w * 0.5 - 3, bar_y - 20, bar_w + 6, 36), Color(0, 0, 0, 0.8))
 		draw_rect(Rect2(c.x - bar_w * 0.5, bar_y, bar_w, 10), Color(0.25, 0.05, 0.05))
 		draw_rect(Rect2(c.x - bar_w * 0.5, bar_y, bar_w * ratio, 10), Color(0.9, 0.15, 0.15))
 		# 페이즈가 있는 보스는 단계가 바뀌는 체력 위치에 흰 눈금을 그린다
-		var phases := BossSkills.phases_of(boss.level)
+		var phases := BossSkills.phases_of(state.level)
 		for i in range(1, phases.size()):
 			var tick_x: float = c.x - bar_w * 0.5 + bar_w * float(phases[i].from)
 			draw_line(Vector2(tick_x, bar_y - 2.0), Vector2(tick_x, bar_y + 12.0), Color(1, 1, 1, 0.9), 2.0)
 		var font := ThemeDB.fallback_font
 		draw_string(font, Vector2(c.x - bar_w * 0.5, bar_y - 6), "Lv.%d %s   %d / %d" % [
-			boss.level, boss.level_data.name, int(boss.hp), int(boss.max_hp)],
+			state.level, state.name, int(state.hp), int(state.max_hp)],
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color.WHITE)
 
 		# 플레이어 기여도 표시 (보스 오른쪽에 세로로 나열)
@@ -1105,7 +1083,7 @@ class BossBar extends Node2D:
 
 	func _draw_contribution(c: Vector2, R: float, _cell: float) -> void:
 		# 전체 피해 계산 (유령 구간에는 보스 레인 유령에게 준 피해를 보여 준다)
-		var source: Dictionary = boss.ghost_boss_damage_by_player if boss.in_ghost_phase else boss.damage_by_player
+		var source: Dictionary = state.ghost_boss_damage_by_player if state.in_ghost else state.damage_by_player
 		var total_dmg := 0.0
 		for dmg in source.values():
 			total_dmg += dmg
@@ -1117,7 +1095,7 @@ class BossBar extends Node2D:
 		var entries: Array = []
 		for player_id in source:
 			var dmg: float = source[player_id]
-			entries.append({"player_id": player_id, "damage": dmg, "percent": dmg / total_dmg * 100.0})
+			entries.append({"player_id": int(player_id), "damage": dmg, "percent": dmg / total_dmg * 100.0})
 		entries.sort_custom(func(a, b): return a.damage > b.damage)
 
 		# 보스 오른쪽에 표시
@@ -1127,7 +1105,7 @@ class BossBar extends Node2D:
 		var line_h := 16.0
 
 		# 제목
-		draw_string(font, Vector2(start_x, start_y), "유령 피해 (보스 레인)" if boss.in_ghost_phase else "플레이어 기여도",
+		draw_string(font, Vector2(start_x, start_y), "유령 피해 (보스 레인)" if state.in_ghost else "플레이어 기여도",
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.8, 0.9, 1.0))
 		start_y += line_h
 

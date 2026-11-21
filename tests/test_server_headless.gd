@@ -22,6 +22,7 @@ func _server_runs_without_ui() -> void:
 	check(server.field != null and server.field.boss != null, "GameField와 보스가 만들어졌다")
 	check(get_tree().root.find_children("*", "MainGame", true, false).is_empty(), "MainGame(화면)은 만들어지지 않았다")
 	check(server.field.bus.started, "서버가 시작 명령을 실행했다")
+	check(server.field.map_view == null and server.field.boss_view == null, "서버에는 타워/몬스터/보스를 그리는 껍데기가 없다")
 	Engine.time_scale = 20.0
 	var done := await wait_until(func(): return not server.result.is_empty(), 60000)
 	Engine.time_scale = 1.0

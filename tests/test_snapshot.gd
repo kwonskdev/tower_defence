@@ -135,6 +135,7 @@ func map_view_draws_from_snapshot() -> void:
 			shell = c
 	check(shell != null and not m.visible, "몬스터도 시뮬레이션 노드는 숨고 껍데기가 보인다")
 	check(shell != null and shell.cell_pos.distance_to(m.cell_pos) < 0.3, "껍데기 위치가 서버 몬스터 위치와 같다 (차이 %.3f칸)" % (shell.cell_pos.distance_to(m.cell_pos) if shell else -1.0))
+	check(gf.boss_view != null and gf.boss_view.state.get("level", 0) == 1 and gf.boss_bar.state.get("name", "") == gf.boss.level_data.name, "보스 몸통/체력바는 스냅샷 값으로 그린다 (Lv.%s)" % gf.boss_view.state.get("level"))
 	# 다른 레인을 보면 이 레인의 껍데기는 숨는다
 	gf.switch_player(1)
 	await frames(3)

@@ -11,7 +11,7 @@ class_name Snapshot
 ##   몬스터: Monster.view_state() (id, kind, owner, pos[x,y], hp, max_hp, flying, ghost, shape, color, size, facing, 상태이상 ...)
 ##   보스: state, level, hp, max_hp, time_left, in_ghost, ghost_length, total_dps, damage_mult, wave_text,
 ##         next_wave_in, sent_count, attackers, damage_by_player, ghost_boss_damage_by_player, monsters[],
-##         name, phase_text, effective_dps, has_guard, ghost_running, ghost_summary, wave_preview[], affix
+##         has_level, level_flash, color, name, phase_text, effective_dps, has_guard, ghost_running, ghost_summary, wave_preview[], affix
 ##   색은 "RRGGBB" 글자(Color.to_html), 되돌릴 때는 Color.html()
 ## 위치는 셀 단위 [x, y] (셀 중심 = +0.5). 키는 JSON을 거쳐도 같도록 문자열로 쓴다.
 
@@ -78,6 +78,8 @@ static func _boss(boss: BossController) -> Dictionary:
 		"damage_mult": boss.damage_mult, "wave_text": boss.current_wave_text, "next_wave_in": boss.time_to_next_wave(),
 		"sent_count": boss.sent_count, "attackers": boss.get_attacker_count(),
 		"damage_by_player": damage, "ghost_boss_damage_by_player": ghost_damage, "monsters": sent,
+		"has_level": not boss.level_data.is_empty(), "level_flash": boss.level_flash,
+		"color": Color(boss.level_data.get("color", Color.WHITE)).to_html(false),
 		"name": boss.level_data.get("name", ""), "phase_text": boss.phase_text(), "effective_dps": boss.effective_dps(),
 		"has_guard": boss.has_guard(), "ghost_running": boss.ghost_running(), "ghost_summary": boss.ghost_summary(),
 		"wave_preview": _wave_preview(boss), "affix": _affix(boss),
