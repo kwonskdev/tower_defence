@@ -240,7 +240,7 @@ func _fire(target: Monster) -> void:
 		"barrage":
 			_fire_volley(target)
 			# 연속 발사: 확률로 한 번 더 (위력은 "연발 위력" 항목)
-			if randf() < _p("A", "chance"):
+			if lane.rng.randf() < _p("A", "chance"):
 				_second_volley()
 		_:
 			_shoot(target)
@@ -274,7 +274,7 @@ func _shoot(target: Monster, power: float = 1.0) -> void:
 			if has_skill("B"):
 				fx.capture = {"chance": _p("B", "chance"), "time": _p("B", "time")}
 		"growth":
-			if randf() < crit_chance():
+			if lane.rng.randf() < crit_chance():
 				dmg *= Evolutions.CRIT_MULT
 				Effects.float_text(_renderer, center_cell_pos(), "치명!", evo_color(), lane.lane_visible)
 				if has_skill("B"):  # 광란: 치명타가 터지면 공격속도 중첩, 일정 시간 치명타가 없으면 초기화

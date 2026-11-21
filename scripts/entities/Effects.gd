@@ -203,21 +203,21 @@ class Projectile extends Node2D:
 			return
 		if fx.has("poison"):
 			m.add_poison(source, float(fx.poison.dps), float(fx.poison.time))
-		if fx.has("armor_break") and randf() < float(fx.armor_break.chance):
+		if fx.has("armor_break") and lane.rng.randf() < float(fx.armor_break.chance):
 			m.apply_armor_break(float(fx.armor_break.time))
-		if fx.has("execute") and not m.ghost and m.hp <= m.max_hp * float(fx.execute.hp) and randf() < float(fx.execute.chance):  # 유령은 처형되지 않는다
+		if fx.has("execute") and not m.ghost and m.hp <= m.max_hp * float(fx.execute.hp) and lane.rng.randf() < float(fx.execute.chance):  # 유령은 처형되지 않는다
 			m.execute(source)
 			Effects.float_text(renderer, m.cell_pos, "처형!", Color(1.0, 0.3, 0.3), visible)
 
 	## 대공 스킬형: 공격이 맞은 자리에서 확률로 스킬 발동
 	func _skill_effects() -> void:
-		if fx.has("snare") and randf() < float(fx.snare.chance):
+		if fx.has("snare") and lane.rng.randf() < float(fx.snare.chance):
 			var sn: Dictionary = fx.snare
 			for m in lane.monsters:
 				if is_instance_valid(m) and not m.is_dead() and (m.cell_pos + m.visual_offset()).distance_to(dest) <= float(sn.radius):
 					m.apply_slow(float(sn.slow), float(sn.time))
 			Effects.ring(renderer, dest, float(sn.radius), Color(0.5, 0.8, 1.0), visible)
-		if fx.has("capture") and is_instance_valid(target) and target.flying and randf() < float(fx.capture.chance):
+		if fx.has("capture") and is_instance_valid(target) and target.flying and lane.rng.randf() < float(fx.capture.chance):
 			target.capture(float(fx.capture.time))
 			Effects.float_text(renderer, target.cell_pos, "포획!", Color(1.0, 0.9, 0.3), visible)
 

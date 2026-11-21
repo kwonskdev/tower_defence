@@ -117,6 +117,8 @@ func _play_events(events: Array) -> void:
 				Effects.ring(grid_renderer, center, 0.8, _tower_color(ev["color_name"]), shown)
 			"tower_healed":
 				Effects.ring(grid_renderer, center, 0.8, Color(0.4, 1.0, 0.5), shown)
+			"tower_sold":  # "파괴!" 없이 얻은 골드만 띄운다
+				Effects.float_text(grid_renderer, center, "판매 +%d" % ev["gold"], Color(1.0, 0.9, 0.3), shown)
 
 
 func _tower_color(color_name: String) -> Color:
@@ -137,6 +139,7 @@ func do_command(type: String, args: Dictionary = {}) -> Dictionary:
 func start_lane(player_id: int):
 	var lane := LaneController.new()
 	lane.name = "Lane_" + str(player_id)
+	lane.rng = session.rng  # 시뮬레이션 랜덤은 세션 하나를 같이 쓴다
 	add_child(lane)
 	lane.setup(player_id, grid_systems[player_id], grid_renderer)
 	lane.set_lane_visible(player_id == current_player_id)
@@ -145,6 +148,7 @@ func start_lane(player_id: int):
 func start_boss():
 	boss = BossController.new()
 	boss.name = "Boss"
+	boss.rng = session.rng
 	add_child(boss)
 	bus.boss = boss
 	boss.setup(grid_systems[BOSS_LANE_ID], grid_renderer, lanes)

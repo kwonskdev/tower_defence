@@ -32,6 +32,7 @@ const MIN_WAVE_GAP := 10.0    # 웨이브 주기를 수입 시점에 다시 맞�
 
 var state: State = State.WAITING
 var level: int = 1
+var rng := RandomNumberGenerator.new()  # 보스의 시뮬레이션 랜덤 (GameField가 세션 것으로 바꿔 끼운다). 화면 흔들림 같은 연출 랜덤은 전역 randf()
 var level_data: Dictionary = {}
 var max_hp: float
 var hp: float
@@ -512,7 +513,7 @@ func _plan_next_wave() -> void:
 			weight_sum += float(Monsters.DATA[id].weight)
 		if options.is_empty():
 			break
-		var roll := randf() * weight_sum
+		var roll := rng.randf() * weight_sum
 		var chosen: String = options[options.size() - 1]
 		for id in options:
 			roll -= float(Monsters.DATA[id].weight)
@@ -623,7 +624,7 @@ func spawn_player_monster(owner_id: int, kind_id: String) -> void:
 		Log.error(Log.Category.GAME, "보스 레인 스폰 셀이 없음")
 		return
 
-	var spawn_cell: Vector2i = spawn_cells.pick_random()
+	var spawn_cell: Vector2i = SimRandom.pick(rng, spawn_cells)
 	var spawn_pos := Vector2(spawn_cell) + Vector2(0.5, 0.5)
 	var slot_info := _allocate_slot(spawn_pos)
 	var slot: Vector2 = slot_info.pos
