@@ -181,7 +181,7 @@ func setup_ui():
 
 ## 미니맵 바로 왼쪽 우하단에 놓는 실행 버튼 ([생성] / [업그레이드]). 고르기만 해서는 아무 일도 일어나지 않고 이 버튼을 눌러야 실행된다.
 func _make_action_button() -> Button:
-	var b := _make_view_button("", FONT_BODY - 2)
+	var b := _make_view_button("", FONT_SMALL)  # "업그레이드" 5글자가 칸 폭(약 97px)에 들어가는 크기
 	b.pressed.connect(_on_action_pressed)
 	b.focus_mode = Control.FOCUS_NONE
 	action_buttons.append(b)
@@ -1853,7 +1853,7 @@ func _update_tower_info(lane: LaneController):
 	var b_known := t.evolution != "" and t.b_learned
 	tower_info_label.text = text.get_slice("\n", 0) if _tower_pick != "" else text  # 진화를 고르는 중에는 설명이 잘 보이게 첫 줄만
 
-	recolor_button.text = "색깔 바꾸기 (%d골드)" % Balance.RECOLOR_COST
+	recolor_button.text = "색깔 바꾸기\n(%d골드)" % Balance.RECOLOR_COST  # 한 줄이면 칸 폭에서 잘린다 (회복 버튼과 같은 두 줄 형식)
 	recolor_button.tooltip_text = "이 타워의 색깔을 지금 색을 뺀 6색 중 랜덤으로 바꿉니다. 색깔 보너스는 그 색의 업그레이드를 따라갑니다."
 	recolor_button.disabled = t.lane != lane or lane.gold < Balance.RECOLOR_COST
 	var hurt := t.durability < Balance.TOWER_DURABILITY - 0.001
