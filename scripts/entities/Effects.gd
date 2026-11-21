@@ -225,12 +225,9 @@ class Projectile extends Node2D:
 			m.add_poison(source, float(fx.poison.dps), float(fx.poison.time))
 		if fx.has("armor_break") and randf() < float(fx.armor_break.chance):
 			m.apply_armor_break(float(fx.armor_break.time), float(fx.armor_break.ratio))
-		# 처형: 기준 체력 아래인 몬스터에게 몬스터당 EXECUTE_COOLDOWN초에 한 번만 굴린다 (타워 수/명중 횟수와 무관). 유령은 처형되지 않는다
-		if fx.has("execute") and not m.ghost and m.execute_cd <= 0.0 and m.hp <= m.max_hp * float(fx.execute.hp):
-			m.execute_cd = Evolutions.EXECUTE_COOLDOWN
-			if randf() < float(fx.execute.chance):
-				m.execute(source)
-				Effects.float_text(renderer, m.cell_pos, "처형!", Color(1.0, 0.3, 0.3), visible)
+		if fx.has("execute") and not m.ghost and m.hp <= m.max_hp * float(fx.execute.hp) and randf() < float(fx.execute.chance):  # 유령은 처형되지 않는다
+			m.execute(source)
+			Effects.float_text(renderer, m.cell_pos, "처형!", Color(1.0, 0.3, 0.3), visible)
 
 	## 대공 스킬형: 공격이 맞은 자리에서 확률로 스킬 발동
 	func _skill_effects() -> void:
