@@ -117,7 +117,7 @@ static func color_upgrade_cost_for(level: int) -> int:
 	return COLOR_UPGRADE_COST_STEP * level
 
 
-## 색깔 보너스 수치 글자 (level 0이면 "-"). 예: "+22%", "2.3마리", "방어력 5"
+## 색깔 보너스 수치 글자 (level 0이면 "-"). 예: "+22%", "2.3마리", "5 무시"
 static func color_bonus_value_text(color_name: String, level: int) -> String:
 	if level <= 0:
 		return "-"
@@ -125,7 +125,7 @@ static func color_bonus_value_text(color_name: String, level: int) -> String:
 	var value := color_level_bonus(type, level)
 	match type:
 		"empower": return "%.1f마리" % value
-		"penetration": return "방어력 %d" % roundi(value)
+		"penetration": return "%d 무시" % roundi(value)
 		"lifegain": return "+%.1f%%" % (value * 100.0)
 	return "+%d%%" % roundi(value * 100.0)
 
