@@ -85,7 +85,6 @@ var _play_running := false               # 시작 버튼을 눌렀는지
 
 # 일시정지: get_tree().paused로 게임 전체를 멈추고, 항상 동작하는 PauseOverlay를 위에 띄운다
 var pause_overlay: PauseOverlay
-var _paused_at_ms := 0                   # 멈춘 시각 (Monster의 강화 버프 시계 보정용)
 
 # 보스 스킬 배너: 어느 레인을 보고 있든 맵 위쪽에 뜬다. 여러 개가 겹치면 차례로 보여 준다.
 const SKILL_BANNER_SECONDS := 5.0        # 알림이 떠 있는 시간 (발동까지 예고 시간이 있으면 그만큼 더)
@@ -1486,10 +1485,6 @@ func _set_paused(on: bool) -> void:
 	# 일시정지 허용 여부는 명령이 정한다 (혼자 하는 판에서만 된다)
 	if not game_field.do_command(Command.SET_PAUSE, {"on": on})["ok"]:
 		return
-	if on:
-		_paused_at_ms = Time.get_ticks_msec()
-	else:
-		Monster.pause_offset_ms += Time.get_ticks_msec() - _paused_at_ms
 	get_tree().paused = on
 	pause_overlay.show_menu(on)
 	Log.info(Log.Category.GAME, "일시정지 %s" % ("켬" if on else "끔"))

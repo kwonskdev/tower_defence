@@ -108,7 +108,7 @@ var _vision_dirty := true
 var _vision_timer := 0.0
 
 var _poisons: Array = []         # [{src, stacks, dps, time}] 독 (타워별로 따로 집계)
-var _empower_buffs: Array = []   # [{end_time: float, boost: float}] 강화 버프 (시간 순 정렬, 중첩 가능)
+var _empower_buffs: Array = []   # [{time_left: float, boost: float}] 강화 버프 (남은 시간 순 정렬, 중첩 가능)
 var _consumed_marks: Array = []  # 이번 타격에 터진 표식
 var _captured := false
 var _killer = null               # 이 몬스터를 처치한 타워 (색깔 보너스 처리용)
@@ -269,20 +269,11 @@ func apply_stun(duration: float) -> void:
 
 # --- 강화 시스템 (남색 색깔 보너스) ---
 
-## 일시정지로 멈춰 있던 시간(ms)의 합. 강화 버프가 실제 시계로 만료되므로, 멈춘 동안은 시간이 흐르지 않은 것으로 친다.
-static var pause_offset_ms: int = 0
-
-
-static func _game_now() -> float:
-	return float(Time.get_ticks_msec() - pause_offset_ms) / 1000.0
-
-
 ## 강화 버프 추가 (중첩 가능)
 func add_empower(duration: float, boost: float) -> void:
-	var now := _game_now()
-	_empower_buffs.append({"end_time": now + duration, "boost": boost})
-	# 종료 시간 순으로 정렬
-	_empower_buffs.sort_custom(func(a, b): return a.end_time < b.end_time)
+	_empower_buffs.append({"time_left": duration, "boost": boost})
+	# 먼저 끝나는 순으로 정렬
+	_empower_buffs.sort_custom(func(a, b): return a.time_left < b.time_left)
 	while _empower_buffs.size() > Balance.EMPOWER_MAX_STACKS:
 		_empower_buffs.remove_at(0)  # 가장 먼저 끝나는 것을 밀어낸다
 	_sync_empower_max_hp()
@@ -299,13 +290,18 @@ func _sync_empower_max_hp() -> void:
 	max_hp = new_max
 
 
+## 강화 버프의 남은 시간을 줄인다. 시뮬레이션이 넘겨주는 delta로만 흐르므로 일시정지/서버 시간과 항상 맞는다 (벽시계를 쓰지 않는다).
+func _tick_empower(delta: float) -> void:
+	for b in _empower_buffs:
+		b.time_left -= delta
+
+
 ## 현재 적용 중인 강화 효과 총합 (만료된 버프는 제거)
 func get_total_empower() -> float:
-	var now := _game_now()
 	var total := 0.0
 	# 만료된 버프 제거 (역순으로)
 	for i in range(_empower_buffs.size() - 1, -1, -1):
-		if _empower_buffs[i].end_time < now:
+		if _empower_buffs[i].time_left < 0.0:
 			_empower_buffs.remove_at(i)
 		else:
 			total += _empower_buffs[i].boost
@@ -441,6 +437,7 @@ func _process(delta: float) -> void:
 	if preview:
 		return
 
+	_tick_empower(delta)
 	if not _empower_buffs.is_empty() or not is_equal_approx(max_hp, _base_max_hp):
 		_sync_empower_max_hp()  # 만료된 강화를 바로 반영 (끝난 시점에 체력 비율대로 되돌린다)
 	if regen > 0.0 and hp < max_hp and not _dead:
