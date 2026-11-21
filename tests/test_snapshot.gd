@@ -85,3 +85,16 @@ func hud_matches_state(game: Node) -> void:
 	gf.switch_player(GameField.BOSS_LANE_ID)
 	await frames(15)
 	check(game.hud_label.text.contains("BOSS Lv.1/") and game.hud_label.text.contains(gf.boss.level_data.name), "보스 레인 하단 안내 '%s'" % game.hud_label.text.split("\n")[0])
+
+	# 결과 화면 통계 (스냅샷으로 모은다)
+	gf.switch_player(0)
+	lane.try_build_tower(Vector2i(4, 12), "long", false)
+	var stats: Dictionary = game._collect_game_stats(false)
+	check(stats.boss_level == 1 and stats.final_gold == LaneController.whole(lane.gold), "통계: 보스 레벨/최종 골드 (%s)" % stats.final_gold)
+	check(stats.towers_built == lane.towers.size() and stats.final_income == lane.income, "통계: 타워 수/수입")
+	check(stats.boss_damage == 0.0 and stats.ghost.has("lane_ranking"), "통계: 보스 피해/유령 요약")
+	# 미니맵도 스냅샷으로 그려진다 (오류 없이 그려지는지)
+	for v in game.minimap_views.values():
+		v.queue_redraw()
+	await frames(3)
+	check(true, "미니맵 %d개가 스냅샷으로 오류 없이 그려진다" % game.minimap_views.size())

@@ -1888,6 +1888,8 @@ func _update_hud():
 
 	var snap := game_field.snapshot()  # 아래 상태 패널과 하단 안내는 서버 스냅샷만 읽는다
 	var sb: Dictionary = snap.boss
+	if sb.is_empty() or not snap.lanes.has(str(game_field.session.local_player_id)):
+		return  # 레인/보스가 아직 만들어지기 전
 	_update_status_panel(snap)
 	_refresh_tower_highlight()
 	_refresh_start_button()
@@ -2181,43 +2183,42 @@ func _on_boss_failed(reason: String) -> void:
 ## 게임 통계 수집
 func _collect_game_stats(is_victory: bool) -> Dictionary:
 	var stats := {}
-	var lane: LaneController = game_field.lanes.get(game_field.session.local_player_id)
-	var boss: BossController = game_field.boss
+	var snap := game_field.snapshot(true)  # 서버 스냅샷만 읽는다 (게임이 막 끝난 순간이라 캐시를 쓰지 않는다)
+	var me := str(game_field.session.local_player_id)
+	var lane: Dictionary = snap.lanes.get(me, {})
+	var boss: Dictionary = snap.boss
 
-	if boss:
-		stats.boss_level = boss.level if is_victory else boss.level
+	if not boss.is_empty():
+		stats.boss_level = boss.level
 		stats.total_boss_levels = BossLevels.COUNT
 
 	# 플레이 시간
 	if _play_running:
 		stats.play_time = _play_time
 
-	if lane:
+	if not lane.is_empty():
 		# 타워 통계
 		var tower_count := 0
 		var total_dmg := 0.0
 		var total_kills := 0
 		for tower in lane.towers:
 			tower_count += 1
-			total_dmg += tower.total_damage
+			total_dmg += tower.damage
 			total_kills += tower.kills
 		stats.towers_built = tower_count
 		stats.total_tower_damage = total_dmg
 		stats.total_tower_kills = total_kills
 
 		# 경제
-		stats.final_gold = lane.gold_shown()
+		stats.final_gold = LaneController.whole(lane.gold)
 		stats.final_income = lane.income
 
 	# 몬스터 파견 통계
-	if boss:
+	if not boss.is_empty():
 		stats.monsters_sent = boss.sent_count  # 죽은 몬스터도 센다
 
 		# 보스 피해 (내 기여도)
-		if boss.damage_by_player.has(game_field.session.local_player_id):
-			stats.boss_damage = boss.damage_by_player[game_field.session.local_player_id]
-		else:
-			stats.boss_damage = 0.0
+		stats.boss_damage = boss.damage_by_player.get(me, 0.0)
 
 		# 플레이어별 기여도 (전체)
 		var total_dmg := 0.0
@@ -2229,7 +2230,7 @@ func _collect_game_stats(is_victory: bool) -> Dictionary:
 			for player_id in boss.damage_by_player:
 				var dmg: float = boss.damage_by_player[player_id]
 				contributions.append({
-					"player_id": player_id,
+					"player_id": int(player_id),
 					"damage": dmg,
 					"percent": dmg / total_dmg * 100.0
 				})
@@ -2237,7 +2238,7 @@ func _collect_game_stats(is_victory: bool) -> Dictionary:
 			stats.contributions = contributions
 
 		# 유령 구간 점수: 보스를 일찍 잡은 구간마다 쌓인 값이 게임이 끝날 때까지 누적된 것 (마지막 보스의 구간 포함)
-		stats.ghost = boss.ghost_summary()
+		stats.ghost = boss.ghost_summary
 
 	return stats
 

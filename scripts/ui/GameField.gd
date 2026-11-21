@@ -107,9 +107,9 @@ func execute(cmd: Dictionary) -> Dictionary:
 var _snapshot: Dictionary = {}
 var _snapshot_frame := -1
 
-func snapshot() -> Dictionary:
+func snapshot(fresh := false) -> Dictionary:
 	var frame := Engine.get_process_frames()
-	if frame != _snapshot_frame:
+	if fresh or frame != _snapshot_frame:
 		_snapshot = Snapshot.build(session, lanes, boss)
 		_snapshot_frame = frame
 	return _snapshot
@@ -156,6 +156,7 @@ func start_lane(player_id: int):
 	lane.setup(player_id, grid_systems[player_id], grid_renderer)
 	lane.set_lane_visible(player_id == current_player_id)
 	lanes[player_id] = lane
+	_snapshot_frame = -1  # 레인이 늘었으니 캐시된 스냅샷은 낡았다
 
 func start_boss():
 	boss = BossController.new()
@@ -165,6 +166,7 @@ func start_boss():
 	bus.boss = boss
 	boss.setup(grid_systems[BOSS_LANE_ID], grid_renderer, lanes)
 	boss.set_lane_visible(current_player_id == BOSS_LANE_ID)
+	_snapshot_frame = -1
 	boss_ready.emit(boss)
 
 	# 각 레인에 boss 참조 설정 (남색 색깔 보너스용)
