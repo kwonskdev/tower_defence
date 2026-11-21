@@ -11,7 +11,7 @@ config_version=5
 [application]
 
 config/name="Lane Wars"
-run/main_scene="res://scenes/main/MainGame.tscn"
+run/main_scene="res://scenes/main/Boot.tscn"
 config/quit_on_go_back=false
 config/features=PackedStringArray("4.6", "Mobile")
 config/icon="res://icon.svg"
