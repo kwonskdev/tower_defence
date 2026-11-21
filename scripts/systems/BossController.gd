@@ -489,6 +489,11 @@ func _dispatch_wave() -> void:
 				lane.spawn_wave_monster(entry.type, dispatch_level, Pathfinder.NO_GOAL, affix_id)
 
 
+## 몬스터를 보낼 수 있는가 (스폰 칸이 있는가). 골드를 쓰기 전에 확인하는 용도 -> spawn_player_monster는 이때 실패하지 않는다.
+func can_spawn_player_monster() -> bool:
+	return not _grid.get_spawn_cells().is_empty()
+
+
 ## 플레이어가 생산한 몬스터를 보스 레인으로 보낸다
 func spawn_player_monster(owner_id: int, kind_id: String) -> void:
 	var data: Dictionary = Monsters.DATA[kind_id]
