@@ -1951,6 +1951,11 @@ func _input(event):
 ## (일시정지 중의 뒤로 가기는 PauseOverlay가 "계속하기"로 처리한다)
 ## 앱이 백그라운드로 가거나 창이 포커스를 잃으면 진행 중인 게임을 자동으로 멈춘다.
 func _notification(what: int) -> void:
+	if what == NOTIFICATION_PREDELETE:
+		# [업그레이드] 버튼은 항목 화면을 처음 열 때 트리에 붙는다. 한 번도 안 열고 끝나면 부모 없이 남아 누수가 되므로 직접 정리한다
+		if detail_action != null and is_instance_valid(detail_action) and detail_action.get_parent() == null:
+			detail_action.free()
+		return
 	if what == NOTIFICATION_APPLICATION_PAUSED or what == NOTIFICATION_WM_WINDOW_FOCUS_OUT:
 		if _play_running and pause_overlay != null:
 			_set_paused(true)
