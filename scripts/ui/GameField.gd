@@ -140,13 +140,16 @@ func _on_sim_event(ev: Dictionary) -> void:
 		return  # 배너는 화면(MainGame)이 받아서 보여 준다
 	var lane_id: int = ev["lane"]
 	var shown: bool = (current_player_id == BOSS_LANE_ID) if lane_id == BOSS_LANE_ID else (lanes.has(lane_id) and lanes[lane_id].lane_visible)
-	var pos := Vector2(ev["pos"][0], ev["pos"][1])
-	var color := Color.html(ev["color"])
 	match ev["type"]:
 		"fx_ring":
-			Effects.ring(grid_renderer, pos, ev["radius"], color, shown)
+			Effects.ring(grid_renderer, Vector2(ev["pos"][0], ev["pos"][1]), ev["radius"], Color.html(ev["color"]), shown)
 		"fx_text":
-			Effects.float_text(grid_renderer, pos, ev["text"], color, shown)
+			Effects.float_text(grid_renderer, Vector2(ev["pos"][0], ev["pos"][1]), ev["text"], Color.html(ev["color"]), shown)
+		"fx_shot":
+			var target: Monster = map_view.monster_node(lane_id, ev["target"]) if map_view != null else null
+			Effects.view_projectile(grid_renderer, ev, target, shown)
+		"fx_cloud":
+			Effects.view_cloud(grid_renderer, ev, shown)
 
 
 ## 연출 이벤트 재생. 모르는 이벤트(예: pause)는 무시한다 (MainGame이 직접 처리한다).

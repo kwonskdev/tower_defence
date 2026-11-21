@@ -83,5 +83,9 @@ func monster_count() -> int:
 	return _monsters.size()
 
 
+func monster_node(lane_id: int, monster_id: int) -> Monster:
+	return _monsters.get("%d:%d" % [lane_id, monster_id])
+
+
 func tower_node(lane_id: int, cell: Vector2i) -> Tower:
 	return _towers.get("%d:%d:%d" % [lane_id, cell.x, cell.y])

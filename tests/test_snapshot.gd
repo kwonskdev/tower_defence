@@ -51,6 +51,7 @@ func run() -> void:
 	await frames(8)
 	await hud_matches_state(game)
 	await map_view_draws_from_snapshot()
+	await shots_are_events()
 	game.queue_free()
 	await frames(3)
 
@@ -144,5 +145,53 @@ func map_view_draws_from_snapshot() -> void:
 	gf.sell_selected_tower()
 	await frames(5)
 	check(mv.tower_count() == 1 and not is_instance_valid(pup) or pup.is_queued_for_deletion(), "판매한 타워의 껍데기가 치워진다 (남은 %d)" % mv.tower_count())
+	game.queue_free()
+	await frames(3)
+
+
+## 투사체와 표식 구름: 서버는 보이지 않는 노드로 피해/표식만 처리하고, 클라이언트는 이벤트로 날아가는 모습을 그린다
+func shots_are_events() -> void:
+	print("[맵] 투사체/구름 이벤트")
+	var game := (load("res://scenes/main/MainGame.tscn") as PackedScene).instantiate()
+	get_tree().root.add_child.call_deferred(game)
+	await frames(8)
+	var gf: GameField = game.game_field
+	var lane: LaneController = gf.lanes[0]
+	lane.gold = 1000.0
+	var events: Array = []
+	gf.session.events.emitted.connect(func(ev): events.append(ev))
+	lane.try_build_tower(Vector2i(5, 3), "long", false)
+	lane.try_build_tower(Vector2i(7, 3), "splash", false)
+	lane.evolve_tower(lane.tower_at(Vector2i(5, 3)), "pierce")
+	lane.evolve_tower(lane.tower_at(Vector2i(7, 3)), "support")
+	gf.do_command(Command.START_GAME)
+	lane.spawn_wave_monster("tank", 1)
+	var saw_puppet_shot := false
+	var sim_shot_visible := false
+	var saw_puppet_cloud := false
+	for i in range(240):
+		await frames(1)
+		for c in gf.grid_renderer.get_children():
+			if c is Effects.Projectile:
+				if c.puppet and c.visible:
+					saw_puppet_shot = true
+				elif not c.puppet and c.visible:
+					sim_shot_visible = true
+			elif c is Effects.Cloud and c.puppet and c.visible:
+				saw_puppet_cloud = true
+		if saw_puppet_shot and saw_puppet_cloud:
+			break
+	var shots := events.filter(func(e): return e.type == "fx_shot")
+	var clouds := events.filter(func(e): return e.type == "fx_cloud")
+	check(shots.size() > 0 and clouds.size() > 0, "fx_shot %d개, fx_cloud %d개 이벤트가 나왔다" % [shots.size(), clouds.size()])
+	check(saw_puppet_shot, "클라이언트가 투사체를 그렸다 (껍데기)")
+	check(saw_puppet_cloud, "클라이언트가 표식 구름을 그렸다 (껍데기)")
+	check(not sim_shot_visible, "서버 쪽 투사체 노드는 보이지 않는다")
+	check(shots.size() == 0 or JSON.parse_string(JSON.stringify(shots[0])) is Dictionary, "투사체 이벤트는 JSON이 된다")
+	var hurt := false
+	for m in lane.monsters:
+		if m.hp < m.max_hp:
+			hurt = true
+	check(hurt or lane.monsters.is_empty(), "피해는 서버 쪽에서 그대로 들어갔다")
 	game.queue_free()
 	await frames(3)
