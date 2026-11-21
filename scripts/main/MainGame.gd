@@ -784,10 +784,7 @@ func _explain_text(lane: LaneController) -> String:
 
 
 func _find_stat(evo: String, skill: String, key: String) -> Dictionary:
-	for stat in Evolutions.STATS[evo]:
-		if stat.s == skill and stat.k == key:
-			return stat
-	return {}
+	return Evolutions.find_stat(evo, skill, key)
 
 
 ## [생성]/[업그레이드] 버튼: 고른 것이 있고 살 수 있을 때만 눌린다
@@ -1696,7 +1693,8 @@ class PauseOverlay extends Control:
 		var upgrades: Array = []
 		for evo in Evolutions.ORDER:
 			var d: Dictionary = Evolutions.DATA[evo]
-			var lines: Array[String] = [Evolutions.tooltip(evo), "", "업그레이드 (Lv1 → Lv%d)" % Evolutions.MAX_LEVEL]
+			var lines: Array[String] = [Evolutions.tooltip(evo), "", "업그레이드 (Lv1 → Lv%d)" % Evolutions.MAX_LEVEL,
+					"(올릴 때마다 비용 +%d골드, %d골드부터)" % [Balance.STAT_UPGRADE_COST_STEP, Balance.stat_upgrade_cost_for(2)]]
 			for stat in Evolutions.STATS[evo]:
 				lines.append("%s %s: %s → %s" % [stat.s, stat.name, Evolutions.stat_value_text(evo, stat, 1), Evolutions.stat_value_text(evo, stat, Evolutions.MAX_LEVEL)])
 			upgrades.append({"name": d.name, "color": d.color, "text": "\n".join(lines)})

@@ -19,7 +19,7 @@ var monsters: Array[Monster] = []
 var towers: Array[Tower] = []  # 한 칸에 타워 1개
 
 # 진화 업그레이드 (레인 전체 공유, 같은 계열의 모든 타워에 적용)
-var stat_levels: Dictionary = {} # "계열.스킬.키" -> 레벨 1~3 (없으면 1). B 스킬은 타워마다 배우지만 항목 레벨은 계열 공통
+var stat_levels: Dictionary = {} # "계열.스킬.키" -> 레벨 1~Evolutions.MAX_LEVEL (없으면 1). B 스킬은 타워마다 배우지만 항목 레벨은 계열 공통
 
 # 색깔 시스템 (레인 전체 공유)
 var color_levels: Dictionary = {} # "색깔이름" -> 레벨 0~Balance.COLOR_MAX_LEVEL (0=업그레이드 안 함)
@@ -108,7 +108,7 @@ func heal_tower(tower: Tower) -> bool:
 
 # --- 진화 / 업그레이드 ---
 
-## 업그레이드 항목 하나의 현재 레벨 (1~3). 안 올렸으면 1.
+## 업그레이드 항목 하나의 현재 레벨 (1~Evolutions.MAX_LEVEL). 안 올렸으면 1.
 func stat_level(evo: String, skill: String, key: String) -> int:
 	return int(stat_levels.get("%s.%s.%s" % [evo, skill, key], 1))
 
@@ -166,7 +166,7 @@ func stat_upgrade_cost(evo: String, skill: String, key: String) -> int:
 	var lv := stat_level(evo, skill, key)
 	if lv >= Evolutions.MAX_LEVEL:
 		return -1
-	return int(Balance.STAT_UPGRADE_COSTS[lv - 1])
+	return Balance.stat_upgrade_cost_for(lv + 1)
 
 
 ## 업그레이드 탭: 항목 하나를 올린다. 그 계열로 진화한 모든 타워가 바로 강해진다.
@@ -337,7 +337,7 @@ func _spread_marks(monster: Monster) -> void:
 	if spreadable.is_empty():
 		return
 	var radius := Evolutions.p("support", "B", "radius", stat_level("support", "B", "radius"))
-	var count := int(Evolutions.p("support", "B", "count", stat_level("support", "B", "count")))
+	var count := Evolutions.roll_int(Evolutions.p("support", "B", "count", stat_level("support", "B", "count")))
 	var near: Array[Monster] = []
 	for m in monsters:
 		if m != monster and not m.is_dead() and m.flying == monster.flying and m.marks.is_empty() \

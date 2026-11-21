@@ -91,6 +91,7 @@ var preview_cell: float = 40.0
 var marks: Array = []            # 표식 [{src: 타워, dmg: 추가 피해}] - 중첩되며, 타워에게 맞으면 한 번에 터진다
 var death_marks: Array = []      # 죽는 순간 퍼뜨릴 표식 (표식 전파용)
 var armor_break_time: float = 0.0
+var armor_break_ratio: float = 0.0   # 방어구 파괴로 깎인 방어력 비율 (0~1). armor_break_time 동안만 적용
 var slow_time: float = 0.0
 var slow_mult: float = 1.0
 var stun_time: float = 0.0
@@ -100,7 +101,7 @@ var known_towers: Dictionary = {}  # 시야에 들어온 적 있는 타워 칸 {
 var _vision_dirty := true
 var _vision_timer := 0.0
 
-var _poisons: Array = []         # [{src, stacks, dps, time}] 독 (타워별로 따로 집계)
+var _poisons: Array = []         # [{src, dps, time}] 독 중첩 하나하나 (맞을 때마다 하나 추가, 각자 시간이 다 되면 사라진다)
 var _empower_buffs: Array = []   # [{end_time: float, boost: float}] 강화 버프 (시간 순 정렬, 중첩 가능)
 var _consumed_marks: Array = []  # 이번 타격에 터진 표식
 var _captured := false
@@ -224,7 +225,7 @@ func clear_warn() -> void:
 
 
 func effective_armor() -> float:
-	return 0.0 if armor_break_time > 0.0 else armor
+	return armor * (1.0 - armor_break_ratio) if armor_break_time > 0.0 else armor
 
 
 func speed_mult() -> float:
@@ -237,18 +238,14 @@ func add_mark(src, dmg: float) -> void:
 	marks.append({"src": src, "dmg": dmg})
 
 
-## 독: 같은 타워의 독은 중첩되고 (무한), 맞을 때마다 유지 시간이 갱신된다. 방어력 무시.
+## 독: 맞을 때마다 중첩 하나가 생기고 (상한 없음), 중첩마다 따로 duration초 뒤에 사라진다. 방어력 무시.
 func add_poison(src, dps: float, duration: float) -> void:
-	for e in _poisons:
-		if is_same(e.src, src):
-			e.stacks += 1
-			e.dps = dps
-			e.time = duration
-			return
-	_poisons.append({"src": src, "stacks": 1, "dps": dps, "time": duration})
+	_poisons.append({"src": src, "dps": dps, "time": duration})
 
 
-func apply_armor_break(duration: float) -> void:
+## 방어구 파괴: 방어력을 ratio(0~1)만큼 깎는다 (1이면 0). 걸려 있는 동안 더 센 비율이 우선이고, 시간은 긴 쪽으로 갱신된다.
+func apply_armor_break(duration: float, ratio: float) -> void:
+	armor_break_ratio = maxf(armor_break_ratio, ratio) if armor_break_time > 0.0 else ratio
 	armor_break_time = maxf(armor_break_time, duration)
 
 
@@ -338,7 +335,7 @@ func _update_status(delta: float) -> void:
 		if e.time <= 0.0:
 			_poisons.remove_at(i)
 			continue
-		_lose_hp(e.stacks * e.dps * delta, e.src, e.src)  # 독 피해와 킬은 독을 건 타워 몫
+		_lose_hp(e.dps * delta, e.src, e.src)  # 독 피해와 킬은 독을 건 타워 몫
 		if _dead:
 			return
 

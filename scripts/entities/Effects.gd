@@ -5,9 +5,9 @@ class_name Effects
 ## 좌표는 셀 단위(셀 중심 = +0.5)를 받는다.
 ##
 ## 투사체의 fx(딕셔너리)는 쏜 순간 타워가 계산해서 넣어 준다 (타워가 중간에 부서져도 효과는 그대로).
-##   pierce / falloff : 관통 마릿수 / 관통할 때마다 피해 감소 비율
+##   pierce / falloff / range : 한 발로 맞히는 최대 마릿수(첫 적 포함) / 한 마리 지날 때마다 피해 감소 비율 / 날아가는 거리(칸, 타워 사거리)
 ##   poison {dps,time}: 맞은 적에게 독 중첩
-##   armor_break {chance,time} / execute {chance,hp}: 방어구 파괴 / 처형
+##   armor_break {chance,ratio,time} / execute {chance,hp}: 방어구 파괴 / 처형
 ##   center {radius,mult}: 폭발 중심부 강화
 ##   snare {chance,radius,slow,time} / capture {chance,time}: 대공 스킬형
 
@@ -104,12 +104,16 @@ class Projectile extends Node2D:
 	var fx: Dictionary = {}
 	var _total := 1.0
 	# 관통: 첫 적을 맞힌 뒤 같은 방향으로 직진하며 남은 적을 차례로 맞힌다
+	# 관통: 타워 사거리만큼 날아가며 길에 있는 적을 pierce마리까지 차례로 맞힌다 (한 마리 맞힐 때마다 피해가 falloff만큼 줄어든다).
+	# 처음 겨눈 적은 유도로 따라가서 반드시 맞는다. 그 뒤로는 같은 방향으로 직진한다.
 	var _pierce_left := 0
+	var _pierce_hits := 0
+	var _is_pierce := false
 	var _piercing := false
 	var _travel_left := 0.0
+	var _start := Vector2.ZERO
 	var _hit_ids: Dictionary = {}
 
-	const PIERCE_TRAVEL := 5.0   # 첫 적을 맞힌 뒤 더 날아가는 거리(칸)
 	const PIERCE_HIT_RADIUS := 0.4
 
 	func launch() -> void:
@@ -118,6 +122,8 @@ class Projectile extends Node2D:
 		dir = (dest - pos_c).normalized()
 		position = pos_c * renderer.CELL_SIZE
 		_pierce_left = int(fx.get("pierce", 0))
+		_is_pierce = _pierce_left > 0 and splash <= 0.0
+		_start = pos_c
 
 	func _process(delta: float) -> void:
 		if _piercing:
@@ -138,9 +144,14 @@ class Projectile extends Node2D:
 			var progress := 1.0 - clampf(to.length() / _total, 0.0, 1.0)
 			arc = sin(progress * PI) * renderer.CELL_SIZE * 1.2
 		position = pos_c * renderer.CELL_SIZE + Vector2(0, -arc)
+		if _is_pierce and _pierce_scan():
+			return
 		queue_redraw()
 
 	func _impact() -> void:
+		if _is_pierce:
+			_impact_pierce()
+			return
 		if splash > 0.0:
 			var center: Dictionary = fx.get("center", {})
 			for m in lane.monsters.duplicate():
@@ -160,40 +171,49 @@ class Projectile extends Node2D:
 				_hit(target, damage)
 			Effects.ring(renderer, dest, 0.35, color, visible)
 		_skill_effects()
-
-		# 관통: 맞힌 자리에서 멈추지 않고 같은 방향으로 계속 날아간다
-		if _pierce_left > 0 and splash <= 0.0:
-			if is_instance_valid(target):
-				_hit_ids[target.get_instance_id()] = true
-			_piercing = true
-			_travel_left = PIERCE_TRAVEL
-			return
 		queue_free()
+
+	## 관통 투사체가 겨눈 적에게 닿았다: 아직 안 맞았으면 맞히고, 남은 거리만큼 직진한다
+	func _impact_pierce() -> void:
+		if is_instance_valid(target) and not target.is_dead() and not _hit_ids.has(target.get_instance_id()):
+			_pierce_hit(target)
+		_travel_left = float(fx.get("range", 5.0)) - _start.distance_to(pos_c)
+		if _pierce_left <= 0 or _travel_left <= 0.0:
+			queue_free()
+			return
+		_piercing = true
 
 	func _process_pierce(delta: float) -> void:
 		var step := speed * delta
 		pos_c += dir * step
 		_travel_left -= step
 		position = pos_c * renderer.CELL_SIZE
-		for m in lane.monsters.duplicate():
-			if not is_instance_valid(m) or m.is_dead() or m.flying != anti_air:
-				continue
-			var id: int = m.get_instance_id()
-			if _hit_ids.has(id):
-				continue
-			if (m.cell_pos + m.visual_offset()).distance_to(pos_c) <= PIERCE_HIT_RADIUS:
-				_hit_ids[id] = true
-				damage *= 1.0 - float(fx.get("falloff", 0.0))  # 관통할수록 약해진다
-				_hit(m, damage)
-				Effects.ring(renderer, pos_c, 0.3, color, visible)
-				_pierce_left -= 1
-				if _pierce_left <= 0:
-					queue_free()
-					return
+		if _pierce_scan():
+			return
 		if _travel_left <= 0.0:
 			queue_free()
 			return
 		queue_redraw()
+
+	## 지금 위치 근처의 아직 안 맞은 적을 맞힌다. 마릿수를 다 채우면 사라지고 true
+	func _pierce_scan() -> bool:
+		for m in lane.monsters.duplicate():
+			if not is_instance_valid(m) or m.is_dead() or m.flying != anti_air or _hit_ids.has(m.get_instance_id()):
+				continue
+			if (m.cell_pos + m.visual_offset()).distance_to(pos_c) <= PIERCE_HIT_RADIUS:
+				_pierce_hit(m)
+				if _pierce_left <= 0:
+					queue_free()
+					return true
+		return false
+
+	func _pierce_hit(m: Monster) -> void:
+		_hit_ids[m.get_instance_id()] = true
+		var dmg := damage * pow(maxf(0.0, 1.0 - float(fx.get("falloff", 0.0))), _pierce_hits)
+		_pierce_hits += 1
+		_pierce_left -= 1
+		_hit(m, dmg)
+		Effects.ring(renderer, m.cell_pos, 0.3, color, visible)
 
 	## 적 1마리를 맞힌다: 피해 + 맞았을 때 걸리는 효과들
 	func _hit(m: Monster, dmg: float) -> void:
@@ -204,7 +224,7 @@ class Projectile extends Node2D:
 		if fx.has("poison"):
 			m.add_poison(source, float(fx.poison.dps), float(fx.poison.time))
 		if fx.has("armor_break") and randf() < float(fx.armor_break.chance):
-			m.apply_armor_break(float(fx.armor_break.time))
+			m.apply_armor_break(float(fx.armor_break.time), float(fx.armor_break.ratio))
 		if fx.has("execute") and m.hp <= m.max_hp * float(fx.execute.hp) and randf() < float(fx.execute.chance):
 			m.execute(source)
 			Effects.float_text(renderer, m.cell_pos, "처형!", Color(1.0, 0.3, 0.3), visible)
