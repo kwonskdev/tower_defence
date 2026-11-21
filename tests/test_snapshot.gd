@@ -30,6 +30,11 @@ func run() -> void:
 	near(b.hp, field.boss.hp, "보스 체력")
 	near(b.time_left, field.boss.time_left, "보스 남은 시간")
 	check(b.level == 1 and b.state == int(field.boss.state), "보스 레벨/상태")
+	check(b.name == field.boss.level_data.name and b.phase_text == field.boss.phase_text(), "보스 이름/페이즈 글자 (HUD가 쓴다)")
+	check(b.wave_preview.size() == field.boss.get_next_wave_preview().size(), "다음 웨이브 미리보기 %d줄" % b.wave_preview.size())
+	for e in b.wave_preview:
+		check(e.color is String and Color.html(e.color) != Color.BLACK or e.color == "000000", "미리보기 색은 글자(JSON 안전): %s" % e.color)
+	check(b.ghost_summary.has("lane_ranking") and not b.ghost_running, "유령 요약 포함, 지금은 유령 구간 아님")
 
 	# JSON을 거쳐도 같다 (네트워크로 보낼 수 있다는 뜻). 숫자는 JSON에서 float가 되므로 값으로 비교한다.
 	var back: Variant = JSON.parse_string(JSON.stringify(snap))
@@ -39,6 +44,13 @@ func run() -> void:
 	check(_has_no_objects(snap), "스냅샷에 노드/객체가 없다")
 
 	field.queue_free()
+	await frames(3)
+
+	var game := (load("res://scenes/main/MainGame.tscn") as PackedScene).instantiate()
+	get_tree().root.add_child.call_deferred(game)
+	await frames(8)
+	await hud_matches_state(game)
+	game.queue_free()
 	await frames(3)
 
 
@@ -58,3 +70,18 @@ func _has_no_objects(v: Variant) -> bool:
 		TYPE_OBJECT, TYPE_VECTOR2, TYPE_VECTOR2I, TYPE_COLOR:
 			return false
 	return true
+
+
+## HUD 숫자가 스냅샷으로 그려지고 서버(레인/보스) 값과 같다 (MainGame의 상태 패널과 하단 안내)
+func hud_matches_state(game: Node) -> void:
+	var gf: GameField = game.game_field
+	var lane: LaneController = gf.lanes[0]
+	lane.gold = 321.9
+	gf.do_command(Command.START_GAME)
+	await frames(20)
+	check(game.status_gold_label.text == "321", "골드 표시 '%s' (321.9 -> 321)" % game.status_gold_label.text)
+	check(game.status_lives_label.text == "%d" % lane.lives_shown(), "생명 표시 '%s'" % game.status_lives_label.text)
+	check(game.status_income_label.text.begins_with("수입 +%d" % lane.income), "수입 표시 '%s'" % game.status_income_label.text.replace("\n", " "))
+	gf.switch_player(GameField.BOSS_LANE_ID)
+	await frames(15)
+	check(game.hud_label.text.contains("BOSS Lv.1/") and game.hud_label.text.contains(gf.boss.level_data.name), "보스 레인 하단 안내 '%s'" % game.hud_label.text.split("\n")[0])

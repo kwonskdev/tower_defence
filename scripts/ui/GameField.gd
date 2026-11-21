@@ -103,6 +103,18 @@ func execute(cmd: Dictionary) -> Dictionary:
 	return result
 
 
+## 지금 서버 상태 스냅샷. 화면(HUD)은 시뮬레이션 객체 대신 이것을 읽는다. 같은 프레임 안에서는 한 번만 만든다.
+var _snapshot: Dictionary = {}
+var _snapshot_frame := -1
+
+func snapshot() -> Dictionary:
+	var frame := Engine.get_process_frames()
+	if frame != _snapshot_frame:
+		_snapshot = Snapshot.build(session, lanes, boss)
+		_snapshot_frame = frame
+	return _snapshot
+
+
 ## 연출 이벤트 재생. 모르는 이벤트(예: pause)는 무시한다 (MainGame이 직접 처리한다).
 func _play_events(events: Array) -> void:
 	for ev in events:

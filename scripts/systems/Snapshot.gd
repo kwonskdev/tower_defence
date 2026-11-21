@@ -10,7 +10,9 @@ class_name Snapshot
 ##   타워: cell[x,y], kind, color, evo, b, invested, durability, kills, damage, ghost_damage
 ##   몬스터: id, kind, owner, pos[x,y], hp, max_hp, flying, ghost
 ##   보스: state, level, hp, max_hp, time_left, in_ghost, ghost_length, total_dps, damage_mult, wave_text,
-##         next_wave_in, sent_count, attackers, damage_by_player, ghost_boss_damage_by_player, monsters[]
+##         next_wave_in, sent_count, attackers, damage_by_player, ghost_boss_damage_by_player, monsters[],
+##         name, phase_text, effective_dps, has_guard, ghost_running, ghost_summary, wave_preview[], affix
+##   색은 "RRGGBB" 글자(Color.to_html), 되돌릴 때는 Color.html()
 ## 위치는 셀 단위 [x, y] (셀 중심 = +0.5). 키는 JSON을 거쳐도 같도록 문자열로 쓴다.
 
 const VERSION := 1
@@ -75,4 +77,19 @@ static func _boss(boss: BossController) -> Dictionary:
 		"damage_mult": boss.damage_mult, "wave_text": boss.current_wave_text, "next_wave_in": boss.time_to_next_wave(),
 		"sent_count": boss.sent_count, "attackers": boss.get_attacker_count(),
 		"damage_by_player": damage, "ghost_boss_damage_by_player": ghost_damage, "monsters": sent,
+		"name": boss.level_data.get("name", ""), "phase_text": boss.phase_text(), "effective_dps": boss.effective_dps(),
+		"has_guard": boss.has_guard(), "ghost_running": boss.ghost_running(), "ghost_summary": boss.ghost_summary(),
+		"wave_preview": _wave_preview(boss), "affix": _affix(boss),
 	}
+
+
+static func _wave_preview(boss: BossController) -> Array:
+	var out: Array = []
+	for e in boss.get_next_wave_preview():
+		out.append({"type": e.type, "name": e.name, "count": e.count, "flying": e.flying, "color": e.color.to_html(false)})
+	return out
+
+
+static func _affix(boss: BossController) -> Dictionary:
+	var a := boss.get_next_wave_affix()
+	return {} if a.is_empty() else {"id": a.id, "name": a.name, "color": a.color.to_html(false)}
