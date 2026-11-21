@@ -38,22 +38,39 @@ func execute(cmd: Dictionary) -> Dictionary:
 		Log.warn(Log.Category.GAME, "참여자가 아닌 플레이어의 명령 거절: P%d %s" % [player_id, cmd["type"]])
 		return fail("not_participant")
 
-	var lane: LaneController = lanes.get(player_id)  # 참여자는 모두 레인이 있다 (없으면 설정 오류)
 	match cmd["type"]:
 		Command.START_GAME:
 			return _start_game()
 		Command.SET_PAUSE:
 			return _set_pause(cmd["on"])
+
+	# 여기서부터는 플레이어 자기 레인에 하는 행동이다 (남의 레인을 가리키는 명령은 존재하지 않는다)
+	var lane: LaneController = lanes.get(player_id)  # 참여자는 모두 레인이 있다 (없으면 설정 오류)
+	if lane == null:
+		return fail("no_lane")
+	match cmd["type"]:
 		Command.BUILD_TOWER:
-			if lane == null:
-				return fail("no_lane")
-			var reason := lane.try_build_tower(cmd["cell"], cmd["kind_id"], cmd["confirmed"])
-			return ok() if reason == "" else fail(reason)
+			return _result(lane.try_build_tower(cmd["cell"], cmd["kind_id"], cmd["confirmed"]))
 		Command.SEND_MONSTER:
-			if lane == null:
-				return fail("no_lane")
 			return _send_monster(lane, player_id, cmd["kind_id"])
-	return fail("not_implemented")  # 나머지 명령은 뒤 커밋에서 붙인다
+		Command.EVOLVE_TOWER:
+			return _result(lane.evolve_tower(lane.tower_at(cmd["cell"]), cmd["evo"]))
+		Command.LEARN_SKILL:
+			return _result(lane.learn_tower_skill(lane.tower_at(cmd["cell"])))
+		Command.RECOLOR_TOWER:
+			return _result(lane.recolor_tower(lane.tower_at(cmd["cell"])))
+		Command.HEAL_TOWER:
+			return _result(lane.heal_tower(lane.tower_at(cmd["cell"])))
+		Command.UPGRADE_STAT:
+			return _result(lane.upgrade_stat(cmd["evo"], cmd["skill"], cmd["key"]))
+		Command.UPGRADE_COLOR:
+			return _result(lane.upgrade_color(cmd["color_name"]))
+	return fail("not_implemented")  # sell_tower는 #8에서 붙인다
+
+
+## 레인 함수가 돌려주는 사유 문자열("" = 성공)을 결과로 바꾼다
+static func _result(reason: String) -> Dictionary:
+	return ok() if reason == "" else fail(reason)
 
 
 ## 시작: 참여한 모든 레인과 보스가 동시에 시작한다 (수입, 보스 제한시간, 몬스터 파견)

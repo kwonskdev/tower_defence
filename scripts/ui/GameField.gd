@@ -101,7 +101,10 @@ func execute(cmd: Dictionary) -> Dictionary:
 
 ## 내 플레이어의 명령을 만들어 실행한다 (UI에서 가장 흔한 경우)
 func do_command(type: String, args: Dictionary = {}) -> Dictionary:
-	return bus.execute(Command.make(type, session.local_player_id, args))
+	var result := bus.execute(Command.make(type, session.local_player_id, args))
+	if not result["ok"]:
+		Log.debug(Log.Category.UI, "명령 거절: %s -> %s" % [type, result["reason"]])
+	return result
 
 func start_lane(player_id: int):
 	var lane := LaneController.new()
@@ -234,40 +237,51 @@ func select_tower(tower: Tower) -> void:
 		Log.info(Log.Category.UI, "타워 선택 %s: %s %s" % [tower.cell, tower.kind.name, Evolutions.evo_name(tower.evolution) if tower.evolution != "" else "(진화 전)"])
 
 
+## 선택한 타워를 가리키는 칸 좌표 인자. 선택이 없거나 남의 레인의 타워면 빈 Dictionary (명령은 내 레인의 타워만 가리킬 수 있다)
+func _selected_cell_args() -> Dictionary:
+	var t := get_selected_tower()
+	if t == null or t.lane == null or t.lane.player_id != session.local_player_id:
+		return {}
+	return {"cell": t.cell}
+
+
+## 선택한 타워에 하는 명령을 보낸다 (선택한 타워가 없으면 보내지 않고 false)
+func _do_on_selected(type: String, extra: Dictionary = {}) -> bool:
+	var args := _selected_cell_args()
+	if args.is_empty():
+		return false
+	args.merge(extra)
+	return do_command(type, args)["ok"]
+
+
 ## 선택한 타워를 진화시킨다 (타워마다 한 번, 처음 계열을 고른다). 내 레인의 타워만 가능.
 func evolve_selected_tower(evo: String) -> bool:
-	var lane: LaneController = lanes.get(session.local_player_id)
-	return lane != null and lane.evolve_tower(get_selected_tower(), evo)
+	return _do_on_selected(Command.EVOLVE_TOWER, {"evo": evo})
 
 
 ## 업그레이드 탭: 진화 항목 레벨을 올린다 (같은 계열의 모든 타워에 적용)
 func upgrade_stat(evo: String, skill: String, key: String) -> bool:
-	var lane: LaneController = lanes.get(session.local_player_id)
-	return lane != null and lane.upgrade_stat(evo, skill, key)
+	return do_command(Command.UPGRADE_STAT, {"evo": evo, "skill": skill, "key": key})["ok"]
 
 
 ## 선택한 타워 1기의 색깔을 랜덤으로 바꾼다 (골드)
 func recolor_selected_tower() -> bool:
-	var lane: LaneController = lanes.get(session.local_player_id)
-	return lane != null and lane.recolor_tower(get_selected_tower())
+	return _do_on_selected(Command.RECOLOR_TOWER)
 
 
 ## 선택한 타워 1기의 내구도를 가득 채운다 (골드)
 func heal_selected_tower() -> bool:
-	var lane: LaneController = lanes.get(session.local_player_id)
-	return lane != null and lane.heal_tower(get_selected_tower())
+	return _do_on_selected(Command.HEAL_TOWER)
 
 
 ## 색깔 업그레이드 (골드, 그 색 타워 전체에 적용)
 func upgrade_color(color_name: String) -> bool:
-	var lane: LaneController = lanes.get(session.local_player_id)
-	return lane != null and lane.upgrade_color(color_name)
+	return do_command(Command.UPGRADE_COLOR, {"color_name": color_name})["ok"]
 
 
 ## 선택한 타워 1기의 B 스킬을 배운다 (골드, 타워마다 따로)
 func learn_selected_tower_skill() -> bool:
-	var lane: LaneController = lanes.get(session.local_player_id)
-	return lane != null and lane.learn_tower_skill(get_selected_tower())
+	return _do_on_selected(Command.LEARN_SKILL)
 
 func get_current_grid_system() -> GridSystem:
 	return grid_systems[current_player_id]

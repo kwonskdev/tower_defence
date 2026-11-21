@@ -106,12 +106,21 @@ func build_tower(cell: Vector2i, kind_id: String) -> Tower:
 	return tower
 
 
+## 이 칸에 있는 타워 (없으면 null). 명령은 타워 객체 대신 칸 좌표로 타워를 가리킨다.
+func tower_at(cell: Vector2i) -> Tower:
+	for t in towers:
+		if t.cell == cell:
+			return t
+	return null
+
+
 ## 타워 색깔을 다시 뽑는다 (골드). 지금 색을 뺀 나머지 6색 중 랜덤이라 돈을 내면 반드시 색이 바뀐다.
-func recolor_tower(tower: Tower) -> bool:
+## 성공하면 "", 실패하면 사유 (아무것도 바뀌지 않는다).
+func recolor_tower(tower: Tower) -> String:
 	if tower == null or tower.lane != self:
-		return false
+		return "no_tower"
 	if not try_spend(Balance.RECOLOR_COST, "타워 색깔 바꾸기 %s" % tower.cell):
-		return false
+		return spend_failure(Balance.RECOLOR_COST)
 	var candidates: Array = Balance.TOWER_COLORS.filter(func(c): return c.name != tower.color_info.name)
 	var old_name: String = tower.color_info.name
 	var new_info: Dictionary = candidates.pick_random()
@@ -119,19 +128,21 @@ func recolor_tower(tower: Tower) -> bool:
 	Effects.ring(_renderer, tower.center_cell_pos(), 0.8, new_info.color, lane_visible)
 	Log.info(Log.Category.COLOR, "[P%d] 타워 %s 색깔 변경: %s -> %s" % [player_id + 1, tower.cell, old_name, new_info.name])
 	_on_tower_colors_changed()
-	return true
+	return ""
 
 
-## 타워 내구도를 가득 채운다 (골드). 이미 가득이면 돈을 쓰지 않는다.
-func heal_tower(tower: Tower) -> bool:
-	if tower == null or tower.lane != self or tower.durability >= Balance.TOWER_DURABILITY - 0.001:
-		return false
+## 타워 내구도를 가득 채운다 (골드). 이미 가득이면 돈을 쓰지 않는다. 성공하면 "", 실패하면 사유.
+func heal_tower(tower: Tower) -> String:
+	if tower == null or tower.lane != self:
+		return "no_tower"
+	if tower.durability >= Balance.TOWER_DURABILITY - 0.001:
+		return "already_full"
 	if not try_spend(Balance.HEAL_COST, "타워 회복 %s" % tower.cell):
-		return false
+		return spend_failure(Balance.HEAL_COST)
 	tower.durability = Balance.TOWER_DURABILITY
 	Effects.ring(_renderer, tower.center_cell_pos(), 0.8, Color(0.4, 1.0, 0.5), lane_visible)
 	Log.info(Log.Category.TOWER, "[P%d] 타워 회복 %s" % [player_id + 1, tower.cell])
-	return true
+	return ""
 
 
 # --- 진화 / 업그레이드 ---
@@ -150,19 +161,21 @@ func levels_of(evo: String) -> Dictionary:
 	return levels
 
 
-## 타워 1기를 진화시킨다 (골드). 같은 기본 타워가 가진 계열 2개 중 하나를 고르며, 한 번 고르면 바꿀 수 없다.
-func evolve_tower(tower: Tower, evo: String) -> bool:
-	if tower == null or tower.lane != self or not tower.can_evolve():
-		return false
+## 타워 1기를 진화시킨다 (골드). 같은 기본 타워가 가진 계열 2개 중 하나를 고르며, 한 번 고르면 바꿀 수 없다. 성공하면 "", 실패하면 사유.
+func evolve_tower(tower: Tower, evo: String) -> String:
+	if tower == null or tower.lane != self:
+		return "no_tower"
+	if not tower.can_evolve():
+		return "cannot_evolve"
 	if evo not in Evolutions.TREE[tower.kind.id]:
-		return false
+		return "invalid_evolution"
 	if not try_spend(Balance.EVOLVE_COST, "타워 진화 %s(%s) -> %s" % [tower.cell, tower.kind.name, Evolutions.evo_name(evo)]):
-		return false
+		return spend_failure(Balance.EVOLVE_COST)
 	tower.set_evolution(evo)
 	tower.durability = Balance.TOWER_DURABILITY  # 진화하면 항상 풀피
 	Effects.ring(_renderer, tower.center_cell_pos(), 0.8, Evolutions.DATA[evo].color, lane_visible)
 	Log.info(Log.Category.TOWER, "[P%d] 타워 진화 %s: %s -> %s" % [player_id + 1, tower.cell, tower.kind.name, Evolutions.evo_name(evo)])
-	return true
+	return ""
 
 
 ## 타워 1기가 B 스킬을 배우는 비용. 진화 전이거나 이미 배웠으면 -1.
@@ -172,21 +185,21 @@ func learn_cost(tower: Tower) -> int:
 	return Balance.SKILL_LEARN_COST
 
 
-## 타워 1기의 B 스킬을 배운다 (진화처럼 타워마다 따로, 골드).
-func learn_tower_skill(tower: Tower) -> bool:
+## 타워 1기의 B 스킬을 배운다 (진화처럼 타워마다 따로, 골드). 성공하면 "", 실패하면 사유.
+func learn_tower_skill(tower: Tower) -> String:
 	if tower == null or tower.lane != self:
-		return false
+		return "no_tower"
 	var cost := learn_cost(tower)
 	if cost < 0:
-		return false
+		return "cannot_learn"
 	var evo := tower.evolution
 	if not try_spend(cost, "타워 %s(%s) B 진화: %s" % [tower.cell, Evolutions.evo_name(evo), Evolutions.skill_name(evo, "B")]):
-		return false
+		return spend_failure(cost)
 	tower.b_learned = true
 	tower.durability = Balance.TOWER_DURABILITY  # B 스킬을 배워도 풀피
 	Effects.ring(_renderer, tower.center_cell_pos(), 0.8, Evolutions.DATA[evo].color, lane_visible)
 	Log.info(Log.Category.TOWER, "[P%d] B 진화 %s: %s %s" % [player_id + 1, tower.cell, Evolutions.evo_name(evo), Evolutions.skill_name(evo, "B")])
-	return true
+	return ""
 
 
 ## 항목 레벨을 한 단계 올리는 비용. 올릴 수 없으면 -1 (최대 레벨). 계열의 모든 타워에 적용되고, B 항목은 B를 배운 타워에만 효과가 있다.
@@ -197,17 +210,19 @@ func stat_upgrade_cost(evo: String, skill: String, key: String) -> int:
 	return int(Balance.STAT_UPGRADE_COSTS[lv - 1])
 
 
-## 업그레이드 탭: 항목 하나를 올린다. 그 계열로 진화한 모든 타워가 바로 강해진다.
-func upgrade_stat(evo: String, skill: String, key: String) -> bool:
+## 업그레이드 탭: 항목 하나를 올린다. 그 계열로 진화한 모든 타워가 바로 강해진다. 성공하면 "", 실패하면 사유.
+func upgrade_stat(evo: String, skill: String, key: String) -> String:
+	if not Evolutions.PARAMS.has(evo) or not Evolutions.PARAMS[evo].has(skill) or not Evolutions.PARAMS[evo][skill].has(key):
+		return "invalid_stat"
 	var cost := stat_upgrade_cost(evo, skill, key)
 	if cost < 0:
-		return false
+		return "max_level"
 	var next := stat_level(evo, skill, key) + 1
 	if not try_spend(cost, "%s %s Lv%d" % [Evolutions.evo_name(evo), key, next]):
-		return false
+		return spend_failure(cost)
 	stat_levels["%s.%s.%s" % [evo, skill, key]] = next
 	Log.info(Log.Category.TOWER, "[P%d] 업그레이드: %s %s.%s -> Lv%d" % [player_id + 1, Evolutions.evo_name(evo), skill, key, next])
-	return true
+	return ""
 
 
 ## 사거리 안의 몬스터 중 기지에 가까운 순서로 최대 count마리 (난사형이 서로 다른 적을 노릴 때 사용)
@@ -478,18 +493,20 @@ func color_upgrade_cost(color_name: String) -> int:
 	return Balance.COLOR_UPGRADE_COSTS[cur]  # 현재 레벨 cur -> cur+1 비용
 
 
-## 색깔을 업그레이드한다 (골드). 성공하면 true.
-func upgrade_color(color_name: String) -> bool:
+## 색깔을 업그레이드한다 (골드). 성공하면 "", 실패하면 사유.
+func upgrade_color(color_name: String) -> String:
+	if not Balance.COLOR_BONUS_TYPES.has(color_name):
+		return "invalid_color"
 	var cost := color_upgrade_cost(color_name)
 	if cost < 0:
-		return false
+		return "max_level"
 	var cur := color_level(color_name)
 	var next := cur + 1
 	if not try_spend(cost, "색깔 업그레이드: %s %d->%d레벨" % [color_name, cur, next]):
-		return false
+		return spend_failure(cost)
 	color_levels[color_name] = next
 	Log.info(Log.Category.TOWER, "[P%d] 색깔 업그레이드: %s %d레벨 (비용=%d골드)" % [player_id + 1, color_name, next, cost])
-	return true
+	return ""
 
 
 ## 색깔 보너스 타입 가져오기
