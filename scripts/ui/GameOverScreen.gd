@@ -15,6 +15,8 @@ var stats: Dictionary = {}  # 게임 통계
 var title_label: Label
 var stats_label: Label
 var contribution_label: Label
+var ghost_label: Label      # 유령 구간 점수 (레인 데미지 / 보스 레인 데미지, 환산값)
+var copy_button: Button     # 결과를 텍스트로 클립보드에 복사한다 (공유용)
 var restart_button: Button
 var quit_button: Button
 
@@ -75,10 +77,21 @@ func _build_ui() -> void:
 	contribution_label.visible = false
 	vbox.add_child(contribution_label)
 
+	ghost_label = Label.new()  # 유령 구간 점수. 길어질 수 있어서 줄을 바꿔 가며 보여 준다
+	ghost_label.add_theme_font_size_override("font_size", 14)
+	ghost_label.add_theme_color_override("font_color", Color(0.8, 0.88, 1.0))
+	ghost_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	ghost_label.visible = false
+	vbox.add_child(ghost_label)
+
 	var buttons := HBoxContainer.new()
 	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
 	buttons.add_theme_constant_override("separation", 20)
 	vbox.add_child(buttons)
+
+	copy_button = _make_button("결과 복사")  # 재도전/종료와 같은 줄에 둔다 (줄이 늘면 인원이 많은 판에서 화면 높이를 넘긴다)
+	copy_button.pressed.connect(_on_copy_pressed)
+	buttons.add_child(copy_button)
 
 	restart_button = _make_button("재도전")
 	restart_button.pressed.connect(_on_restart_pressed)
@@ -159,6 +172,22 @@ func _update_ui() -> void:
 	else:
 		contribution_label.visible = false
 
+	# 유령 구간 점수: 보스를 일찍 잡은 구간마다 쌓인 값이 게임이 끝날 때까지 누적된 것 (마지막 보스의 구간 포함).
+	# 인원이 달라도 같은 척도로 비교되도록 누적 ÷ 참여 인원 × 최대 인원으로 환산해서 보여 준다.
+	if stats.has("ghost"):
+		var g: Dictionary = stats.ghost
+		var lines: Array[String] = ["유령 구간 점수 (누적 ÷ 참여 %d명 × %d로 환산)" % [g.participants, Balance.MAX_PLAYERS]]
+		lines.append("  레인 데미지: %s  (누적 %s)" % [GhostScore.short_number(g.lane_scaled), GhostScore.short_number(g.lane_total)])
+		lines.append("  보스 레인 데미지: %s  (누적 %s)" % [GhostScore.short_number(g.boss_scaled), GhostScore.short_number(g.boss_total)])
+		if g.participants > 1:
+			lines.append("  레인 순위: %s" % GhostScore.ranking_text(g.lane_ranking))
+			lines.append("  보스 레인 순위: %s" % GhostScore.ranking_text(g.boss_ranking))
+		ghost_label.text = "\n".join(lines)
+		ghost_label.visible = true
+	else:
+		ghost_label.visible = false
+	copy_button.text = "결과 복사"
+
 
 func _format_number(num: float) -> String:
 	if num >= 1000000.0:
@@ -167,6 +196,12 @@ func _format_number(num: float) -> String:
 		return "%.1fK" % (num / 1000.0)
 	else:
 		return "%d" % int(num)
+
+
+## 결과를 공유할 수 있게 텍스트로 클립보드에 복사한다
+func _on_copy_pressed() -> void:
+	DisplayServer.clipboard_set(GhostScore.share_text(result == Result.VICTORY, stats))
+	copy_button.text = "복사됨!"
 
 
 func _on_restart_pressed() -> void:

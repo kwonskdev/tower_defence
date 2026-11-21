@@ -18,11 +18,12 @@ var invested: int = 0          # 이 타워에 쓴 골드 (건설 + 진화 + B �
 
 # 전적
 var total_damage: float = 0.0  # 누적 피해 (맞은 시점에 오른다. 독/표식 피해도 건 타워 몫)
+var ghost_damage: float = 0.0  # 유령에게 준 누적 피해 (total_damage와 따로 센다. 독/표식 피해도 건 타워 몫)
 var kills: int = 0             # 처치 수 (마지막 한 방을 때린 타워만 오른다. 독으로 죽이면 독을 건 타워)
 var selected: bool = false     # 선택되면 사거리를 보여준다
 
 # 내구도: 슬라임 새끼 같은 몬스터가 갉으면 닳고, 한 번 닳으면 회복되지 않는다. 0이 되면 부서진다 (LaneController가 처리).
-# (길이 막혀서 뚫고 오는 일반 몬스터는 지금처럼 한 번에 부순다)
+# 길이 막혀서 뚫고 오는 유령도 이 내구도를 깎는다. (길이 막혀서 뚫고 오는 일반 몬스터는 지금처럼 한 번에 부순다)
 var durability: float = Balance.TOWER_DURABILITY
 
 # 보스 스킬 봉인: 남은 시간 동안 조준, 공격, 충전을 못 한다. seal_warn은 봉인 예고 표식.
@@ -99,6 +100,11 @@ func record_damage(applied: float) -> void:
 
 func record_kill() -> void:
 	kills += 1
+
+
+## 유령을 때렸다 (LaneController가 유령의 ghost_hit 신호를 받아서 부른다). 레인 전체 점수는 LaneController가 따로 센다.
+func record_ghost_damage(amount: float) -> void:
+	ghost_damage += amount
 
 
 # --- 스킬 수치 ---
