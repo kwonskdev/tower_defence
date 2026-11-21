@@ -51,7 +51,7 @@ const PARAMS := {
 	},
 	"boss": {
 		"A": {"chance": [0.10, 0.198], "ratio": [0.20, 0.69], "time": [3.0, 4.96]},   # 방어구 파괴 확률 (+0.2%p/레벨) / 방어력 파괴 비율 (+1%p/레벨) / 지속시간 (+0.04초/레벨)
-		"B": {"chance": [0.03, 0.079], "hp": [0.03, 0.079]},   # 즉사 확률 (+0.1%p/레벨) / 최대 체력 대비 이 비율 이하일 때 (+0.1%p/레벨)
+		"B": {"chance": [0.03, 0.079], "hp": [0.01, 0.059]},   # 즉사 확률 (+0.1%p/레벨) / 최대 체력 대비 이 비율 이하일 때 (+0.1%p/레벨). 판정은 몬스터당 EXECUTE_COOLDOWN초에 한 번
 	},
 	"mass": {
 		"A": {"chance": [0.25, 0.495], "mult": [1.5, 2.97]},   # 강타 확률 (+0.5%p/레벨) / 강타 피해 배율 (+0.03/레벨)
@@ -266,8 +266,8 @@ static func skill_text(evo: String, skill: String, lv) -> String:
 			return "방어구 파괴: %s 확률로 %s간 적 방어력 %s 감소" % [
 				_t(evo, skill, "chance", lv), _t(evo, skill, "time", lv), _t(evo, skill, "ratio", lv)]
 		"bossB":
-			return "처형: %s 확률로 체력 %s 이하 적 즉사 (보스 포함)" % [
-				_t(evo, skill, "chance", lv), _t(evo, skill, "hp", lv)]
+			return "처형: 체력 %s 이하 적에게 몬스터당 %s에 한 번 %s 확률로 즉사 (보스 포함)" % [
+				_t(evo, skill, "hp", lv), fmt("sec", EXECUTE_COOLDOWN), _t(evo, skill, "chance", lv)]
 		"massA":
 			return "강타: %s 확률로 피해 %s" % [_t(evo, skill, "chance", lv), _t(evo, skill, "mult", lv)]
 		"massB":
