@@ -1160,7 +1160,11 @@ func _update_status_panel(lane: LaneController, boss: BossController) -> void:
 
 	var preview := boss.get_next_wave_preview()
 	var wave_left := boss.time_to_next_wave()
-	status_wave_title.text = "다음 웨이브\n%s" % ("%d초 뒤" % ceili(wave_left) if wave_left >= 0.0 else "대기")
+	if boss.ghost_running():  # 유령 구간에는 웨이브가 쉰다: 다음 웨이브 대신 구간이 끝날 때까지 남은 시간을 보여 준다
+		preview = []
+		status_wave_title.text = "유령 구간\n%d초 뒤 종료" % ceili(boss.time_left)
+	else:
+		status_wave_title.text = "다음 웨이브\n%s" % ("%d초 뒤" % ceili(wave_left) if wave_left >= 0.0 else "대기")
 	for i in range(status_wave_rows.size()):
 		var r: Dictionary = status_wave_rows[i]
 		r.row.visible = i < preview.size()
@@ -1170,7 +1174,7 @@ func _update_status_panel(lane: LaneController, boss: BossController) -> void:
 			r.dot.queue_redraw()
 			r.label.text = "%s x%d%s" % [e.name, e.count, "(공)" if e.flying else ""]
 
-	var affix := boss.get_next_wave_affix()
+	var affix := {} if boss.ghost_running() else boss.get_next_wave_affix()  # 유령 구간에는 웨이브가 없어서 변형도 없다
 	status_affix_label.visible = not affix.is_empty()
 	if not affix.is_empty():
 		status_affix_label.text = "%s 웨이브!" % affix.name
@@ -1329,6 +1333,8 @@ func _flash_life_loss() -> void:
 func _check_boss_time_warning(boss: BossController) -> void:
 	if boss.state != BossController.State.RUNNING or boss.level == _warned_level:
 		return
+	if boss.ghost_running():
+		return  # 보스를 이미 잡았다: 이때 남은 시간은 "다음 보스까지"라서 패배 경고를 띄우지 않는다
 	if boss.time_left > BOSS_TIME_WARNING:
 		return
 	_warned_level = boss.level
@@ -1770,6 +1776,8 @@ class PauseOverlay extends Control:
 				"text": "제한시간 안에 보스를 무찌르세요.\n보스가 보내는 몬스터가 끝까지 가지 못하게 막아야 해요.\n생명이 0이 되거나 시간이 끝나면 패배예요."},
 			{"name": "진행", "color": gold, "children": [],
 				"text": "게임을 시작하면 %d초마다 수입이 들어오고,\n보스가 몬스터들을 보내와요.\n시작 전에는 타워를 미리 지을 수 있어요." % int(Balance.INCOME_INTERVAL)},
+			{"name": "유령 구간", "color": Color(0.75, 0.82, 1.0), "children": [],
+				"text": "보스를 제한시간이 남은 채로 잡으면 남은 시간 동안 유령 구간이 돼요.\n웨이브는 쉬고 수입은 그대로 들어와요. 끝나면 다음 보스가 나와요 (마지막 보스는 승리).\n\n모든 레인과 보스 레인에 죽지 않는 유령이 나와요. 타워가 유령에게 준 피해는 레인 데미지, 보스 앞 몬스터가 준 피해는 보스 레인 데미지로 따로 쌓여요. 일찍 잡을수록 점수를 쌓을 시간이 길어요.\n\n유령은 길이 열려 있으면 타워를 건드리지 않고 지나가요. 길을 완전히 막으면 타워를 부수고 가요 (부서진 타워는 돌아오지 않아요). 끝까지 가도 생명은 안 깎이고, 처음부터 다시 나와요.\n\n결과 화면에는 (누적 ÷ 참여 인원 × %d)로 환산한 점수가 나와요." % Balance.MAX_PLAYERS},
 			{"name": "타워", "color": Color(0.5, 0.85, 1.0), "children": towers,
 				"text": "타워를 고르고 맵의 빈 타일을 누르면 지어져요.\n지은 타워를 누르면 진화와 색깔 바꾸기를 할 수 있어요.\n길을 완전히 막으면 몬스터가 타워를 부수며 와요.\n\n타워 종류를 눌러 자세히 보세요."},
 			{"name": "몬스터", "color": Color(1.0, 0.6, 0.55), "children": monsters,
@@ -1868,17 +1876,37 @@ func _update_hud():
 		BossController.State.WAITING: lines.append("[시작 대기]")
 		BossController.State.VICTORY: lines.append("[전체 승리!]")
 		BossController.State.DEFEAT: lines.append("[패배]")
+	if boss.ghost_running():
+		lines.append_array(_ghost_hud_lines(boss))  # 어느 레인을 보고 있어도 남은 시간과 실시간 순위를 보여 준다
 	if game_field.current_player_id == GameField.BOSS_LANE_ID:
-		lines.append("BOSS Lv.%d/%d %s%s  %d/%d  남은 %d초" % [
-			boss.level, BossLevels.COUNT, boss.level_data.name, boss.phase_text(), int(boss.hp), int(boss.max_hp), int(boss.time_left)])
-		if boss.total_dps > 0.0:  # 보스 앞에 서 있는 몬스터들이 1초에 주는 피해
-			var eta := boss.hp / boss.effective_dps()
-			lines.append("초당 %.1f 피해 (%d마리) → %d초 뒤 처치%s" % [
-				boss.effective_dps(), boss.get_attacker_count(), ceili(eta), " (시간 부족!)" if eta > boss.time_left else ""])
+		if boss.ghost_running():
+			if boss.total_dps > 0.0:
+				lines.append("유령에게 초당 %.1f 피해 (보스 앞 %d마리)" % [boss.total_dps, boss.get_attacker_count()])
+			else:
+				lines.append("유령을 공격 중인 몬스터 없음")
 		else:
-			lines.append("보스를 공격 중인 몬스터 없음")
+			lines.append("BOSS Lv.%d/%d %s%s  %d/%d  남은 %d초" % [
+				boss.level, BossLevels.COUNT, boss.level_data.name, boss.phase_text(), int(boss.hp), int(boss.max_hp), int(boss.time_left)])
+			if boss.total_dps > 0.0:  # 보스 앞에 서 있는 몬스터들이 1초에 주는 피해
+				var eta := boss.hp / boss.effective_dps()
+				lines.append("초당 %.1f 피해 (%d마리) → %d초 뒤 처치%s" % [
+					boss.effective_dps(), boss.get_attacker_count(), ceili(eta), " (시간 부족!)" if eta > boss.time_left else ""])
+			else:
+				lines.append("보스를 공격 중인 몬스터 없음")
 	hud_label.text = "\n".join(lines)
 	hud_label.visible = not lines.is_empty()
+
+## 유령 구간 하단 안내: 남은 시간과 실시간 순위 (레인 데미지 = 타워가 유령에게 준 피해 / 보스 레인 데미지 = 보스 앞 몬스터가 준 피해).
+## 구간마다 쌓인 값이 게임이 끝날 때까지 누적된 것이다.
+func _ghost_hud_lines(boss: BossController) -> Array[String]:
+	var summary := boss.ghost_summary()
+	var lines: Array[String] = []
+	var until := "승리까지" if boss.level >= BossLevels.COUNT else "다음 보스(Lv.%d)까지" % (boss.level + 1)
+	lines.append("[유령 구간] %s %d초" % [until, ceili(boss.time_left)])
+	lines.append("레인 데미지 순위: %s" % GhostScore.ranking_text(summary.lane_ranking))
+	lines.append("보스 레인 데미지 순위: %s" % GhostScore.ranking_text(summary.boss_ranking))
+	return lines
+
 
 func _update_tower_info(lane: LaneController):
 	var t := game_field.get_selected_tower()
@@ -1891,7 +1919,9 @@ func _update_tower_info(lane: LaneController):
 		title += " · " + Evolutions.evo_name(t.evolution)
 	var text := "%s · 피해 %.2f · %.2f초 · 사거리 %.1f\n처치 %d · 누적 %.0f" % [
 		title, t.cur_damage(), t.cur_cooldown(), t.cur_range(), t.kills, t.total_damage]
-	if t.durability < Balance.TOWER_DURABILITY - 0.001:  # 슬라임 새끼에게 갉인 타워 (회복되지 않는다)
+	if t.ghost_damage > 0.0:  # 유령 구간에 이 타워가 유령에게 준 피해
+		text += "\n유령 피해 %.0f" % t.ghost_damage
+	if t.durability < Balance.TOWER_DURABILITY - 0.001:  # 슬라임 새끼나 유령에게 갉인 타워 (골드로만 회복된다)
 		text += "\n내구도 %d / %d" % [roundi(t.durability), roundi(Balance.TOWER_DURABILITY)]
 	if t.sealed_time > 0.0:
 		text += "\n봉인 %d초" % ceili(t.sealed_time)
@@ -2182,6 +2212,9 @@ func _collect_game_stats(is_victory: bool) -> Dictionary:
 				})
 			contributions.sort_custom(func(a, b): return a.damage > b.damage)
 			stats.contributions = contributions
+
+		# 유령 구간 점수: 보스를 일찍 잡은 구간마다 쌓인 값이 게임이 끝날 때까지 누적된 것 (마지막 보스의 구간 포함)
+		stats.ghost = boss.ghost_summary()
 
 	return stats
 
