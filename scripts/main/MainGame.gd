@@ -87,6 +87,11 @@ var _paused_at_ms := 0                   # 멈춘 시각 (Monster의 강화 버�
 # 보스 스킬 배너: 어느 레인을 보고 있든 맵 위쪽에 뜬다. 여러 개가 겹치면 차례로 보여 준다.
 const SKILL_BANNER_SECONDS := 5.0        # 알림이 떠 있는 시간 (발동까지 예고 시간이 있으면 그만큼 더)
 var skill_banner: PanelContainer
+var _notice_text := ""                   # 하단 안내 줄에 잠깐 띄우는 명령 거절 사유
+var _notice_time := 0.0                  # 남은 표시 시간(초)
+const NOTICE_SECONDS := 2.5
+const EXPLAIN_COLOR := Color(0.7, 1.0, 0.8)
+const NOTICE_COLOR := Color(1.0, 0.6, 0.45)
 var skill_banner_title: Label
 var skill_banner_text: Label
 var _banner_queue: Array = []            # 기다리는 알림 [{name, text, lane, delay, boss}]
@@ -175,6 +180,7 @@ func setup_ui():
 	_create_status_panel()
 	_create_confirm_dialog()
 	_create_skill_banner()
+	game_field.command_failed.connect(_on_command_failed)
 	_create_game_over_screen()
 	_create_pause_ui()
 	_create_alerts()
@@ -735,8 +741,11 @@ func _refresh_upgrade_views(lane: LaneController) -> void:
 
 
 ## 하단 메시지 칸에 보여줄 설명: 지금 고른 타워/몬스터/업그레이드 항목 (폰에는 툴팁이 없다)
+## 거절 사유 안내가 떠 있는 동안은 설명 대신 그 문구를 (다른 색으로) 보여 준다.
 func _update_explain(lane: LaneController) -> void:
-	var text := _explain_text(lane)
+	var showing_notice := _notice_time > 0.0
+	var text := _notice_text if showing_notice else _explain_text(lane)
+	explain_label.add_theme_color_override("font_color", NOTICE_COLOR if showing_notice else EXPLAIN_COLOR)
 	explain_label.text = text
 	explain_label.visible = text != ""
 
@@ -915,7 +924,7 @@ func _create_hud():
 	explain_label = Label.new()
 	explain_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	explain_label.add_theme_font_size_override("font_size", FONT_SMALL)
-	explain_label.add_theme_color_override("font_color", Color(0.7, 1.0, 0.8))
+	explain_label.add_theme_color_override("font_color", EXPLAIN_COLOR)
 	explain_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	explain_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	explain_label.visible = false
@@ -1776,7 +1785,18 @@ class PauseOverlay extends Control:
 			go_back()
 
 
+## 내가 보낸 명령이 거절되면 하단 안내 줄에 사유를 잠깐 보여 준다 (새 팝업 없이, 안내 구역 안에서)
+func _on_command_failed(_type: String, reason: String) -> void:
+	var text := CommandMessages.text(reason)
+	if text == "":
+		return
+	_notice_text = text
+	_notice_time = NOTICE_SECONDS
+	_hud_timer = 0.0  # 바로 갱신
+
+
 func _process(delta):
+	_notice_time = maxf(0.0, _notice_time - delta)
 	if _play_running and not game_over_screen.visible:
 		_play_time += delta
 	if map_overlay != null:  # 맵 왼쪽 위 모서리를 따라간다 (맵 크기/위치가 바뀌어도)

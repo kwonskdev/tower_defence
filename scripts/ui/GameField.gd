@@ -15,6 +15,7 @@ var selected_tower_kind: String = Balance.TOWER_KINDS[0]
 
 var current_tool: PlacementTool = PlacementTool.NONE
 signal path_block_confirm(cell: Vector2i)  # 이 타워를 지으면 길이 막힌다: 사용자에게 확인을 받아야 한다
+signal command_failed(type: String, reason: String)  # 내가 보낸 명령이 거절됐다 (UI가 사유를 안내한다)
 signal tower_selected(tower: Tower)           # 맵에서 지어진 타워를 눌러 선택했다 (건설 모드 중이어도: 상단이 그 타워 화면으로 바뀐다)
 signal boss_ready(boss: BossController)    # 보스가 만들어졌다 (한 프레임 기다린 뒤라서 MainGame._ready 시점에는 아직 없다)
 
@@ -130,6 +131,7 @@ func do_command(type: String, args: Dictionary = {}) -> Dictionary:
 	var result := execute(Command.make(type, session.local_player_id, args))
 	if not result["ok"]:
 		Log.debug(Log.Category.UI, "명령 거절: %s -> %s" % [type, result["reason"]])
+		command_failed.emit(type, result["reason"])
 	return result
 
 func start_lane(player_id: int):
@@ -275,6 +277,7 @@ func _selected_cell_args() -> Dictionary:
 func _do_on_selected(type: String, extra: Dictionary = {}) -> bool:
 	var args := _selected_cell_args()
 	if args.is_empty():
+		command_failed.emit(type, "no_tower")
 		return false
 	args.merge(extra)
 	return do_command(type, args)["ok"]
@@ -359,9 +362,13 @@ func scroll_to_row(row: float):
 
 ## 건설 명령을 보낸다. confirmed: 길이 막히는 걸 알고도 짓겠다고 사용자가 확인한 경우 true
 func place_tower(grid_position: Vector2i, confirmed: bool = false) -> bool:
+	# 이미 타워가 있는 칸을 누른 건 건설 실패가 아니라 타워 선택이다 (호출한 쪽이 선택한다). 거절 안내를 띄우지 않는다.
+	if _tower_at(grid_position) != null:
+		return false
 	# 보고 있는 레인이 남의 레인이면 클릭한 칸은 내 레인의 칸이 아니다 (명령은 내 레인만 가리킨다)
 	if current_player_id != session.local_player_id:
 		Log.debug(Log.Category.TOWER, "내 레인이 아니라서 건설 불가 (보는 레인=%s)" % get_current_grid_system().lane_tag())
+		command_failed.emit(Command.BUILD_TOWER, "not_my_lane")
 		return false
 	var result := do_command(Command.BUILD_TOWER, {"cell": grid_position, "kind_id": selected_tower_kind, "confirmed": confirmed})
 	if result["reason"] == "path_blocked":  # 길이 막힌다: 사용자에게 확인받은 뒤 confirmed=true로 다시 보낸다
