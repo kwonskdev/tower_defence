@@ -731,7 +731,7 @@ func _refresh_upgrade_views(lane: LaneController) -> void:
 			var lv := lane.color_level(cname)
 			var cost := lane.color_upgrade_cost(cname)
 			var type: String = Balance.COLOR_BONUS_TYPES[cname]
-			b.text = "%s\n%s\nLv%d  %s\n%s" % [cname, Balance.COLOR_BONUS_LABELS[type], lv, Balance.color_bonus_value_text(cname, lv), "최대" if cost < 0 else "%d골드" % cost]
+			b.text = "%s\n%s\nLv%d/%d  %s\n%s" % [cname, Balance.COLOR_BONUS_LABELS[type], lv, Balance.COLOR_MAX_LEVEL, Balance.color_bonus_value_text(cname, lv), "최대" if cost < 0 else "%d골드" % cost]
 
 
 ## 하단 메시지 칸에 보여줄 설명: 지금 고른 타워/몬스터/업그레이드 항목 (폰에는 툴팁이 없다)
@@ -1114,7 +1114,7 @@ func _status_icon(kind: String, color: Color, px: int = 24) -> StatusIcon:
 
 func _update_status_panel(lane: LaneController, boss: BossController) -> void:
 	status_lives_label.text = "%d" % lane.lives_shown()
-	status_gold_label.text = "%d" % lane.gold
+	status_gold_label.text = "%d" % lane.gold_shown()
 	var left := lane.income_time_left() if boss.state == BossController.State.RUNNING else -1.0
 	status_income_label.text = "수입 +%d\n%s" % [lane.income, "%d초 뒤" % ceili(left) if left >= 0.0 else "대기"]
 
@@ -1838,8 +1838,8 @@ func _update_tower_info(lane: LaneController):
 	var title: String = t.kind.name
 	if t.evolution != "":
 		title += " · " + Evolutions.evo_name(t.evolution)
-	var text := "%s · 피해 %.2f · %.2f초 · 사거리 %.1f\n처치 %d · 누적 %.0f" % [
-		title, t.cur_damage(), t.cur_cooldown(), t.cur_range(), t.kills, t.total_damage]
+	var text := "%s · 피해 %.1f · 초당 %.2f회 · 사거리 %.1f\n처치 %d · 누적 %.0f" % [
+		title, t.cur_damage(), t.cur_attack_rate(), t.cur_range(), t.kills, t.total_damage]
 	if t.durability < Balance.TOWER_DURABILITY - 0.001:  # 슬라임 새끼에게 갉인 타워 (회복되지 않는다)
 		text += "\n내구도 %d / %d" % [roundi(t.durability), roundi(Balance.TOWER_DURABILITY)]
 	if t.sealed_time > 0.0:
@@ -2104,7 +2104,7 @@ func _collect_game_stats(is_victory: bool) -> Dictionary:
 		stats.total_tower_kills = total_kills
 
 		# 경제
-		stats.final_gold = lane.gold
+		stats.final_gold = lane.gold_shown()
 		stats.final_income = lane.income
 
 	# 몬스터 파견 통계

@@ -43,7 +43,7 @@ const DATA := {
 const PARAMS := {
 	"pierce": {
 		"A": {"count": [2, 3, 4], "falloff": [0.30, 0.20, 0.10]},     # 추가로 관통하는 마릿수 / 관통할 때마다 피해 감소 비율
-		"B": {"dps": [0.05, 0.09, 0.15], "time": [4.0, 6.0, 8.0]},     # 독 1중첩당 초당 피해 / 마지막으로 맞은 뒤 유지 시간
+		"B": {"dps": [5.0, 9.0, 15.0], "time": [4.0, 6.0, 8.0]},      # 독 1중첩당 초당 피해 (방어력 무시) / 마지막으로 맞은 뒤 유지 시간
 	},
 	"boss": {
 		"A": {"chance": [0.15, 0.22, 0.30], "time": [3.0, 4.0, 5.0]},   # 방어구 파괴 확률 / 지속시간
@@ -54,7 +54,7 @@ const PARAMS := {
 		"B": {"radius": [0.5, 0.7, 0.9], "mult": [1.6, 1.8, 2.0]},   # 중심부 반경(칸) / 중심부 피해 배율
 	},
 	"support": {
-		"A": {"radius": [1.2, 1.4, 1.6], "time": [3.0, 3.5, 4.0], "dmg": [0.4, 0.7, 1.1]},   # 구름 반경 / 지속시간 / 표식 1개당 추가 피해
+		"A": {"radius": [1.2, 1.4, 1.6], "time": [3.0, 3.5, 4.0], "dmg": [40.0, 70.0, 110.0]},   # 구름 반경 / 지속시간 / 표식 1개당 추가 피해 (방어력 적용)
 		"B": {"radius": [1.5, 2.0, 2.5], "count": [2, 3, 4]},   # 전파 반경 / 전파 최대 마릿수
 	},
 	"barrage": {
@@ -133,8 +133,8 @@ const STATS := {
 # 진화하면 한 발 피해가 이만큼 배로 늘어난다 (장거리는 진화 전에는 벽 용도라 아주 약하다)
 const DAMAGE_MULT := {"pierce": 4.5, "boss": 4.5}
 
-# 계열별 공격 간격 (없으면 기본 타워 값). 지원형은 구름이 겹쳐 쌓이지 않도록 느리게, 스킬형은 스킬 굴림 횟수를 위해 약간 느리게.
-const COOLDOWN := {"support": 2.5, "skill": 1.0}
+# 계열별 초당 공격 횟수 (없으면 기본 타워 값). 지원형은 구름이 겹쳐 쌓이지 않도록 느리게, 스킬형은 스킬 굴림 횟수를 위해 약간 느리게.
+const ATTACK_RATE := {"support": 0.4, "skill": 1.0}
 
 # 성장형 기본 치명타
 const CRIT_BASE := 0.05
@@ -180,7 +180,7 @@ static func fmt(unit: String, value: float) -> String:
 		"sec": return "%.1f초" % value
 		"cell": return "%.1f칸" % value
 		"mult": return "x%.2f" % value
-		"num": return "%.2f" % value
+		"num": return "%.1f" % value
 	return "%d" % roundi(value)
 
 
@@ -196,7 +196,7 @@ static func skill_text(evo: String, skill: String, lv) -> String:
 			return "관통: 뒤의 적 %d마리까지 관통 (관통할 때마다 피해 -%d%%)" % [
 				int(v(evo, skill, "count", lv)), roundi(v(evo, skill, "falloff", lv) * 100.0)]
 		"pierceB":
-			return "독: 맞은 적에게 중첩 독 (1중첩 초당 %.2f, %d초 유지)" % [
+			return "독: 맞은 적에게 중첩 독 (1중첩 초당 %.0f, 방어력 무시, %d초 유지)" % [
 				v(evo, skill, "dps", lv), int(v(evo, skill, "time", lv))]
 		"bossA":
 			return "방어구 파괴: %d%% 확률로 %d초간 적 방어력 0" % [
@@ -209,7 +209,7 @@ static func skill_text(evo: String, skill: String, lv) -> String:
 		"massB":
 			return "중심부: 폭발 중심 %.1f칸 안은 피해 x%.1f" % [v(evo, skill, "radius", lv), v(evo, skill, "mult", lv)]
 		"supportA":
-			return "표식 구름: 구름(%.1f칸, %.1f초)이 적에게 표식을 남김. 다른 타워가 때리면 표식당 추가 피해 %.1f" % [
+			return "표식 구름: 구름(%.1f칸, %.1f초)이 적에게 표식을 남김. 다른 타워가 때리면 표식당 추가 피해 %.0f (방어력 적용)" % [
 				v(evo, skill, "radius", lv), v(evo, skill, "time", lv), v(evo, skill, "dmg", lv)]
 		"supportB":
 			return "표식 전파: 표식 걸린 적이 죽으면 %.1f칸 안 %d마리에게 표식 이동" % [
@@ -231,7 +231,7 @@ static func skill_text(evo: String, skill: String, lv) -> String:
 			return "성장: 처치마다 치명타 확률 +%.1f%% (최대 %d%%, 치명타 x%.0f)" % [
 				v(evo, skill, "per_kill", lv) * 100.0, roundi(v(evo, skill, "cap", lv) * 100.0), CRIT_MULT]
 		"growthB":
-			return "광란: 치명타 시 공격속도 +%d%% (최대 %d중첩)" % [
+			return "광란: 치명타 시 초당 공격 횟수 +%d%% (최대 %d중첩)" % [
 				roundi(v(evo, skill, "haste", lv) * 100.0), HASTE_MAX_STACKS]
 		"chargeA":
 			return "충전: 적이 없을 때 에너지를 모아, %.0f초 이상이면 적이 올 때 폭발 (충전량 비례)" % CHARGE_MIN

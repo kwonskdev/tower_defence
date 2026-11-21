@@ -9,7 +9,7 @@ class_name Monsters
 ##        일반형/공중형은 타워를 때리지 않아(길이 막히면 한 방에 부순다) null. 슬라임 새끼만 갉으니 값이 있다
 ##   speed: 이동 속도(칸/초) / size, shape, color: 겉모습 / desc: 설명
 ## 있을 때만 쓰는 값
-##   life: 기지에 닿았을 때 줄이는 생명(기본 1) / armor: 한 발 피해 감소 / regen: 초당 최대체력 회복 비율 / flying: 공중
+##   life: 기지에 닿았을 때 줄이는 생명(기본 1) / armor: 방어력 (받는 피해 = 공격력 x 100 / (100 + 방어력)) / flat_reduce: 방어력으로 줄인 최종 피해에서 추가로 빼는 양 / regen: 초당 최대체력 회복 비율 / flying: 공중
 ##   reward: 처치 골드 (없으면 비용의 1/10) / gnaws: true면 시야 안의 벽 타워를 찾아가 dps만큼 갉는다 (공격형은 모두 갉는다)
 ##   ramp, ramp_cap: 보스 앞에 선 뒤 초당 dps가 늘어나는 양과 상한 / aura_radius, aura_bonus: 주변(칸) 몬스터의 dps를 늘려 준다
 ##   보스가 웨이브로 뽑을 때: weight(가중치) / min_level(이 보스 라운드부터) / count(한 묶음 마릿수) / summon_only(스킬로만 나옴)
@@ -21,7 +21,7 @@ class_name Monsters
 ##
 ## 상성 요약 (일반형/공중형)
 ## - 무리(swarm/flock): 마릿수가 많고 약하다 -> 범위 타워.
-## - 갑옷(armored/tank/juggernaut): armor 만큼 한 발 피해가 깎인다 -> 한 발이 센 타워, 방어구 파괴(장거리 보스형), 독(관통형).
+## - 갑옷(armored/tank/juggernaut): 방어력만큼 받는 피해 비율이 줄어든다 -> 방어구 파괴(장거리 보스형), 방어력 관통(파랑), 방어력을 무시하는 독(관통형).
 ## - 재생(regen): 초당 체력을 회복한다 -> 한곳에 화력을 집중.
 ## - 질주(runner): 빨라서 사거리 안에 머무는 시간이 짧다 -> 장거리.
 ## - 공중(flyer/flock/bomber): 미로를 무시하고 직선으로 온다 -> 대공 타워만 공격 가능.
@@ -65,80 +65,80 @@ const SLOTS := {
 
 const DATA := {
 	# --- 공격형: 수입 계열 ---
-	"worker": {"name": "일꾼", "category": "attack", "family": "수입", "cost": 20, "income": 3, "hp": 30.0, "dps": 0.3, "speed": 3.0, "size": 0.85, "shape": "hat",
+	"worker": {"name": "일꾼", "category": "attack", "family": "수입", "cost": 20, "income": 3, "hp": 3000.0, "dps": 0.3, "speed": 3.0, "size": 0.85, "shape": "hat",
 		"color": Color(0.85, 0.8, 0.3), "weight": 0.6, "min_level": 3, "desc": "싸고 가볍게 수입을 올린다."},
-	"miner": {"name": "광부", "category": "attack", "family": "수입", "cost": 60, "income": 10, "hp": 90.0, "dps": 0.5, "speed": 2.6, "size": 1.0, "shape": "pick",
+	"miner": {"name": "광부", "category": "attack", "family": "수입", "cost": 60, "income": 10, "hp": 9000.0, "dps": 0.5, "speed": 2.6, "size": 1.0, "shape": "pick",
 		"color": Color(0.6, 0.5, 0.35), "weight": 0.4, "min_level": 3, "desc": "일꾼보다 비싸지만 골드당 수입이 더 좋다."},
-	"vault": {"name": "금고지기", "category": "attack", "family": "수입", "cost": 150, "income": 28, "hp": 225.0, "dps": 0.8, "speed": 2.2, "size": 1.2, "shape": "vault",
+	"vault": {"name": "금고지기", "category": "attack", "family": "수입", "cost": 150, "income": 28, "hp": 22500.0, "dps": 0.8, "speed": 2.2, "size": 1.2, "shape": "vault",
 		"life": 2, "color": Color(0.55, 0.6, 0.65), "weight": 0.3, "min_level": 5, "desc": "아주 비싸지만 골드당 수입이 훨씬 좋다. 오래 가는 판에서 이득."},
-	"banker": {"name": "투자자", "category": "attack", "family": "수입", "cost": 400, "income": 90, "hp": 600.0, "dps": 1.0, "speed": 2.0, "size": 1.3, "shape": "tophat",
+	"banker": {"name": "투자자", "category": "attack", "family": "수입", "cost": 400, "income": 90, "hp": 60000.0, "dps": 1.0, "speed": 2.0, "size": 1.3, "shape": "tophat",
 		"life": 2, "color": Color(0.25, 0.25, 0.3), "weight": 0.2, "min_level": 8, "desc": "초고가 수입 몬스터. 골드당 수입이 최고지만 본전 회수가 느리다."},
 	# --- 공격형: 화력 계열 ---
-	"warrior": {"name": "전사", "category": "attack", "family": "화력", "cost": 40, "income": 1, "hp": 60.0, "dps": 4.0, "speed": 3.0, "size": 1.0, "shape": "horn",
+	"warrior": {"name": "전사", "category": "attack", "family": "화력", "cost": 40, "income": 1, "hp": 6000.0, "dps": 4.0, "speed": 3.0, "size": 1.0, "shape": "horn",
 		"color": Color(0.8, 0.35, 0.3), "weight": 0.6, "min_level": 3, "desc": "기본 화력 몬스터."},
-	"knight": {"name": "기사", "category": "attack", "family": "화력", "cost": 100, "income": 2, "hp": 150.0, "dps": 11.0, "speed": 2.8, "size": 1.1, "shape": "armor",
+	"knight": {"name": "기사", "category": "attack", "family": "화력", "cost": 100, "income": 2, "hp": 15000.0, "dps": 11.0, "speed": 2.8, "size": 1.1, "shape": "armor",
 		"color": Color(0.35, 0.5, 0.8), "weight": 0.4, "min_level": 3, "desc": "골드당 화력이 전사보다 좋다."},
-	"crusher": {"name": "파괴자", "category": "attack", "family": "화력", "cost": 260, "income": 4, "hp": 390.0, "dps": 32.0, "speed": 2.4, "size": 1.25, "shape": "spike",
+	"crusher": {"name": "파괴자", "category": "attack", "family": "화력", "cost": 260, "income": 4, "hp": 39000.0, "dps": 32.0, "speed": 2.4, "size": 1.25, "shape": "spike",
 		"life": 2, "color": Color(0.7, 0.3, 0.9), "weight": 0.3, "min_level": 6, "desc": "높은 화력. 가시가 달린 거대 몬스터."},
-	"giant": {"name": "거인", "category": "attack", "family": "화력", "cost": 700, "income": 8, "hp": 1050.0, "dps": 95.0, "speed": 1.8, "size": 1.6, "shape": "spike",
+	"giant": {"name": "거인", "category": "attack", "family": "화력", "cost": 700, "income": 8, "hp": 105000.0, "dps": 95.0, "speed": 1.8, "size": 1.6, "shape": "spike",
 		"life": 3, "color": Color(0.6, 0.15, 0.15), "weight": 0.2, "min_level": 9, "desc": "최강 화력. 아주 비싸고 느리다."},
 	# --- 공격형: 균형 계열 ---
-	"scout": {"name": "정찰병", "category": "attack", "family": "균형", "cost": 30, "income": 2, "hp": 45.0, "dps": 1.5, "speed": 4.5, "size": 0.8, "shape": "runner",
+	"scout": {"name": "정찰병", "category": "attack", "family": "균형", "cost": 30, "income": 2, "hp": 4500.0, "dps": 1.5, "speed": 4.5, "size": 0.8, "shape": "runner",
 		"color": Color(0.5, 0.8, 0.95), "weight": 0.6, "min_level": 3, "desc": "빨리 도착한다. 수입과 화력이 모두 낮지만 값이 싸다."},
-	"mercenary": {"name": "용병", "category": "attack", "family": "균형", "cost": 80, "income": 5, "hp": 120.0, "dps": 5.0, "speed": 3.2, "size": 1.0, "shape": "shield",
+	"mercenary": {"name": "용병", "category": "attack", "family": "균형", "cost": 80, "income": 5, "hp": 12000.0, "dps": 5.0, "speed": 3.2, "size": 1.0, "shape": "shield",
 		"color": Color(0.95, 0.65, 0.2), "weight": 0.4, "min_level": 3, "desc": "수입과 화력이 고루 괜찮다."},
 	# --- 공격형: 특수 ---
-	"berserker": {"name": "광전사", "category": "attack", "family": "특수", "cost": 50, "income": 0, "hp": 75.0, "dps": 8.0, "speed": 3.5, "size": 1.0, "shape": "flame",
+	"berserker": {"name": "광전사", "category": "attack", "family": "특수", "cost": 50, "income": 0, "hp": 7500.0, "dps": 8.0, "speed": 3.5, "size": 1.0, "shape": "flame",
 		"color": Color(0.9, 0.25, 0.1), "weight": 0.4, "min_level": 3, "desc": "수입은 전혀 안 오르지만 골드당 화력이 매우 좋다."},
-	"rusher": {"name": "돌격병", "category": "attack", "family": "특수", "cost": 45, "income": 1, "hp": 67.5, "dps": 3.0, "speed": 7.0, "size": 0.8, "shape": "runner",
+	"rusher": {"name": "돌격병", "category": "attack", "family": "특수", "cost": 45, "income": 1, "hp": 6750.0, "dps": 3.0, "speed": 7.0, "size": 0.8, "shape": "runner",
 		"color": Color(1.0, 0.9, 0.3), "weight": 0.4, "min_level": 3, "desc": "거의 즉시 도착한다. 시간이 급할 때 쓴다."},
-	"sprout": {"name": "대기만성", "category": "attack", "family": "특수", "cost": 120, "income": 3, "hp": 180.0, "dps": 1.0, "speed": 2.8, "size": 1.0, "shape": "sprout",
+	"sprout": {"name": "대기만성", "category": "attack", "family": "특수", "cost": 120, "income": 3, "hp": 18000.0, "dps": 1.0, "speed": 2.8, "size": 1.0, "shape": "sprout",
 		"ramp": 0.12, "ramp_cap": 18.0, "color": Color(0.4, 0.75, 0.3), "weight": 0.3, "min_level": 4,
 		"desc": "처음엔 약하지만 보스 앞에 서 있을수록 점점 강해진다 (초당 +0.12, 최대 18)."},
 	# --- 지원형 ---
-	"cheer": {"name": "응원단", "category": "support", "cost": 90, "income": 3, "hp": 135.0, "dps": 0.0, "speed": 3.0, "size": 1.0, "shape": "flag",
+	"cheer": {"name": "응원단", "category": "support", "cost": 90, "income": 3, "hp": 13500.0, "dps": 0.0, "speed": 3.0, "size": 1.0, "shape": "flag",
 		"aura_radius": 2.2, "aura_bonus": 0.3, "color": Color(0.95, 0.5, 0.7), "weight": 0.3, "min_level": 3,
 		"desc": "스스로는 안 싸우지만 주변(2.2칸) 몬스터의 공격력을 +30%."},
-	"banner": {"name": "군기병", "category": "support", "cost": 220, "income": 4, "hp": 330.0, "dps": 0.0, "speed": 2.6, "size": 1.15, "shape": "banner",
+	"banner": {"name": "군기병", "category": "support", "cost": 220, "income": 4, "hp": 33000.0, "dps": 0.0, "speed": 2.6, "size": 1.15, "shape": "banner",
 		"aura_radius": 3.0, "aura_bonus": 0.5, "color": Color(0.9, 0.75, 0.25), "weight": 0.2, "min_level": 6,
 		"desc": "스스로는 안 싸우지만 주변(3칸) 몬스터의 공격력을 +50%."},
 
 	# --- 일반형 (보스 웨이브) ---
-	"grunt": {"name": "일반", "category": "normal", "cost": 15, "income": 1, "hp": 10.0, "dps": null, "speed": 3.0, "size": 1.0, "shape": "horn",
+	"grunt": {"name": "일반", "category": "normal", "cost": 15, "income": 1, "hp": 1000.0, "dps": null, "speed": 3.0, "size": 1.0, "shape": "horn",
 		"reward": 2, "color": Color(0.85, 0.2, 0.2), "weight": 5.0, "count": 1, "min_level": 1,
 		"desc": "평범한 몬스터."},
-	"runner": {"name": "질주", "category": "normal", "cost": 12, "income": 1, "hp": 5.0, "dps": null, "speed": 5.5, "size": 0.85, "shape": "runner",
+	"runner": {"name": "질주", "category": "normal", "cost": 12, "income": 1, "hp": 500.0, "dps": null, "speed": 5.5, "size": 0.85, "shape": "runner",
 		"reward": 2, "color": Color(0.95, 0.55, 0.15), "weight": 3.0, "count": 1, "min_level": 1,
 		"desc": "빠르다. 사거리 안에 머무는 시간이 짧아서 장거리 타워가 유리."},
-	"swarm": {"name": "무리", "category": "normal", "cost": 6, "income": 0, "hp": 3.0, "dps": null, "speed": 3.8, "size": 0.65, "shape": "horn",
+	"swarm": {"name": "무리", "category": "normal", "cost": 6, "income": 0, "hp": 300.0, "dps": null, "speed": 3.8, "size": 0.65, "shape": "horn",
 		"reward": 1, "color": Color(0.75, 0.4, 0.6), "weight": 3.0, "count": 6, "min_level": 2,
 		"desc": "작은 몬스터가 떼로 몰려온다. 범위 타워가 필요."},
-	"tank": {"name": "중장갑", "category": "normal", "cost": 60, "income": 3, "hp": 35.0, "dps": null, "speed": 1.8, "size": 1.4, "shape": "armor",
-		"life": 2, "armor": 0.25, "reward": 6, "color": Color(0.4, 0.5, 0.65), "weight": 2.0, "count": 1, "min_level": 7,
+	"tank": {"name": "중장갑", "category": "normal", "cost": 60, "income": 3, "hp": 3500.0, "dps": null, "speed": 1.8, "size": 1.4, "shape": "armor",
+		"life": 2, "armor": 100.0, "reward": 6, "color": Color(0.4, 0.5, 0.65), "weight": 2.0, "count": 1, "min_level": 7,
 		"desc": "체력이 많고 느리다. 기지에 닿으면 생명 -2."},
-	"armored": {"name": "갑옷병", "category": "normal", "cost": 35, "income": 2, "hp": 16.0, "dps": null, "speed": 2.6, "size": 1.0, "shape": "armor",
-		"armor": 0.5, "reward": 4, "color": Color(0.75, 0.6, 0.3), "weight": 3.0, "count": 2, "min_level": 5,
-		"desc": "갑옷이 단단해서 약한 타격은 거의 안 먹힌다. 한 발이 센 타워나 방어구 파괴가 필요."},
-	"regen": {"name": "재생체", "category": "normal", "cost": 45, "income": 2, "hp": 22.0, "dps": null, "speed": 2.8, "size": 1.1, "shape": "cross",
+	"armored": {"name": "갑옷병", "category": "normal", "cost": 35, "income": 2, "hp": 1600.0, "dps": null, "speed": 2.6, "size": 1.0, "shape": "armor",
+		"armor": 200.0, "flat_reduce": 10.0, "reward": 4, "color": Color(0.75, 0.6, 0.3), "weight": 3.0, "count": 2, "min_level": 5,
+		"desc": "갑옷이 단단하다. 방어력으로 줄어든 피해에서 10을 더 뺀다 (방어구 파괴, 방어력 관통이 유효)."},
+	"regen": {"name": "재생체", "category": "normal", "cost": 45, "income": 2, "hp": 2200.0, "dps": null, "speed": 2.8, "size": 1.1, "shape": "cross",
 		"regen": 0.07, "reward": 5, "color": Color(0.3, 0.8, 0.5), "weight": 3.0, "count": 1, "min_level": 5,
 		"desc": "체력을 계속 회복한다. 화력이 흩어져 있으면 못 잡는다. 한곳에 집중 필요."},
-	"juggernaut": {"name": "거신병", "category": "normal", "cost": 200, "income": 8, "hp": 80.0, "dps": null, "speed": 1.3, "size": 1.7, "shape": "armor",
-		"life": 3, "armor": 0.8, "regen": 0.02, "reward": 20, "color": Color(0.25, 0.28, 0.35), "weight": 1.0, "count": 1, "min_level": 8,
+	"juggernaut": {"name": "거신병", "category": "normal", "cost": 200, "income": 8, "hp": 8000.0, "dps": null, "speed": 1.3, "size": 1.7, "shape": "armor",
+		"life": 3, "armor": 400.0, "regen": 0.02, "reward": 20, "color": Color(0.25, 0.28, 0.35), "weight": 1.0, "count": 1, "min_level": 8,
 		"desc": "엄청나게 단단하고 느리다. 기지에 닿으면 생명 -3."},
 	# 보스 스킬로만 나온다 (웨이브에 뽑히지 않는다: summon_only). gnaws: 시야 안의 벽 타워를 찾아가 dps만큼 갉아 먹는다.
-	"slimeling": {"name": "슬라임 새끼", "category": "normal", "cost": 8, "income": 0, "hp": 4.0, "dps": 30.0, "speed": 3.4, "size": 0.7, "shape": "spike",
+	"slimeling": {"name": "슬라임 새끼", "category": "normal", "cost": 8, "income": 0, "hp": 400.0, "dps": 30.0, "speed": 3.4, "size": 0.7, "shape": "spike",
 		"reward": 1, "color": Color(0.3, 0.8, 0.35), "weight": 0.0, "count": 1, "min_level": 99, "summon_only": true, "gnaws": true,
 		"desc": "슬라임 대장이 분열하면 나온다. 시야 안의 벽 타워를 갉아 먹는다 (트랩 타워는 보지 못한다)."},
 
 	# --- 공중형 (보스 웨이브) ---
-	"flyer": {"name": "비행", "category": "air", "cost": 20, "income": 1, "hp": 7.0, "dps": null, "speed": 4.0, "size": 0.9, "shape": "bird",
+	"flyer": {"name": "비행", "category": "air", "cost": 20, "income": 1, "hp": 700.0, "dps": null, "speed": 4.0, "size": 0.9, "shape": "bird",
 		"flying": true, "reward": 3, "color": Color(0.5, 0.75, 0.95), "weight": 3.0, "count": 2, "min_level": 4,
 		"desc": "공중으로 미로를 무시하고 직선으로 온다. 대공 타워만 공격 가능."},
-	"flock": {"name": "비행 무리", "category": "air", "cost": 5, "income": 0, "hp": 2.5, "dps": null, "speed": 3.5, "size": 0.6, "shape": "bird",
+	"flock": {"name": "비행 무리", "category": "air", "cost": 5, "income": 0, "hp": 250.0, "dps": null, "speed": 3.5, "size": 0.6, "shape": "bird",
 		"flying": true, "reward": 1, "color": Color(0.95, 0.9, 0.5), "weight": 2.0, "count": 8, "min_level": 6,
 		"desc": "작은 비행 몬스터 떼. 범위 + 대공 타워가 필요."},
-	"bomber": {"name": "폭격기", "category": "air", "cost": 70, "income": 3, "hp": 35.0, "dps": null, "speed": 2.4, "size": 1.4, "shape": "bird",
-		"flying": true, "life": 2, "armor": 0.2, "reward": 8, "color": Color(0.7, 0.25, 0.25), "weight": 2.0, "count": 1, "min_level": 7,
+	"bomber": {"name": "폭격기", "category": "air", "cost": 70, "income": 3, "hp": 3500.0, "dps": null, "speed": 2.4, "size": 1.4, "shape": "bird",
+		"flying": true, "life": 2, "armor": 50.0, "reward": 8, "color": Color(0.7, 0.25, 0.25), "weight": 2.0, "count": 1, "min_level": 7,
 		"desc": "튼튼한 대형 비행 몬스터. 대공 타워를 모아야 한다 (스킬형 포획이 유용). 기지에 닿으면 생명 -2."},
 }
 

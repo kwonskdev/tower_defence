@@ -128,17 +128,22 @@ func color_damage_mult() -> float:
 	return 1.0 + lane.color_bonus_value("빨강", self) if color_info.name == "빨강" else 1.0
 
 
-## 주황 색깔 보너스: 공격속도 배율 (다른 색이면 1.0)
+## 주황 색깔 보너스: 초당 공격 횟수 배율 (다른 색이면 1.0)
 func color_speed_mult() -> float:
 	return 1.0 + lane.color_bonus_value("주황", self) if color_info.name == "주황" else 1.0
 
 
-## 다음 공격까지의 시간 (광란 중첩만큼 빨라진다 + 색깔 보너스)
-func cur_cooldown() -> float:
-	var cd: float = Evolutions.COOLDOWN.get(evolution, kind.cooldown)
+## 초당 공격 횟수 (광란 중첩만큼 늘어난다 + 색깔 보너스)
+func cur_attack_rate() -> float:
+	var rate: float = Evolutions.ATTACK_RATE.get(evolution, kind.attack_rate)
 	if evolution == "growth" and haste_stacks > 0 and has_skill("B"):
-		cd /= 1.0 + haste_stacks * _p("B", "haste")
-	return cd / color_speed_mult()
+		rate *= 1.0 + haste_stacks * _p("B", "haste")
+	return rate * color_speed_mult()
+
+
+## 다음 공격까지의 시간 (초당 공격 횟수의 역수)
+func cur_cooldown() -> float:
+	return 1.0 / cur_attack_rate()
 
 
 ## 실제 사거리 (색깔 보너스 반영)
@@ -170,8 +175,9 @@ func color_bonus_text() -> String:
 		text += " (스킬형은 효과 없음)"
 	return text
 
+## 파랑 색깔 보너스: 적 방어력을 이만큼 무시한다 (다른 색이면 0. 방어력은 Monster가 0까지만 깎는다)
 func armor_penetration() -> float:
-	return minf(lane.color_bonus_value("파랑", self), 0.95) if color_info.name == "파랑" else 0.0
+	return lane.color_bonus_value("파랑", self) if color_info.name == "파랑" else 0.0
 
 
 ## 치명타 확률 (성장형: 처치할 때마다 오른다)
