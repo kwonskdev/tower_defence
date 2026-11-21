@@ -38,11 +38,21 @@ func execute(cmd: Dictionary) -> Dictionary:
 		Log.warn(Log.Category.GAME, "참여자가 아닌 플레이어의 명령 거절: P%d %s" % [player_id, cmd["type"]])
 		return fail("not_participant")
 
+	var lane: LaneController = lanes.get(player_id)  # 참여자는 모두 레인이 있다 (없으면 설정 오류)
 	match cmd["type"]:
 		Command.START_GAME:
 			return _start_game()
 		Command.SET_PAUSE:
 			return _set_pause(cmd["on"])
+		Command.BUILD_TOWER:
+			if lane == null:
+				return fail("no_lane")
+			var reason := lane.try_build_tower(cmd["cell"], cmd["kind_id"], cmd["confirmed"])
+			return ok() if reason == "" else fail(reason)
+		Command.SEND_MONSTER:
+			if lane == null:
+				return fail("no_lane")
+			return _send_monster(lane, player_id, cmd["kind_id"])
 	return fail("not_implemented")  # 나머지 명령은 뒤 커밋에서 붙인다
 
 
@@ -57,6 +67,26 @@ func _start_game() -> Dictionary:
 		lane.begin()
 	boss.begin()
 	Log.info(Log.Category.GAME, "시작 버튼: 레인 %d개 동시 시작" % lanes.size())
+	return ok()
+
+
+## 몬스터를 생산해 보스 레인으로 보낸다 (수입 영구 증가). 검증을 모두 끝낸 뒤 차감 -> 수입 -> 파견을 이어서 한다.
+func _send_monster(lane: LaneController, player_id: int, kind_id: String) -> Dictionary:
+	if boss == null or boss.state != BossController.State.RUNNING:
+		return fail("not_running")
+	var kind: Dictionary = Monsters.DATA.get(kind_id, {})
+	if kind.is_empty():
+		Log.warn(Log.Category.GAME, "알 수 없는 몬스터 종류: %s" % kind_id)
+		return fail("unknown_kind")
+	if not Monsters.can_send_in_pve(kind_id):  # 협력에서는 공격형과 지원형만 만들 수 있다
+		Log.warn(Log.Category.GAME, "협력에서는 %s(%s)를 만들 수 없음" % [kind.name, Monsters.CATEGORY_DATA[kind.category].name])
+		return fail("not_sendable")
+	if not boss.can_spawn_player_monster():
+		return fail("no_spawn_cell")
+	if not lane.try_spend(kind.cost, "%s 생산" % kind.name):
+		return fail(lane.spend_failure(kind.cost))
+	lane.add_income(kind.income)
+	boss.spawn_player_monster(player_id, kind_id)
 	return ok()
 
 

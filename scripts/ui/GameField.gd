@@ -317,64 +317,25 @@ func scroll_to_row(row: float):
 	var target := row * grid_renderer.CELL_SIZE - size.y * 0.5
 	set_v_scroll(maxi(0, int(target)))
 
-## confirmed: 길이 막히는 걸 알고도 짓겠다고 사용자가 확인한 경우 true
+## 건설 명령을 보낸다. confirmed: 길이 막히는 걸 알고도 짓겠다고 사용자가 확인한 경우 true
 func place_tower(grid_position: Vector2i, confirmed: bool = false) -> bool:
+	# 보고 있는 레인이 남의 레인이면 클릭한 칸은 내 레인의 칸이 아니다 (명령은 내 레인만 가리킨다)
 	if current_player_id != session.local_player_id:
 		Log.debug(Log.Category.TOWER, "내 레인이 아니라서 건설 불가 (보는 레인=%s)" % get_current_grid_system().lane_tag())
 		return false
-
-	var lane: LaneController = lanes.get(session.local_player_id)
-	if lane == null:
-		return false
-	var grid_system := get_current_grid_system()
-	var tag := grid_system.lane_tag()
-	var kind := Balance.tower_kind(selected_tower_kind)
-
-	var cell_state := grid_system.get_cell_state(grid_position)
-	# 한 칸에는 타워 1개만 (트랩도 겹쳐 지을 수 없다)
-	if cell_state != GridSystem.CellState.EMPTY:
-		Log.debug(Log.Category.TOWER, "[%s] 타워 건설 실패 %s: 빈 칸 아님(%s)" % [
-			tag, grid_position, grid_system.get_state_name(cell_state)])
-		return false
-	# 길을 막는 타워는 몬스터와 몸이 겹친 칸에 지을 수 없다 (트랩은 위로 지나가므로 가능)
-	if kind.blocks and lane.is_cell_occupied(grid_position):
-		Log.debug(Log.Category.TOWER, "[%s] 타워 건설 실패 %s: 몬스터가 있는 칸" % [tag, grid_position])
-		return false
-	# 이 타워 때문에 길이 완전히 막히면 한 번 확인한다 (막히면 몬스터가 타워를 부수며 돌파한다)
-	if kind.blocks and not confirmed and lane.would_block_path(grid_position):
+	var result := do_command(Command.BUILD_TOWER, {"cell": grid_position, "kind_id": selected_tower_kind, "confirmed": confirmed})
+	if result["reason"] == "path_blocked":  # 길이 막힌다: 사용자에게 확인받은 뒤 confirmed=true로 다시 보낸다
 		awaiting_confirm = true
 		path_block_confirm.emit(grid_position)
-		return false
-	var cost: int = kind.cost
-	if not lane.try_spend(cost, "타워 건설 %s(%s)" % [grid_position, kind.name]):
-		return false
-
-	lane.build_tower(grid_position, selected_tower_kind)
-	Log.info(Log.Category.TOWER, "[%s] 타워 건설 %s: %s" % [tag, grid_position, kind.name])
-	return true
+	return result["ok"]
 
 func set_tower_kind(kind_id: String):
 	selected_tower_kind = kind_id
 	Log.info(Log.Category.UI, "타워 종류 선택: %s" % Balance.tower_kind(kind_id).name)
 
-## 몬스터를 생산해 보스 레인으로 보낸다 (수입 영구 증가)
+## 몬스터 생산 명령을 보낸다
 func send_monster(kind_id: String) -> bool:
-	var lane: LaneController = lanes.get(session.local_player_id)
-	if lane == null or boss == null or boss.state != BossController.State.RUNNING:
-		return false
-	var kind: Dictionary = Monsters.DATA.get(kind_id, {})
-	if kind.is_empty():
-		Log.warn(Log.Category.GAME, "알 수 없는 몬스터 종류: %s" % kind_id)
-		return false
-	if not Monsters.can_send_in_pve(kind_id):  # 협력에서는 공격형과 지원형만 만들 수 있다
-		Log.warn(Log.Category.GAME, "협력에서는 %s(%s)를 만들 수 없음" % [kind.name, Monsters.CATEGORY_DATA[kind.category].name])
-		return false
-	if not lane.try_spend(kind.cost, "%s 생산" % kind.name):
-		return false
-
-	lane.add_income(kind.income)
-	boss.spawn_player_monster(session.local_player_id, kind_id)
-	return true
+	return do_command(Command.SEND_MONSTER, {"kind_id": kind_id})["ok"]
 
 func get_current_tool() -> PlacementTool:
 	return current_tool

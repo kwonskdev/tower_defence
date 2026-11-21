@@ -59,7 +59,35 @@ func begin() -> void:
 
 # --- 타워 ---
 
-## 타워를 짓는다. 검증/골드 차감은 호출하는 쪽(GameField)에서 끝낸 뒤 부른다.
+## 타워 건설 한 번: 검증과 골드 차감과 건설을 한 번에 한다. 성공하면 "", 실패하면 사유 (아무것도 바뀌지 않는다).
+## confirmed: 길이 완전히 막히는 걸 알고도 짓겠다고 이미 확인받았는가
+func try_build_tower(cell: Vector2i, kind_id: String, confirmed: bool) -> String:
+	if not Balance.TOWER_DEFS.has(kind_id):
+		return "unknown_kind"
+	if not _grid.is_valid_position(cell):
+		return "invalid_cell"
+	var kind := Balance.tower_kind(kind_id)
+	# 한 칸에는 타워 1개만 (트랩도 겹쳐 지을 수 없다)
+	var cell_state := _grid.get_cell_state(cell)
+	if cell_state != GridSystem.CellState.EMPTY:
+		Log.debug(Log.Category.TOWER, "[P%d] 타워 건설 실패 %s: 빈 칸 아님(%s)" % [player_id + 1, cell, _grid.get_state_name(cell_state)])
+		return "cell_not_empty"
+	# 길을 막는 타워는 몬스터와 몸이 겹친 칸에 지을 수 없다 (트랩은 위로 지나가므로 가능)
+	if kind.blocks and is_cell_occupied(cell):
+		Log.debug(Log.Category.TOWER, "[P%d] 타워 건설 실패 %s: 몬스터가 있는 칸" % [player_id + 1, cell])
+		return "monster_on_cell"
+	# 이 타워 때문에 길이 완전히 막히면 한 번 확인한다 (막히면 몬스터가 타워를 부수며 돌파한다)
+	if kind.blocks and not confirmed and would_block_path(cell):
+		return "path_blocked"
+	# 차감과 건설은 사이에 실패할 곳 없이 이어서 한다 (골드만 빠지고 건설이 안 되는 일이 없다)
+	if not try_spend(kind.cost, "타워 건설 %s(%s)" % [cell, kind.name]):
+		return spend_failure(kind.cost)
+	build_tower(cell, kind_id)
+	Log.info(Log.Category.TOWER, "[P%d] 타워 건설 %s: %s" % [player_id + 1, cell, kind.name])
+	return ""
+
+
+## 타워를 짓는다 (골드는 건드리지 않는다). 검증과 차감은 try_build_tower가 한다.
 func build_tower(cell: Vector2i, kind_id: String) -> Tower:
 	var kind := Balance.tower_kind(kind_id)
 	var color_info: Dictionary = Balance.TOWER_COLORS.pick_random()  # 모든 색 동일 확률
@@ -231,6 +259,15 @@ func _on_cell_changed(position: Vector2i, _old_state, new_state) -> void:
 ## 다음 수입 지급까지 남은 시간(초)
 func income_time_left() -> float:
 	return _income_timer.time_left
+
+
+## amount 골드를 지금 쓸 수 있으면 "", 못 쓰면 사유 ("lane_inactive" / "not_enough_gold")
+func spend_failure(amount: int) -> String:
+	if not active:
+		return "lane_inactive"
+	if gold < amount:
+		return "not_enough_gold"
+	return ""
 
 
 func try_spend(amount: int, reason: String) -> bool:
