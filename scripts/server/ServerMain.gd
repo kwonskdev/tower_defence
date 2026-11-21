@@ -9,6 +9,7 @@ class_name ServerMain
 ##   --seed=N            시뮬레이션 랜덤 시드. 주지 않으면 매번 다른 판
 ##   --time-scale=N      게임 속도 배율 (기본 1). 테스트로 빨리 끝낼 때
 ##   --bot               자동 플레이어를 붙인다 (참여자 모두). 사람 없이 한 판을 끝까지 돌릴 때
+##   --bot-rich          --bot에 더해 서버 쪽에서 골드를 채워 준다 (스모크 테스트 전용. 보스 Lv.1~10을 끝까지 도는지 볼 때)
 ## 한 판이 끝나면 결과를 로그에 한 줄 남기고 종료한다 (승리 0, 패배 1).
 
 signal finished(victory: bool, info: Dictionary)
@@ -33,10 +34,11 @@ static func arg_value(name: String, fallback: String = "") -> String:
 
 
 func _ready() -> void:
-	var players := clampi(int(arg_value("players", "1")), 1, Balance.MAX_PLAYERS)
-	session.participants.clear()
-	for i in range(players):
-		session.participants.append(i)
+	if arg_value("players") != "":  # 인자가 없으면 세션에 이미 들어 있는 참여자를 그대로 쓴다 (기본은 혼자)
+		session.participants.clear()
+		for i in range(clampi(int(arg_value("players")), 1, Balance.MAX_PLAYERS)):
+			session.participants.append(i)
+	var players := session.participants.size()
 	var seed_text := arg_value("seed")
 	if seed_text != "":
 		session.rng.seed = int(seed_text)
@@ -53,11 +55,12 @@ func _ready() -> void:
 func _on_boss_ready(boss: BossController) -> void:
 	boss.boss_defeated.connect(func(): _finish(true, boss, ""))
 	boss.boss_failed.connect(func(reason: String): _finish(false, boss, reason))
-	if "--bot" in OS.get_cmdline_args() or "--bot" in OS.get_cmdline_user_args():
+	if "--bot" in OS.get_cmdline_args() or "--bot" in OS.get_cmdline_user_args() or "--bot-rich" in OS.get_cmdline_args() or "--bot-rich" in OS.get_cmdline_user_args():
 		for pid in session.participants:
 			var bot := AutoPlayer.new()
 			add_child(bot)
 			bot.setup(field.bus, pid)
+			bot.cheat_gold = "--bot-rich" in OS.get_cmdline_args() or "--bot-rich" in OS.get_cmdline_user_args()
 	var started := field.bus.execute(Command.make(Command.START_GAME, session.local_player_id, {}))
 	if not started["ok"]:
 		Log.warn(Log.Category.GAME, "서버 시작 실패: %s" % started["reason"])

@@ -10,6 +10,7 @@ const EVOLUTION_PICK := {"long": "pierce", "splash": "mass", "air": "barrage"}  
 const MAX_TOWERS := 30                           # 이 수까지만 짓는다 (몬스터가 지나갈 길을 남긴다)
 
 var bus: CommandBus
+var cheat_gold := false                         # 테스트 전용: 서버 쪽에서 골드를 채워 준다 (클라이언트에는 이런 명령이 없다)
 var player_id := 0
 var _cells: Array[Vector2i] = []                # 아직 안 지어 본 칸 (앞에서부터)
 var _kind_i := 0
@@ -34,6 +35,8 @@ func _process(delta: float) -> void:
 	var lane: LaneController = bus.lanes.get(player_id)
 	if lane == null or not lane.active:
 		return
+	if cheat_gold and lane.gold < 3000.0:
+		lane.gold = 3000.0
 	_build(lane, 10)  # 먼저 10기를 깔고
 	_evolve(lane)     # 그다음 진화
 	_build(lane, MAX_TOWERS)
@@ -74,7 +77,7 @@ func _build(lane: LaneController, limit: int) -> void:
 func _send_monsters(lane: LaneController) -> void:
 	if lane.towers.size() < MAX_TOWERS and not _cells.is_empty() and lane.gold_shown() < 100:
 		return  # 아직 타워가 우선
-	var order := ["worker", "miner", "warrior"]
+	var order := ["giant", "crusher", "knight", "warrior"] if cheat_gold else ["worker", "miner", "warrior"]
 	for i in range(3):
 		var kind: String = order[(_send_i + i) % order.size()]
 		if _command(Command.SEND_MONSTER, {"kind_id": kind})["ok"]:
