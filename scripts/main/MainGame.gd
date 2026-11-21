@@ -181,7 +181,7 @@ func setup_ui():
 
 ## 미니맵 바로 왼쪽 우하단에 놓는 실행 버튼 ([생성] / [업그레이드]). 고르기만 해서는 아무 일도 일어나지 않고 이 버튼을 눌러야 실행된다.
 func _make_action_button() -> Button:
-	var b := _make_view_button("", FONT_BODY - 2)
+	var b := _make_view_button("", FONT_SMALL)  # "업그레이드" 5글자가 칸 폭(약 97px)에 들어가는 크기
 	b.pressed.connect(_on_action_pressed)
 	b.focus_mode = Control.FOCUS_NONE
 	action_buttons.append(b)
@@ -731,7 +731,7 @@ func _refresh_upgrade_views(lane: LaneController) -> void:
 			var lv := lane.color_level(cname)
 			var cost := lane.color_upgrade_cost(cname)
 			var type: String = Balance.COLOR_BONUS_TYPES[cname]
-			b.text = "%s\n%s\nLv%d  %s\n%s" % [cname, Balance.COLOR_BONUS_LABELS[type], lv, Balance.color_bonus_value_text(cname, lv), "최대" if cost < 0 else "%d골드" % cost]
+			b.text = "%s\n%s\nLv%d/%d  %s\n%s" % [cname, Balance.COLOR_BONUS_LABELS[type], lv, Balance.COLOR_MAX_LEVEL, Balance.color_bonus_value_text(cname, lv), "최대" if cost < 0 else "%d골드" % cost]
 
 
 ## 하단 메시지 칸에 보여줄 설명: 지금 고른 타워/몬스터/업그레이드 항목 (폰에는 툴팁이 없다)
@@ -1114,7 +1114,7 @@ func _status_icon(kind: String, color: Color, px: int = 24) -> StatusIcon:
 
 func _update_status_panel(lane: LaneController, boss: BossController) -> void:
 	status_lives_label.text = "%d" % lane.lives_shown()
-	status_gold_label.text = "%d" % lane.gold
+	status_gold_label.text = "%d" % lane.gold_shown()
 	var left := lane.income_time_left() if boss.state == BossController.State.RUNNING else -1.0
 	status_income_label.text = "수입 +%d\n%s" % [lane.income, "%d초 뒤" % ceili(left) if left >= 0.0 else "대기"]
 
@@ -1838,8 +1838,8 @@ func _update_tower_info(lane: LaneController):
 	var title: String = t.kind.name
 	if t.evolution != "":
 		title += " · " + Evolutions.evo_name(t.evolution)
-	var text := "%s · 피해 %.2f · %.2f초 · 사거리 %.1f\n처치 %d · 누적 %.0f" % [
-		title, t.cur_damage(), t.cur_cooldown(), t.cur_range(), t.kills, t.total_damage]
+	var text := "%s · 피해 %.1f · 초당 %.2f회 · 사거리 %.1f\n처치 %d · 누적 %.0f" % [
+		title, t.cur_damage(), t.cur_attack_rate(), t.cur_range(), t.kills, t.total_damage]
 	if t.durability < Balance.TOWER_DURABILITY - 0.001:  # 슬라임 새끼에게 갉인 타워 (회복되지 않는다)
 		text += "\n내구도 %d / %d" % [roundi(t.durability), roundi(Balance.TOWER_DURABILITY)]
 	if t.sealed_time > 0.0:
@@ -1853,7 +1853,7 @@ func _update_tower_info(lane: LaneController):
 	var b_known := t.evolution != "" and t.b_learned
 	tower_info_label.text = text.get_slice("\n", 0) if _tower_pick != "" else text  # 진화를 고르는 중에는 설명이 잘 보이게 첫 줄만
 
-	recolor_button.text = "색깔 바꾸기 (%d골드)" % Balance.RECOLOR_COST
+	recolor_button.text = "색깔 바꾸기\n(%d골드)" % Balance.RECOLOR_COST  # 한 줄이면 칸 폭에서 잘린다 (회복 버튼과 같은 두 줄 형식)
 	recolor_button.tooltip_text = "이 타워의 색깔을 지금 색을 뺀 6색 중 랜덤으로 바꿉니다. 색깔 보너스는 그 색의 업그레이드를 따라갑니다."
 	recolor_button.disabled = t.lane != lane or lane.gold < Balance.RECOLOR_COST
 	var hurt := t.durability < Balance.TOWER_DURABILITY - 0.001
@@ -1951,6 +1951,11 @@ func _input(event):
 ## (일시정지 중의 뒤로 가기는 PauseOverlay가 "계속하기"로 처리한다)
 ## 앱이 백그라운드로 가거나 창이 포커스를 잃으면 진행 중인 게임을 자동으로 멈춘다.
 func _notification(what: int) -> void:
+	if what == NOTIFICATION_PREDELETE:
+		# [업그레이드] 버튼은 항목 화면을 처음 열 때 트리에 붙는다. 한 번도 안 열고 끝나면 부모 없이 남아 누수가 되므로 직접 정리한다
+		if detail_action != null and is_instance_valid(detail_action) and detail_action.get_parent() == null:
+			detail_action.free()
+		return
 	if what == NOTIFICATION_APPLICATION_PAUSED or what == NOTIFICATION_WM_WINDOW_FOCUS_OUT:
 		if _play_running and pause_overlay != null:
 			_set_paused(true)
@@ -2099,7 +2104,7 @@ func _collect_game_stats(is_victory: bool) -> Dictionary:
 		stats.total_tower_kills = total_kills
 
 		# 경제
-		stats.final_gold = lane.gold
+		stats.final_gold = lane.gold_shown()
 		stats.final_income = lane.income
 
 	# 몬스터 파견 통계

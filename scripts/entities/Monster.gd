@@ -5,7 +5,8 @@ class_name Monster
 ## - 지상: 타워를 우회해서 목표(EXIT 또는 goal_cell/final_point)로 이동.
 ##   길이 완전히 막히면 앞을 막은 타워를 공격 (일반형 공격력 = 무한대 -> 한 방에 파괴)
 ## - 공중(flying): 미로/타워를 무시하고 맨 아래로 직선 이동. 대공 타워만 공격 가능.
-## - 방어력(armor): 한 발 피해를 평면으로 깎는다. 재생(regen): 초당 최대체력 비율만큼 회복.
+## - 방어력(armor): 받는 피해 = 공격력 x 100 / (100 + 방어력). 갑옷병은 여기에 더해 최종 피해에서 flat_reduce를 뺀다.
+##   재생(regen): 초당 최대체력 비율만큼 회복.
 ## - 보스 레인의 몬스터는 final_point(보스 주변 자리)에 도착하면 멈추고 보스를 지속 공격한다.
 ##   성장(ramp)과 오라(aura)는 BossController가 계산한다.
 ## - preview=true이면 아이콘용 미리보기: 길찾기 없이 제자리에서 애니메이션만 한다.
@@ -20,7 +21,6 @@ const DEFAULT_SPEED := 3.0
 const ARRIVE_DISTANCE := 0.1
 const TOWER_ATTACK_DISTANCE := 0.95   # 웨이포인트 타워 중심까지 이 거리 이하면 타워를 공격
 const FLY_LIFT := 0.42                # 공중 몬스터가 몸을 띄우는 높이(칸)
-const MIN_DAMAGE_RATIO := 0.2         # 방어력이 아무리 높아도 최소한 이 비율만큼은 들어간다
 const VISION_RANGE := 3               # 사방 이 칸 수 안의 타워만 본다
 const VISION_INTERVAL := 0.1          # 시야를 확인하는 주기(초)
 const GNAW_SEEK_RANGE := 4.0          # 갉는 몬스터가 타워를 목표로 삼는 거리 (본 적 있는 타워 중 이 안에 있는 것)
@@ -38,6 +38,7 @@ var max_hp: float = 1.0
 var _base_max_hp: float = 1.0   # 강화가 없을 때의 최대 체력 (setup에서 정해진다)
 var hp: float = 1.0
 var armor: float = 0.0
+var flat_reduce: float = 0.0     # 방어력으로 줄인 최종 피해에서 추가로 빼는 양 (갑옷병). 피해는 0 밑으로 내려가지 않는다
 var regen: float = 0.0           # 초당 최대체력 회복 비율
 var flying: bool = false
 var body_color: Color = Color(0.85, 0.2, 0.2)
@@ -150,16 +151,22 @@ func take_damage(amount: float, source = null) -> void:
 	var consumed := marks
 	marks = []
 	_consumed_marks = consumed
-	for mk in consumed:  # 표식을 먼저 터뜨린다 (이 타격이 먼저 죽이면 지원 타워의 추가 피해가 낭비되므로)
-		_lose_hp(float(mk.dmg), mk.src, source)
-	# 방어력: 한 발 피해를 평면으로 깎되, 최소 MIN_DAMAGE_RATIO는 들어간다 (파랑 타워는 방어력의 일부를 무시)
-	var pen := 0.0
-	if is_instance_valid(source) and source.has_method("armor_penetration"):
-		pen = source.armor_penetration()
-	_lose_hp(maxf(amount - effective_armor() * (1.0 - pen), amount * MIN_DAMAGE_RATIO), source, source)
+	for mk in consumed:  # 표식을 먼저 터뜨린다 (이 타격이 먼저 죽이면 지원 타워의 추가 피해가 낭비되므로). 표식 피해도 방어력을 받는다
+		_lose_hp(_damage_after_armor(float(mk.dmg), mk.src), mk.src, source)
+	_lose_hp(_damage_after_armor(amount, source), source, source)
 	_hit_flash = 0.1
 	if not _dead:
 		_consumed_marks = []
+
+
+## 방어력을 거친 실제 피해: 공격력 x 100 / (100 + 방어력) - flat_reduce (0 미만은 0).
+## 파랑 타워(source)는 방어력을 관통량만큼 무시한다 (방어력은 0까지만 깎인다). 독은 이 계산을 거치지 않는다.
+func _damage_after_armor(amount: float, source) -> float:
+	var pen := 0.0
+	if is_instance_valid(source) and source.has_method("armor_penetration"):
+		pen = source.armor_penetration()
+	var a := maxf(0.0, effective_armor() - pen)
+	return maxf(0.0, amount * Balance.ARMOR_SCALE / (Balance.ARMOR_SCALE + a) - flat_reduce)
 
 
 ## 체력을 실제로 깎는다. damage_source: 누적 피해를 올려 줄 타워, kill_source: 죽였을 때 킬을 올려 줄 타워.

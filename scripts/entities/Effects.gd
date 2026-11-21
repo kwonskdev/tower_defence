@@ -250,7 +250,7 @@ class Cloud extends Node2D:
 	var pos_c: Vector2
 	var radius := 1.2
 	var life := 3.0
-	var mark_dmg := 0.4
+	var mark_dmg := 40.0
 	var color := Color(0.75, 0.5, 1.0)
 	var _t := 0.0
 	var _marked: Dictionary = {}  # 이 구름이 이미 표식을 남긴 몬스터
