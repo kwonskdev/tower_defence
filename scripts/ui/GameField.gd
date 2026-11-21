@@ -255,6 +255,16 @@ func heal_selected_tower() -> bool:
 	return lane != null and lane.heal_tower(get_selected_tower())
 
 
+## 선택한 타워를 판다 (투입 골드의 일부 환급). 내 레인의 타워만 가능하고, 팔고 나면 선택이 풀린다.
+func sell_selected_tower() -> bool:
+	var lane: LaneController = lanes.get(local_player_id)
+	var tower := get_selected_tower()
+	if lane == null or tower == null or not lane.sell_tower(tower):
+		return false
+	select_tower(null)  # 사라진 타워를 계속 선택하고 있지 않게 (사거리 표시, 타워 화면)
+	return true
+
+
 ## 색깔 업그레이드 (골드, 그 색 타워 전체에 적용)
 func upgrade_color(color_name: String) -> bool:
 	var lane: LaneController = lanes.get(local_player_id)

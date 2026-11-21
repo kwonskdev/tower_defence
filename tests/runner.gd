@@ -1,0 +1,23 @@
+extends Node
+## tests/test_*.gd를 하나씩 돌린다. 각 테스트는 CaseBase(case_base.gd)를 상속하고, 끝나면 finished 신호를 보낸다.
+
+func _ready() -> void:
+	var filters: Array = Array(OS.get_cmdline_user_args())
+	var files: Array[String] = []
+	for f in DirAccess.get_files_at("res://tests"):
+		if f.begins_with("test_") and f.ends_with(".gd"):
+			if filters.is_empty() or filters.any(func(x): return f.contains(x)):
+				files.append(f)
+	files.sort()
+	var failed := 0
+	var total := 0
+	for f in files:
+		print("=== ", f, " ===")
+		var test: Node = load("res://tests/" + f).new()
+		add_child(test)
+		await test.finished
+		failed += test.fail_n
+		total += test.pass_n + test.fail_n
+		test.queue_free()
+	print("ALL: %d checks, %d failed (%d files)" % [total, failed, files.size()])
+	get_tree().quit(1 if failed > 0 or files.is_empty() else 0)
