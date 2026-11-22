@@ -52,6 +52,7 @@ func run() -> void:
 	await hud_matches_state(game)
 	await map_view_draws_from_snapshot()
 	await shots_are_events()
+	await warn_events()
 	game.queue_free()
 	await frames(3)
 
@@ -212,5 +213,27 @@ func shots_are_events() -> void:
 	var hurt := await wait_until(func():
 		return lane.monsters.is_empty() or lane.monsters.any(func(m): return is_instance_valid(m) and m.hp < m.max_hp), 20000)
 	check(hurt, "피해는 서버 쪽에서 그대로 들어갔다")
+	game.queue_free()
+	await frames(3)
+
+
+## 슬라임 예고 표식은 이벤트(fx_warn)로 뜨고, 취소 이벤트로 치워진다. 보이는지는 보고 있는 레인으로 정한다
+func warn_events() -> void:
+	print("[맵] 예고 표식 이벤트")
+	var game := (load("res://scenes/main/MainGame.tscn") as PackedScene).instantiate()
+	get_tree().root.add_child.call_deferred(game)
+	await frames(8)
+	var gf: GameField = game.game_field
+	gf.session.events.warn(0, Vector2i(3, 5), 5.0)
+	var found: Array = gf.grid_renderer.get_children().filter(func(c): return c is BossController.SpawnWarning)
+	check(found.size() == 1 and found[0].visible, "내 레인을 보고 있으면 예고 표식이 보인다")
+	await frames(3)
+	gf.switch_player(1)
+	await frames(3)
+	check(not found[0].visible, "다른 레인을 보면 표식이 숨는다")
+	gf.switch_player(0)
+	gf.session.events.warn_clear()
+	await frames(3)
+	check(not is_instance_valid(found[0]) or found[0].is_queued_for_deletion(), "취소 이벤트로 표식이 치워진다")
 	game.queue_free()
 	await frames(3)

@@ -29,7 +29,7 @@ func _server_runs_without_ui() -> void:
 	check(done, "한 판이 끝났다 (결과: %s)" % [server.result])
 	check(server.result.has("victory") and server.result.has("boss_level"), "결과에 승패와 보스 레벨이 있다")
 	check(events.size() > 0, "시뮬레이션이 연출 이벤트를 내보냈다 (%d개)" % events.size())
-	check(events.all(func(ev): return ev.has("type") and (ev.type in ["skill_announced", "game_over"] or (ev.has("lane") and ev.has("pos") and ev.has("color")))), "이벤트는 type과 위치/색(또는 배너 정보)을 가진 순수 데이터")
+	check(events.all(func(ev): return ev.has("type") and (ev.type not in ["fx_ring", "fx_text"] or (ev.has("lane") and ev.has("pos") and ev.has("color")))), "이벤트는 type을 가진 순수 데이터 (링/글자는 레인/위치/색도)")
 	check(JSON.parse_string(JSON.stringify(events[0])) is Dictionary, "이벤트는 JSON이 된다")
 	var drawn := 0
 	for c in server.field.grid_renderer.get_children():

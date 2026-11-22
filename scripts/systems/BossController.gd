@@ -751,7 +751,6 @@ func _update_skills(delta: float) -> void:
 func _cast_skill(skill: Dictionary) -> void:
 	var targets: Array = []
 	var cells := {}       # 분열: 레인 -> 새끼가 나올 칸 (예고 때 정해서 그 칸에 표식을 띄우고, 발동 때 그대로 쓴다)
-	var warnings: Array = []  # 분열: 그 칸에 띄운 표식 노드
 	var text: String = skill.text
 	var warn := Color(0, 0, 0, 0)
 	match skill.effect:
@@ -779,7 +778,7 @@ func _cast_skill(skill: Dictionary) -> void:
 				var spawn_cell: Vector2i = lane.pick_spawn_cell()
 				cells[lane] = spawn_cell
 				if spawn_cell != Pathfinder.NO_GOAL:
-					warnings.append(_add_spawn_warning(lane, spawn_cell, float(skill.get("delay", 0.0))))
+					events.warn(lane.player_id, spawn_cell, maxf(float(skill.get("delay", 0.0)), 0.1))
 		"seal":
 			for lane in _lanes.values():
 				if not lane.active:
@@ -794,7 +793,7 @@ func _cast_skill(skill: Dictionary) -> void:
 	for target in targets:
 		target.set_warn(warn)
 	var delay := float(skill.get("delay", 0.0))
-	_pending_casts.append({"skill": skill, "left": delay, "targets": targets, "cells": cells, "warnings": warnings})
+	_pending_casts.append({"skill": skill, "left": delay, "targets": targets, "cells": cells})
 	events.announce({"name": skill.name, "text": text, "lane": skill.lane, "delay": delay, "boss": level_data.name})
 	Log.info(Log.Category.GAME, "보스 스킬 예고: %s (%.0f초 뒤, 대상 %d마리)" % [skill.name, delay, targets.size()])
 
@@ -803,9 +802,6 @@ func _cast_skill(skill: Dictionary) -> void:
 func _resolve_skill(cast: Dictionary) -> void:
 	var skill: Dictionary = cast.skill
 	var victims: Array = []
-	for warning in cast.warnings:  # 예고 표식은 발동과 함께 사라진다
-		if is_instance_valid(warning):
-			warning.queue_free()
 	for target in cast.targets:
 		if not is_instance_valid(target):  # 예고 중에 죽거나 부서져서 해제됐다
 			continue
@@ -881,29 +877,13 @@ func _spawn_slimelings(skill: Dictionary, cells: Dictionary) -> void:
 			lane.spawn_wave_monster("slimeling", level, cells.get(lane, Pathfinder.NO_GOAL))
 
 
-## 새끼가 나올 칸에 예고 표식을 띄운다 (그 레인을 보고 있을 때만 보인다). seconds 뒤에 저절로 사라진다.
-func _add_spawn_warning(lane: LaneController, cell: Vector2i, seconds: float) -> SpawnWarning:
-	var warning := SpawnWarning.new()
-	warning.lane = lane
-	warning.renderer = _renderer
-	warning.cell = cell
-	warning.total = maxf(seconds, 0.1)
-	warning.left = warning.total
-	warning.z_index = 3
-	warning.visible = lane.lane_visible
-	_renderer.add_child(warning)
-	return warning
-
-
 ## 예고만 하고 발동하지 못한 스킬을 취소한다 (표식도 지운다)
 func _clear_pending_casts() -> void:
 	for cast in _pending_casts:
 		for target in cast.targets:
 			if is_instance_valid(target):
 				target.clear_warn()
-		for warning in cast.warnings:
-			if is_instance_valid(warning):
-				warning.queue_free()
+	events.warn_clear()  # 화면에 떠 있는 예고 표식도 치운다
 	_pending_casts.clear()
 
 
@@ -1130,7 +1110,7 @@ class BossBar extends Node2D:
 ## 슬라임 새끼가 나올 칸의 예고 표식. 예고 시간 동안 바깥 고리가 칸 쪽으로 오므라들어서 "곧 나온다"는 걸 보여 준다.
 ## 그 레인을 보고 있을 때만 보이고, 시간이 다 되면 저절로 사라진다 (발동 때 BossController가 먼저 치우기도 한다).
 class SpawnWarning extends Node2D:
-	var lane: LaneController
+	var is_shown: Callable  # 지금 이 레인을 보고 있는가 (화면이 정한다)
 	var renderer: GridRenderer
 	var cell: Vector2i
 	var color := Color(0.35, 0.9, 0.4)
@@ -1142,7 +1122,7 @@ class SpawnWarning extends Node2D:
 		if left <= 0.0:
 			queue_free()
 			return
-		visible = lane.lane_visible
+		visible = is_shown.call()
 		position = (Vector2(cell) + Vector2(0.5, 0.5)) * float(renderer.CELL_SIZE)
 		queue_redraw()
 

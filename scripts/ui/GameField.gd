@@ -123,6 +123,7 @@ func snapshot(fresh := false) -> Dictionary:
 
 ## 연출을 그릴지 (= 화면이 있는 클라이언트인지). 서버(ServerMain)는 화면이 없으니 끈다: 시뮬레이션은 이벤트를 내보내기만 하고 그리지 않는다.
 var play_effects := true
+var _warnings: Array = []  # 떠 있는 슬라임 예고 표식
 var map_view: MapView = null  # 스냅샷으로 타워/몬스터를 그리는 껍데기들 (서버에는 없다)
 var boss_view: BossController.BossView = null  # 보스 몸통 (스냅샷으로 그린다)
 var boss_bar: BossController.BossBar = null    # 보스 체력바/기여도 (스냅샷으로 그린다)
@@ -147,10 +148,16 @@ func _process(_delta: float) -> void:
 func _on_sim_event(ev: Dictionary) -> void:
 	if not play_effects:
 		return
-	if ev["type"] == "skill_announced":
-		return  # 배너는 화면(MainGame)이 받아서 보여 준다
+	if ev["type"] in ["skill_announced", "game_over"]:
+		return  # 배너와 결과 창은 화면(MainGame)이 받아서 보여 준다
+	if ev["type"] == "fx_warn_clear":
+		for w in _warnings:
+			if is_instance_valid(w):
+				w.queue_free()
+		_warnings.clear()
+		return
 	var lane_id: int = ev["lane"]
-	var shown: bool = (current_player_id == BOSS_LANE_ID) if lane_id == BOSS_LANE_ID else (lanes.has(lane_id) and lanes[lane_id].lane_visible)
+	var shown := lane_id == current_player_id  # 보고 있는 레인에서만 보인다 (화면이 정한다)
 	match ev["type"]:
 		"fx_ring":
 			Effects.ring(grid_renderer, Vector2(ev["pos"][0], ev["pos"][1]), ev["radius"], Color.html(ev["color"]), shown)
@@ -161,6 +168,19 @@ func _on_sim_event(ev: Dictionary) -> void:
 			Effects.view_projectile(grid_renderer, ev, target, shown)
 		"fx_cloud":
 			Effects.view_cloud(grid_renderer, ev, shown)
+		"fx_warn":
+			var warning := BossController.SpawnWarning.new()
+			warning.renderer = grid_renderer
+			warning.cell = Vector2i(ev["cell"][0], ev["cell"][1])
+			warning.total = ev["seconds"]
+			warning.left = warning.total
+			warning.z_index = 3
+			warning.is_shown = func(): return current_player_id == lane_id
+			warning.visible = shown
+			grid_renderer.add_child(warning)
+			_warnings.append(warning)
+		_:
+			pass
 
 
 ## 연출 이벤트 재생. 모르는 이벤트(예: pause)는 무시한다 (MainGame이 직접 처리한다).
@@ -168,8 +188,7 @@ func _play_events(events: Array) -> void:
 	for ev in events:
 		var cell: Vector2i = ev.get("cell", Vector2i.ZERO)
 		var center := Vector2(cell) + Vector2(0.5, 0.5)
-		var lane: LaneController = lanes.get(ev.get("player_id", -1))
-		var shown: bool = lane != null and lane.lane_visible  # 보고 있는 레인에서만 보인다
+		var shown: bool = ev.get("player_id", -1) == current_player_id  # 보고 있는 레인에서만 보인다
 		match ev["type"]:
 			"tower_evolved", "skill_learned":
 				Effects.ring(grid_renderer, center, 0.8, Evolutions.DATA[ev["evo"]].color, shown)
