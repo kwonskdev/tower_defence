@@ -16,6 +16,9 @@ var lives: float = float(Balance.START_LIVES)  # 소수점까지 들고 있다. 
 var active := true
 var started := false  # 시작 버튼을 눌렀는가 (누르기 전에는 타워를 전액 환급으로 팔 수 있다)
 var lane_visible := true
+var show_nodes := true  # 타워/몬스터 노드를 직접 보여 줄지. 화면이 있는 클라이언트는 스냅샷 껍데기(MapView)로 그리므로 끈다
+var events := SimEvents.new()  # 연출 이벤트 통로 (GameField가 세션 것으로 바꿔 끼운다)
+var rng := RandomNumberGenerator.new()  # 이 레인의 시뮬레이션 랜덤 (GameField가 세션 것으로 바꿔 끼운다. 서버만 뽑는다)
 var monsters: Array[Monster] = []  # 필드 위 몬스터 (유령 구간의 유령도 들어 있다: 타워가 똑같이 조준한다)
 var towers: Array[Tower] = []  # 한 칸에 타워 1개
 var ghost_active := false      # 지금 유령 구간인가 (보스를 일찍 잡은 뒤 남은 시간). 켜져 있는 동안 유령 1마리가 끝까지 가면 다시 나온다
@@ -94,13 +97,13 @@ func try_build_tower(cell: Vector2i, kind_id: String, confirmed: bool) -> String
 ## 타워를 짓는다 (골드는 건드리지 않는다). 검증과 차감은 try_build_tower가 한다.
 func build_tower(cell: Vector2i, kind_id: String) -> Tower:
 	var kind := Balance.tower_kind(kind_id)
-	var color_info: Dictionary = Balance.TOWER_COLORS.pick_random()  # 모든 색 동일 확률
+	var color_info: Dictionary = SimRandom.pick(rng, Balance.TOWER_COLORS)  # 모든 색 동일 확률
 	var state := GridSystem.CellState.TOWER if kind.blocks else GridSystem.CellState.TRAP_TOWER
 	_grid.set_cell_state(cell, state)
 
 	var tower := Tower.new()
 	tower.setup(cell, kind, color_info, self, _renderer)
-	tower.visible = lane_visible
+	tower.visible = lane_visible and show_nodes
 	tower.z_index = 1
 	tower.invested = int(kind.cost)  # 건설 골드는 호출한 쪽(GameField.place_tower)이 이미 냈다
 	_renderer.add_child(tower)
@@ -128,7 +131,7 @@ func recolor_tower(tower: Tower) -> String:
 		return spend_failure(Balance.RECOLOR_COST)
 	var candidates: Array = Balance.TOWER_COLORS.filter(func(c): return c.name != tower.color_info.name)
 	var old_name: String = tower.color_info.name
-	var new_info: Dictionary = candidates.pick_random()
+	var new_info: Dictionary = SimRandom.pick(rng, candidates)
 	tower.set_color_info(new_info)
 	Log.info(Log.Category.COLOR, "[P%d] 타워 %s 색깔 변경: %s -> %s" % [player_id + 1, tower.cell, old_name, new_info.name])
 	_on_tower_colors_changed()
@@ -152,16 +155,12 @@ func heal_tower(tower: Tower) -> String:
 
 ## 업그레이드 항목 하나의 현재 레벨 (1~3). 안 올렸으면 1.
 func stat_level(evo: String, skill: String, key: String) -> int:
-	return int(stat_levels.get("%s.%s.%s" % [evo, skill, key], 1))
+	return EconomyRules.stat_level(stat_levels, evo, skill, key)
 
 
 ## 설명 문구용: 이 계열의 항목별 레벨 {"A.count": 2, ...}
 func levels_of(evo: String) -> Dictionary:
-	var levels := {}
-	for skill in ["A", "B"]:
-		for key in Evolutions.PARAMS[evo][skill]:
-			levels["%s.%s" % [skill, key]] = stat_level(evo, skill, key)
-	return levels
+	return EconomyRules.levels_of(stat_levels, evo)
 
 
 ## 타워 1기를 진화시킨다 (골드). 같은 기본 타워가 가진 계열 2개 중 하나를 고르며, 한 번 고르면 바꿀 수 없다. 성공하면 "", 실패하면 사유.
@@ -183,9 +182,9 @@ func evolve_tower(tower: Tower, evo: String) -> String:
 
 ## 타워 1기가 B 스킬을 배우는 비용. 진화 전이거나 이미 배웠으면 -1.
 func learn_cost(tower: Tower) -> int:
-	if tower == null or tower.evolution == "" or tower.b_learned:
+	if tower == null:
 		return -1
-	return Balance.SKILL_LEARN_COST
+	return EconomyRules.learn_cost(tower.evolution, tower.b_learned)
 
 
 ## 타워 1기의 B 스킬을 배운다 (진화처럼 타워마다 따로, 골드). 성공하면 "", 실패하면 사유.
@@ -207,10 +206,7 @@ func learn_tower_skill(tower: Tower) -> String:
 
 ## 항목 레벨을 한 단계 올리는 비용. 올릴 수 없으면 -1 (최대 레벨). 계열의 모든 타워에 적용되고, B 항목은 B를 배운 타워에만 효과가 있다.
 func stat_upgrade_cost(evo: String, skill: String, key: String) -> int:
-	var lv := stat_level(evo, skill, key)
-	if lv >= Evolutions.MAX_LEVEL:
-		return -1
-	return int(Balance.STAT_UPGRADE_COSTS[lv - 1])
+	return EconomyRules.stat_upgrade_cost(stat_levels, evo, skill, key)
 
 
 ## 업그레이드 탭: 항목 하나를 올린다. 그 계열로 진화한 모든 타워가 바로 강해진다. 성공하면 "", 실패하면 사유.
@@ -260,7 +256,7 @@ func find_target(from_cell_pos: Vector2, range_cells: float, anti_air: bool = fa
 
 ## 골드를 화면에 보이는 정수로 (소수점은 내림. 2.8이면 2). 부동소수 오차로 3.0이 2.9999999가 되어 2로 보이지 않도록 아주 작은 값을 더한다.
 static func whole(amount: float) -> int:
-	return floori(amount + 0.000001)
+	return EconomyRules.whole(amount)
 
 
 ## 화면에 보이고 구매 가능 판정에 쓰는 골드 (소수점은 내림)
@@ -270,8 +266,7 @@ func gold_shown() -> int:
 
 ## 이 타워를 지금 팔면 받는 골드. 반올림하지 않고 소수까지 그대로 더한다 (2.8골드면 gold에 2.8이 들어간다).
 func sell_value(tower: Tower) -> float:
-	var ratio := Balance.SELL_REFUND_RATIO if started else Balance.SELL_REFUND_RATIO_BEFORE_START
-	return tower.invested * ratio
+	return EconomyRules.sell_value(tower.invested, started)
 
 
 ## 판매 버튼/확인창에 보이는 환급액 (소수점은 내림)
@@ -281,7 +276,7 @@ func sell_value_shown(tower: Tower) -> int:
 
 ## 팔 때 한 번 더 확인해야 하는가 (진화/B 스킬에 골드를 쓴 타워. 건설만 한 타워는 바로 판다)
 func sell_needs_confirm(tower: Tower) -> bool:
-	return tower.evolution != ""
+	return EconomyRules.sell_needs_confirm(tower.evolution)
 
 
 ## 타워를 판다: 투입 골드의 일부를 돌려받고 타워를 치운 뒤 칸을 비운다. 내 레인의 타워만 가능.
@@ -291,7 +286,6 @@ func sell_tower(tower: Tower) -> bool:
 		return false
 	var refund := sell_value(tower)
 	gold += refund
-	Effects.float_text(_renderer, tower.center_cell_pos(), "판매 +%d" % whole(refund), Color(1.0, 0.9, 0.3), lane_visible)
 	Log.info(Log.Category.ECONOMY, "[P%d] 타워 판매 %s(%s%s): +%.2f골드 (투입 %d) 잔액=%.2f" % [
 		player_id + 1, tower.cell, tower.kind.name,
 		" · " + Evolutions.evo_name(tower.evolution) if tower.evolution != "" else "", refund, tower.invested, gold])
@@ -303,8 +297,8 @@ func sell_tower(tower: Tower) -> bool:
 func _remove_tower(tower: Tower, destroyed: bool) -> void:
 	towers.erase(tower)  # 칸을 비우기 전에 뺀다: 칸이 바뀌는 신호(_on_cell_changed)가 같은 타워를 또 치우지 않게
 	if destroyed:
-		Effects.ring(_renderer, tower.center_cell_pos(), 0.8, Color(1.0, 0.5, 0.2), lane_visible)
-		Effects.float_text(_renderer, tower.center_cell_pos(), "파괴!", Color(1.0, 0.4, 0.3), lane_visible)
+		events.ring(player_id, tower.center_cell_pos(), 0.8, Color(1.0, 0.5, 0.2))
+		events.text(player_id, tower.center_cell_pos(), "파괴!", Color(1.0, 0.4, 0.3))
 	tower.queue_free()
 	_grid.set_cell_state(tower.cell, GridSystem.CellState.EMPTY)  # 부서져서 온 경우는 이미 EMPTY라 아무 일도 없다. 판매면 몬스터가 신호를 받아 길을 다시 짠다
 	_on_tower_colors_changed()
@@ -369,7 +363,7 @@ func would_block_path(cell: Vector2i) -> bool:
 ## 몬스터가 나오는 칸 하나 (없으면 NO_GOAL). 한 웨이브는 같은 칸에서 뭉쳐서 나온다.
 func pick_spawn_cell() -> Vector2i:
 	var cells := _grid.get_spawn_cells()
-	return cells.pick_random() if not cells.is_empty() else Pathfinder.NO_GOAL
+	return SimRandom.pick(rng, cells) if not cells.is_empty() else Pathfinder.NO_GOAL
 
 
 ## 보스의 자동 파견: 이 레인에 몬스터를 보낸다 (level: 보스 라운드. 보상/방어력이 라운드에 따라 오른다)
@@ -386,6 +380,8 @@ func spawn_wave_monster(type_id: String = "grunt", level: int = 1, spawn_cell: V
 	# 체력/공격력은 몬스터마다 고정 (Monsters.gd). 공격형(또는 gnaws)은 시야 안의 벽 타워를 dps만큼 갉는다.
 	var wave_type: Dictionary = Monsters.DATA[type_id]
 	var monster := Monster.new()
+	monster.events = events
+	monster.fx_lane_id = player_id
 	monster.apply_look(wave_type)
 	monster.kind_id = type_id
 	monster.max_hp = Monsters.max_hp(type_id)
@@ -405,7 +401,7 @@ func spawn_wave_monster(type_id: String = "grunt", level: int = 1, spawn_cell: V
 		var affix_data: Dictionary = BossSkills.AFFIXES[affix]
 		monster.speed_boost = float(affix_data.get("speed_mult", 1.0))
 		monster.revive_ratio = float(affix_data.get("revive", 0.0))
-	monster.visible = lane_visible
+	monster.visible = lane_visible and show_nodes
 	monster.z_index = 2
 	monster.setup(_next_monster_id, _grid, _renderer, _pathfinder, spawn_cell)
 	monster.reached_exit.connect(_on_monster_reached_exit)
@@ -485,9 +481,9 @@ func _spread_marks(monster: Monster) -> void:
 			near.append(m)
 	near.sort_custom(func(a: Monster, b: Monster): return a.cell_pos.distance_to(monster.cell_pos) < b.cell_pos.distance_to(monster.cell_pos))
 	for m in near.slice(0, count):
-		var mk: Dictionary = spreadable.pick_random()
+		var mk: Dictionary = SimRandom.pick(rng, spreadable)
 		m.add_mark(mk.src, float(mk.dmg))
-		Effects.ring(_renderer, m.cell_pos, 0.5, Color(0.8, 0.5, 1.0), lane_visible)
+		events.ring(player_id, m.cell_pos, 0.5, Color(0.8, 0.5, 1.0))
 
 
 func _on_monster_died(monster: Monster) -> void:
@@ -515,16 +511,16 @@ func _on_monster_died(monster: Monster) -> void:
 			"보라":  # 처치 시 확률로 체력 +1
 				# 확률은 업그레이드 값 그대로, 성공하면 생명 1 x 군집 배율 (소수로 쌓인다)
 				var chance := color_bonus_value("보라")
-				if lives < Balance.MAX_LIVES and randf() < chance:
+				if lives < Balance.MAX_LIVES and rng.randf() < chance:
 					var gain := cluster_multiplier(killer_tower)
 					add_lives(gain)
-					Effects.float_text(_renderer, monster.cell_pos, "+%s 생명!" % String.num(gain, 2), killer_tower.color_info.color, lane_visible)
+					events.text(player_id, monster.cell_pos, "+%s 생명!" % String.num(gain, 2), killer_tower.color_info.color)
 					Log.info(Log.Category.GAME, "[P%d] 보라 보너스: 체력 +%.2f (현재 %.2f)" % [player_id + 1, gain, lives])
 
 	gold += actual_reward
 	var text := "+%d" % actual_reward if actual_reward == base_reward else "+%d (보너스!)" % actual_reward
-	Effects.float_text(_renderer, monster.cell_pos, text, Color(1.0, 0.9, 0.3), lane_visible)
-	Effects.ring(_renderer, monster.cell_pos, 0.6, monster.body_color, lane_visible)
+	events.text(player_id, monster.cell_pos, text, Color(1.0, 0.9, 0.3))
+	events.ring(player_id, monster.cell_pos, 0.6, monster.body_color)
 	monster.queue_free()
 	Log.debug(Log.Category.ECONOMY, "[P%d] 몬스터#%d 처치 +%d골드 잔액=%.2f" % [
 		player_id + 1, monster.monster_id, actual_reward, gold])
@@ -571,24 +567,21 @@ func is_cell_occupied(cell: Vector2i) -> bool:
 func set_lane_visible(is_shown: bool) -> void:
 	lane_visible = is_shown
 	for m in monsters:
-		m.visible = is_shown
+		m.visible = is_shown and show_nodes
 	for t in towers:
-		t.visible = is_shown
+		t.visible = is_shown and show_nodes
 
 
 # --- 색깔 시스템 ---
 
 ## 색깔의 현재 레벨 (0~5). 0=업그레이드 안 함.
 func color_level(color_name: String) -> int:
-	return int(color_levels.get(color_name, 0))
+	return EconomyRules.color_level(color_levels, color_name)
 
 
 ## 색깔 업그레이드 비용 (현재 레벨에서 다음 레벨로). 최대 레벨이면 -1.
 func color_upgrade_cost(color_name: String) -> int:
-	var cur := color_level(color_name)
-	if cur >= Balance.COLOR_MAX_LEVEL:
-		return -1
-	return Balance.COLOR_UPGRADE_COSTS[cur]  # 현재 레벨 cur -> cur+1 비용
+	return EconomyRules.color_upgrade_cost(color_levels, color_name)  # 현재 레벨 -> 다음 레벨 비용
 
 
 ## 색깔을 업그레이드한다 (골드). 성공하면 "", 실패하면 사유.
@@ -729,9 +722,9 @@ func _reward_pattern(p: Dictionary) -> void:
 	var center := Vector2.ZERO
 	for c in p.cells:
 		center += Vector2(c) + Vector2(0.5, 0.5)
-		Effects.ring(_renderer, Vector2(c) + Vector2(0.5, 0.5), 0.9, color_at.get(c, Color.WHITE), lane_visible)
+		events.ring(player_id, Vector2(c) + Vector2(0.5, 0.5), 0.9, color_at.get(c, Color.WHITE))
 	center /= float(p.cells.size())
-	Effects.float_text(_renderer, center, "%s! %s" % [data.name, ColorPatterns.reward_text(p.id)], Color(1.0, 0.95, 0.5), lane_visible)
+	events.text(player_id, center, "%s! %s" % [data.name, ColorPatterns.reward_text(p.id)], Color(1.0, 0.95, 0.5))
 	Log.info(Log.Category.COLOR, "[P%d] 패턴 완성: %s %s (골드=%.2f 생명=%.2f)" % [
 		player_id + 1, data.name, ColorPatterns.reward_text(p.id), gold, lives])
 
@@ -750,9 +743,9 @@ func _empower_sent_monsters(count: int) -> void:
 		return
 
 	# 랜덤으로 N마리 선택하여 강화
-	my_monsters.shuffle()
+	SimRandom.shuffle(rng, my_monsters)
 	var actual_count := mini(count, my_monsters.size())
 	for i in range(actual_count):
 		my_monsters[i].add_empower(Balance.EMPOWER_DURATION, Balance.EMPOWER_BOOST)
-		Effects.float_text(_renderer, my_monsters[i].cell_pos, "강화!", Color(0.5, 0.5, 1.0), _boss_controller._lane_visible)
+		events.text(GameField.BOSS_LANE_ID, my_monsters[i].cell_pos, "강화!", Color(0.5, 0.5, 1.0))
 	Log.debug(Log.Category.GAME, "[P%d] 남색 보너스: 몬스터 %d마리 강화" % [player_id + 1, actual_count])

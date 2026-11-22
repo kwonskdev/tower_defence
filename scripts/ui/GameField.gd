@@ -16,12 +16,13 @@ var selected_tower_kind: String = Balance.TOWER_KINDS[0]
 var current_tool: PlacementTool = PlacementTool.NONE
 signal path_block_confirm(cell: Vector2i)  # 이 타워를 지으면 길이 막힌다: 사용자에게 확인을 받아야 한다
 signal command_failed(type: String, reason: String)  # 내가 보낸 명령이 거절됐다 (UI가 사유를 안내한다)
-signal tower_selected(tower: Tower)           # 맵에서 지어진 타워를 눌러 선택했다 (건설 모드 중이어도: 상단이 그 타워 화면으로 바뀐다)
+signal tower_selected()           # 맵에서 지어진 타워를 눌러 선택했다 (건설 모드 중이어도: 상단이 그 타워 화면으로 바뀐다)
 signal boss_ready(boss: BossController)    # 보스가 만들어졌다 (한 프레임 기다린 뒤라서 MainGame._ready 시점에는 아직 없다)
 
 var awaiting_confirm: bool = false  # 길 막힘 확인을 기다리는 중 (이 클릭으로는 타워 선택/해제를 하지 않는다)
 var bus: CommandBus  # 상태를 바꾸는 행동은 모두 여기를 지난다 (setup_game_field에서 만든다)
-var selected_tower: Tower = null  # 클릭해서 선택한 타워 (정보/업그레이드 대상)
+var selected_lane := -1                 # 클릭해서 선택한 타워의 레인 번호 (-1 = 선택 없음)
+var selected_cell := Vector2i(-1, -1)   # 클릭해서 선택한 타워의 칸. 타워 정보는 스냅샷에서 읽는다 (정보/업그레이드 대상)
 var side_inset: float = 0.0  # 화면 좌우 안전 여백의 합 (폰 노치/둥근 모서리). 맵이 쓰는 폭 = 화면 폭 - 이 값
 var ui_blockers: Array[Control] = []  # 이 영역 위의 클릭은 맵 클릭으로 처리하지 않는다 (필드 위에 겹친 UI)
 
@@ -43,9 +44,13 @@ func _ready():
 func setup_game_field():
 	current_player_id = session.local_player_id  # 처음에는 내 레인을 본다
 	bus = CommandBus.new(session, lanes)
+	session.events.emitted.connect(_on_sim_event)
 	grid_renderer = GridRenderer.new()
 	grid_renderer.name = "GridRenderer"
 	add_child(grid_renderer)
+	if play_effects:  # 화면이 있는 클라이언트만: 서버 스냅샷으로 타워/몬스터를 그린다
+		map_view = MapView.new(grid_renderer)
+		add_child(map_view)
 
 	# 8명의 플레이어를 위한 그리드 시스템 생성
 	for i in range(MAX_PLAYERS + 1):
@@ -99,8 +104,83 @@ func set_side_inset(value: float) -> void:
 ## 연출 이벤트는 여기(클라이언트)에서만 재생한다. 서버는 CommandBus를 직접 쓰고 이벤트를 무시한다.
 func execute(cmd: Dictionary) -> Dictionary:
 	var result := bus.execute(cmd)
+	_snapshot_frame = -1  # 명령이 상태를 바꿨으니 캐시된 스냅샷은 낡았다
 	_play_events(result["events"])
 	return result
+
+
+## 지금 서버 상태 스냅샷. 화면(HUD)은 시뮬레이션 객체 대신 이것을 읽는다. 같은 프레임 안에서는 한 번만 만든다.
+var _snapshot: Dictionary = {}
+var _snapshot_frame := -1
+
+func snapshot(fresh := false) -> Dictionary:
+	var frame := Engine.get_process_frames()
+	if fresh or frame != _snapshot_frame:
+		_snapshot = Snapshot.build(session, lanes, boss)
+		_snapshot_frame = frame
+	return _snapshot
+
+
+## 연출을 그릴지 (= 화면이 있는 클라이언트인지). 서버(ServerMain)는 화면이 없으니 끈다: 시뮬레이션은 이벤트를 내보내기만 하고 그리지 않는다.
+var play_effects := true
+var _warnings: Array = []  # 떠 있는 슬라임 예고 표식
+var map_view: MapView = null  # 스냅샷으로 타워/몬스터를 그리는 껍데기들 (서버에는 없다)
+var boss_view: BossController.BossView = null  # 보스 몸통 (스냅샷으로 그린다)
+var boss_bar: BossController.BossBar = null    # 보스 체력바/기여도 (스냅샷으로 그린다)
+
+
+func _process(_delta: float) -> void:
+	if map_view == null or boss == null:
+		return
+	var sel_key := ""
+	if selected_lane >= 0:
+		sel_key = "%d:%d:%d" % [selected_lane, selected_cell.x, selected_cell.y]
+	var snap := snapshot()
+	map_view.sync(snap, current_player_id, sel_key)
+	if boss_view != null:
+		boss_view.state = snap.boss
+		boss_bar.state = snap.boss
+		boss_view.visible = current_player_id == BOSS_LANE_ID
+		boss_bar.visible = boss_view.visible
+
+
+## 시뮬레이션이 내보낸 연출 이벤트(SimEvents)를 받아 그린다. 레인이 지금 보이는지는 여기(클라이언트)가 정한다.
+func _on_sim_event(ev: Dictionary) -> void:
+	if not play_effects:
+		return
+	if ev["type"] in ["skill_announced", "game_over"]:
+		return  # 배너와 결과 창은 화면(MainGame)이 받아서 보여 준다
+	if ev["type"] == "fx_warn_clear":
+		for w in _warnings:
+			if is_instance_valid(w):
+				w.queue_free()
+		_warnings.clear()
+		return
+	var lane_id: int = ev["lane"]
+	var shown := lane_id == current_player_id  # 보고 있는 레인에서만 보인다 (화면이 정한다)
+	match ev["type"]:
+		"fx_ring":
+			Effects.ring(grid_renderer, Vector2(ev["pos"][0], ev["pos"][1]), ev["radius"], Color.html(ev["color"]), shown)
+		"fx_text":
+			Effects.float_text(grid_renderer, Vector2(ev["pos"][0], ev["pos"][1]), ev["text"], Color.html(ev["color"]), shown)
+		"fx_shot":
+			var target: Monster = map_view.monster_node(lane_id, ev["target"]) if map_view != null else null
+			Effects.view_projectile(grid_renderer, ev, target, shown)
+		"fx_cloud":
+			Effects.view_cloud(grid_renderer, ev, shown)
+		"fx_warn":
+			var warning := BossController.SpawnWarning.new()
+			warning.renderer = grid_renderer
+			warning.cell = Vector2i(ev["cell"][0], ev["cell"][1])
+			warning.total = ev["seconds"]
+			warning.left = warning.total
+			warning.z_index = 3
+			warning.is_shown = func(): return current_player_id == lane_id
+			warning.visible = shown
+			grid_renderer.add_child(warning)
+			_warnings.append(warning)
+		_:
+			pass
 
 
 ## 연출 이벤트 재생. 모르는 이벤트(예: pause)는 무시한다 (MainGame이 직접 처리한다).
@@ -108,8 +188,7 @@ func _play_events(events: Array) -> void:
 	for ev in events:
 		var cell: Vector2i = ev.get("cell", Vector2i.ZERO)
 		var center := Vector2(cell) + Vector2(0.5, 0.5)
-		var lane: LaneController = lanes.get(ev.get("player_id", -1))
-		var shown: bool = lane != null and lane.lane_visible  # 보고 있는 레인에서만 보인다
+		var shown: bool = ev.get("player_id", -1) == current_player_id  # 보고 있는 레인에서만 보인다
 		match ev["type"]:
 			"tower_evolved", "skill_learned":
 				Effects.ring(grid_renderer, center, 0.8, Evolutions.DATA[ev["evo"]].color, shown)
@@ -117,6 +196,8 @@ func _play_events(events: Array) -> void:
 				Effects.ring(grid_renderer, center, 0.8, _tower_color(ev["color_name"]), shown)
 			"tower_healed":
 				Effects.ring(grid_renderer, center, 0.8, Color(0.4, 1.0, 0.5), shown)
+			"tower_sold":  # "파괴!" 없이 얻은 골드만 띄운다
+				Effects.float_text(grid_renderer, center, "판매 +%d" % ev["gold"], Color(1.0, 0.9, 0.3), shown)
 
 
 func _tower_color(color_name: String) -> Color:
@@ -137,18 +218,35 @@ func do_command(type: String, args: Dictionary = {}) -> Dictionary:
 func start_lane(player_id: int):
 	var lane := LaneController.new()
 	lane.name = "Lane_" + str(player_id)
+	lane.rng = session.rng  # 시뮬레이션 랜덤은 세션 하나를 같이 쓴다
+	lane.events = session.events
+	lane.show_nodes = not play_effects  # 그리는 쪽은 MapView 껍데기
 	add_child(lane)
 	lane.setup(player_id, grid_systems[player_id], grid_renderer)
 	lane.set_lane_visible(player_id == current_player_id)
 	lanes[player_id] = lane
+	_snapshot_frame = -1  # 레인이 늘었으니 캐시된 스냅샷은 낡았다
 
 func start_boss():
 	boss = BossController.new()
 	boss.name = "Boss"
+	boss.rng = session.rng
+	boss.events = session.events
+	boss.show_nodes = not play_effects
 	add_child(boss)
 	bus.boss = boss
 	boss.setup(grid_systems[BOSS_LANE_ID], grid_renderer, lanes)
 	boss.set_lane_visible(current_player_id == BOSS_LANE_ID)
+	_snapshot_frame = -1
+	if play_effects:  # 화면이 있는 클라이언트: 보스 몸통과 체력바는 스냅샷으로 그린다
+		boss_view = BossController.BossView.new()
+		boss_view.renderer = grid_renderer
+		boss_view.z_index = 0
+		grid_renderer.add_child(boss_view)
+		boss_bar = BossController.BossBar.new()
+		boss_bar.renderer = grid_renderer
+		boss_bar.z_index = 5
+		grid_renderer.add_child(boss_bar)
 	boss_ready.emit(boss)
 
 	# 각 레인에 boss 참조 설정 (남색 색깔 보너스용)
@@ -236,44 +334,55 @@ func _on_grid_cell_clicked(grid_position: Vector2i):
 		return
 
 	# 건설 도구가 꺼져 있거나 건설할 수 없는 칸이면: 그 칸의 타워를 선택 (타워가 없으면 선택 해제)
-	select_tower(_tower_at(grid_position))
+	if _tower_view_at(current_player_id, grid_position).is_empty():
+		clear_selection()
+	else:
+		select_tower_at(current_player_id, grid_position)
 
 
-## 지금 보는 레인의 grid_position 칸에 있는 타워 (없으면 null)
-func _tower_at(grid_position: Vector2i) -> Tower:
-	var lane: LaneController = lanes.get(current_player_id)
-	if lane == null:
-		return null
-	for t in lane.towers:
-		if t.cell == grid_position:
+## 레인의 cell 칸에 있는 타워의 스냅샷 항목 (없으면 빈 Dictionary). 방금 일어난 변화도 보이게 새 스냅샷으로 찾는다.
+func _tower_view_at(lane_id: int, cell: Vector2i) -> Dictionary:
+	var lane: Dictionary = snapshot(true).lanes.get(str(lane_id), {})
+	for t in lane.get("towers", []):
+		if t.cell[0] == cell.x and t.cell[1] == cell.y:
 			return t
-	return null
+	return {}
 
 
-## 선택한 타워. 몬스터가 부수는 등으로 사라졌으면 null (해제된 객체를 타입 변수에 담으면 오류라서 꼭 이 함수로 읽는다)
-func get_selected_tower() -> Tower:
-	if is_instance_valid(selected_tower):
-		return selected_tower
-	selected_tower = null
-	return null
+## 선택한 타워의 스냅샷 항목 (lane, cell, kind, evo, ... 은 Snapshot 참고). 선택이 없거나 몬스터가 부수는 등으로 사라졌으면 빈 Dictionary (선택도 풀린다).
+func get_selected_tower() -> Dictionary:
+	if selected_lane < 0:
+		return {}
+	var lane: Dictionary = snapshot().lanes.get(str(selected_lane), {})
+	for t in lane.get("towers", []):
+		if t.cell[0] == selected_cell.x and t.cell[1] == selected_cell.y:
+			return t
+	selected_lane = -1
+	return {}
 
 
-func select_tower(tower: Tower) -> void:
-	if is_instance_valid(selected_tower):
-		selected_tower.selected = false
-	selected_tower = tower
-	if tower != null:
-		tower.selected = true
-		tower_selected.emit(tower)
-		Log.info(Log.Category.UI, "타워 선택 %s: %s %s" % [tower.cell, tower.kind.name, Evolutions.evo_name(tower.evolution) if tower.evolution != "" else "(진화 전)"])
+## lane_id 레인의 cell 칸 타워를 선택한다 (없는 칸이면 선택 해제)
+func select_tower_at(lane_id: int, cell: Vector2i) -> void:
+	var t := _tower_view_at(lane_id, cell)
+	if t.is_empty():
+		clear_selection()
+		return
+	selected_lane = lane_id
+	selected_cell = cell
+	tower_selected.emit()
+	Log.info(Log.Category.UI, "타워 선택 %s: %s %s" % [cell, Balance.tower_kind(t.kind).name, Evolutions.evo_name(t.evo) if t.evo != "" else "(진화 전)"])
+
+
+func clear_selection() -> void:
+	selected_lane = -1
 
 
 ## 선택한 타워를 가리키는 칸 좌표 인자. 선택이 없거나 남의 레인의 타워면 빈 Dictionary (명령은 내 레인의 타워만 가리킬 수 있다)
 func _selected_cell_args() -> Dictionary:
 	var t := get_selected_tower()
-	if t == null or t.lane == null or t.lane.player_id != session.local_player_id:
+	if t.is_empty() or t.lane != session.local_player_id:
 		return {}
-	return {"cell": t.cell}
+	return {"cell": Vector2i(t.cell[0], t.cell[1])}
 
 
 ## 선택한 타워에 하는 명령을 보낸다 (선택한 타워가 없으면 보내지 않고 false)
@@ -310,7 +419,7 @@ func heal_selected_tower() -> bool:
 func sell_selected_tower() -> bool:
 	if not _do_on_selected(Command.SELL_TOWER):
 		return false
-	select_tower(null)  # 사라진 타워를 계속 선택하고 있지 않게 (사거리 표시, 타워 화면)
+	clear_selection()  # 사라진 타워를 계속 선택하고 있지 않게 (사거리 표시, 타워 화면)
 	return true
 
 
@@ -336,7 +445,7 @@ func switch_player(player_id: int):
 	# 떠나는 레인의 스크롤 위치를 기억해 둔다 (칸 크기가 바뀌어도 되도록 줄 번호로 저장)
 	lane_scroll_rows[current_player_id] = get_v_scroll() / float(grid_renderer.CELL_SIZE)
 
-	select_tower(null)  # 다른 레인으로 가면 선택 해제
+	clear_selection()  # 다른 레인으로 가면 선택 해제
 
 	# 이전 플레이어의 렌더러 연결 해제
 	get_current_grid_system().disconnect_renderer()
@@ -374,7 +483,7 @@ func scroll_to_row(row: float):
 ## 건설 명령을 보낸다. confirmed: 길이 막히는 걸 알고도 짓겠다고 사용자가 확인한 경우 true
 func place_tower(grid_position: Vector2i, confirmed: bool = false) -> bool:
 	# 이미 타워가 있는 칸을 누른 건 건설 실패가 아니라 타워 선택이다 (호출한 쪽이 선택한다). 거절 안내를 띄우지 않는다.
-	if _tower_at(grid_position) != null:
+	if not _tower_view_at(current_player_id, grid_position).is_empty():
 		return false
 	# 보고 있는 레인이 남의 레인이면 클릭한 칸은 내 레인의 칸이 아니다 (명령은 내 레인만 가리킨다)
 	if current_player_id != session.local_player_id:

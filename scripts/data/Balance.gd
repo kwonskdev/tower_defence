@@ -167,6 +167,14 @@ const STAT_UPGRADE_COSTS := [30, 50]
 
 
 ## 기본 타워 종류 ID("long" 등)로 능력치 딕셔너리를 만든다.
+## 이름으로 타워 색깔 항목을 찾는다 (없으면 첫 색)
+static func color_info_by_name(color_name: String) -> Dictionary:
+	for c in TOWER_COLORS:
+		if c.name == color_name:
+			return c
+	return TOWER_COLORS[0]
+
+
 static func tower_kind(kind_id: String) -> Dictionary:
 	var d: Dictionary = TOWER_DEFS[kind_id]
 	return {

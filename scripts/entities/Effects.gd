@@ -43,9 +43,31 @@ static func spawn_projectile(renderer: GridRenderer, lane: LaneController, from_
 		p.style = "orb"  # 스킬형: 피해 없는 구체
 		p.speed = 12.0
 	p.z_index = 3
-	p.visible = lane.lane_visible
+	p.visible = false  # 서버 쪽 투사체는 피해만 처리한다. 날아가는 모습은 클라이언트가 fx_shot 이벤트로 따로 그린다
 	renderer.add_child(p)
 	p.launch()
+	lane.events.shot(lane.player_id, from_cell_pos, target.monster_id if is_instance_valid(target) else -1, p.dest, p.style, p.speed, color,
+		int(fx.get("pierce", 0)) > 0)
+
+
+## 클라이언트가 그리는 투사체 (fx_shot 이벤트). 피해는 주지 않고 날아가기만 한다. target은 따라갈 몬스터 껍데기(없으면 dest로).
+static func view_projectile(renderer: GridRenderer, ev: Dictionary, target: Monster, shown: bool) -> void:
+	var p := Projectile.new()
+	p.puppet = true
+	p.renderer = renderer
+	p.target = target
+	p.pos_c = Vector2(ev["from"][0], ev["from"][1])
+	p.dest = Vector2(ev["dest"][0], ev["dest"][1])
+	p.color = Color.html(ev["color"])
+	p.style = ev["style"]
+	p.speed = ev["speed"]
+	p.z_index = 3
+	p.visible = shown
+	p._total = maxf(0.1, p.pos_c.distance_to(p.dest))
+	p.dir = (p.dest - p.pos_c).normalized()
+	p.position = p.pos_c * renderer.CELL_SIZE
+	p._pierce_left = 1 if ev["pierce"] else 0
+	renderer.add_child(p)
 
 
 ## 표식 구름: 지속시간 동안 안에 들어온 지상 적에게 표식을 1개씩 남긴다 (구름 1개당 적 1마리에 1회)
@@ -61,7 +83,22 @@ static func spawn_cloud(renderer: GridRenderer, lane: LaneController, at_cell_po
 	c.mark_dmg = mark_dmg
 	c.color = color
 	c.z_index = 1
-	c.visible = lane.lane_visible
+	c.visible = false  # 서버 쪽 구름은 표식만 남긴다. 그림은 클라이언트가 fx_cloud 이벤트로 따로 그린다
+	renderer.add_child(c)
+	lane.events.cloud(lane.player_id, at_cell_pos, radius, duration, color)
+
+
+## 클라이언트가 그리는 표식 구름 (fx_cloud 이벤트). 표식은 남기지 않는다.
+static func view_cloud(renderer: GridRenderer, ev: Dictionary, shown: bool) -> void:
+	var c := Cloud.new()
+	c.puppet = true
+	c.renderer = renderer
+	c.pos_c = Vector2(ev["pos"][0], ev["pos"][1])
+	c.radius = ev["radius"]
+	c.life = ev["life"]
+	c.color = Color.html(ev["color"])
+	c.z_index = 1
+	c.visible = shown
 	renderer.add_child(c)
 
 
@@ -88,6 +125,7 @@ static func float_text(renderer: GridRenderer, at_cell_pos: Vector2, text: Strin
 
 
 class Projectile extends Node2D:
+	var puppet := false  # 클라이언트용: 날아가는 모습만 그린다 (피해/효과 없음)
 	var renderer: GridRenderer
 	var lane: LaneController
 	var target: Monster
@@ -119,7 +157,41 @@ class Projectile extends Node2D:
 		position = pos_c * renderer.CELL_SIZE
 		_pierce_left = int(fx.get("pierce", 0))
 
+	## 클라이언트용 비행: 몬스터 껍데기를 따라가다가 닿으면 (관통이면 같은 방향으로 조금 더 날아가고) 사라진다
+	func _process_puppet(delta: float) -> void:
+		var step := speed * delta
+		if _piercing:
+			pos_c += dir * step
+			_travel_left -= step
+			position = pos_c * renderer.CELL_SIZE
+			if _travel_left <= 0.0:
+				queue_free()
+				return
+			queue_redraw()
+			return
+		if is_instance_valid(target):
+			dest = target.cell_pos + target.visual_offset()
+		var to := dest - pos_c
+		if to.length() <= step:
+			if _pierce_left > 0:
+				_piercing = true
+				_travel_left = PIERCE_TRAVEL
+				return
+			queue_free()
+			return
+		dir = to.normalized()
+		pos_c += dir * step
+		var arc := 0.0
+		if style == "bomb":  # 포물선
+			var progress := 1.0 - clampf(to.length() / _total, 0.0, 1.0)
+			arc = sin(progress * PI) * renderer.CELL_SIZE * 1.2
+		position = pos_c * renderer.CELL_SIZE + Vector2(0, -arc)
+		queue_redraw()
+
 	func _process(delta: float) -> void:
+		if puppet:
+			_process_puppet(delta)
+			return
 		if _piercing:
 			_process_pierce(delta)
 			return
@@ -152,13 +224,13 @@ class Projectile extends Node2D:
 						if not center.is_empty() and d <= float(center.radius):
 							dmg *= float(center.mult)  # 폭발 중심부는 더 아프다
 						_hit(m, dmg)
-			Effects.ring(renderer, dest, splash, color, visible)
+			lane.events.ring(lane.player_id, dest, splash, color)
 			if not center.is_empty():
-				Effects.ring(renderer, dest, float(center.radius), Color(1.0, 0.8, 0.3), visible)
+				lane.events.ring(lane.player_id, dest, float(center.radius), Color(1.0, 0.8, 0.3))
 		else:
 			if is_instance_valid(target):
 				_hit(target, damage)
-			Effects.ring(renderer, dest, 0.35, color, visible)
+			lane.events.ring(lane.player_id, dest, 0.35, color)
 		_skill_effects()
 
 		# 관통: 맞힌 자리에서 멈추지 않고 같은 방향으로 계속 날아간다
@@ -185,7 +257,7 @@ class Projectile extends Node2D:
 				_hit_ids[id] = true
 				damage *= 1.0 - float(fx.get("falloff", 0.0))  # 관통할수록 약해진다
 				_hit(m, damage)
-				Effects.ring(renderer, pos_c, 0.3, color, visible)
+				lane.events.ring(lane.player_id, pos_c, 0.3, color)
 				_pierce_left -= 1
 				if _pierce_left <= 0:
 					queue_free()
@@ -203,23 +275,23 @@ class Projectile extends Node2D:
 			return
 		if fx.has("poison"):
 			m.add_poison(source, float(fx.poison.dps), float(fx.poison.time))
-		if fx.has("armor_break") and randf() < float(fx.armor_break.chance):
+		if fx.has("armor_break") and lane.rng.randf() < float(fx.armor_break.chance):
 			m.apply_armor_break(float(fx.armor_break.time))
-		if fx.has("execute") and not m.ghost and m.hp <= m.max_hp * float(fx.execute.hp) and randf() < float(fx.execute.chance):  # 유령은 처형되지 않는다
+		if fx.has("execute") and not m.ghost and m.hp <= m.max_hp * float(fx.execute.hp) and lane.rng.randf() < float(fx.execute.chance):  # 유령은 처형되지 않는다
 			m.execute(source)
-			Effects.float_text(renderer, m.cell_pos, "처형!", Color(1.0, 0.3, 0.3), visible)
+			lane.events.text(lane.player_id, m.cell_pos, "처형!", Color(1.0, 0.3, 0.3))
 
 	## 대공 스킬형: 공격이 맞은 자리에서 확률로 스킬 발동
 	func _skill_effects() -> void:
-		if fx.has("snare") and randf() < float(fx.snare.chance):
+		if fx.has("snare") and lane.rng.randf() < float(fx.snare.chance):
 			var sn: Dictionary = fx.snare
 			for m in lane.monsters:
 				if is_instance_valid(m) and not m.is_dead() and (m.cell_pos + m.visual_offset()).distance_to(dest) <= float(sn.radius):
 					m.apply_slow(float(sn.slow), float(sn.time))
-			Effects.ring(renderer, dest, float(sn.radius), Color(0.5, 0.8, 1.0), visible)
-		if fx.has("capture") and is_instance_valid(target) and target.flying and randf() < float(fx.capture.chance):
+			lane.events.ring(lane.player_id, dest, float(sn.radius), Color(0.5, 0.8, 1.0))
+		if fx.has("capture") and is_instance_valid(target) and target.flying and lane.rng.randf() < float(fx.capture.chance):
 			target.capture(float(fx.capture.time))
-			Effects.float_text(renderer, target.cell_pos, "포획!", Color(1.0, 0.9, 0.3), visible)
+			lane.events.text(lane.player_id, target.cell_pos, "포획!", Color(1.0, 0.9, 0.3))
 
 	func _draw() -> void:
 		var cell: float = renderer.CELL_SIZE
@@ -244,6 +316,7 @@ class Projectile extends Node2D:
 
 
 class Cloud extends Node2D:
+	var puppet := false  # 클라이언트용: 그림만 (표식을 남기지 않는다)
 	var renderer: GridRenderer
 	var lane: LaneController
 	var source
@@ -261,6 +334,9 @@ class Cloud extends Node2D:
 			queue_free()
 			return
 		position = pos_c * renderer.CELL_SIZE
+		if puppet:
+			queue_redraw()
+			return
 		for m in lane.monsters:
 			if not is_instance_valid(m) or m.is_dead() or m.flying:
 				continue

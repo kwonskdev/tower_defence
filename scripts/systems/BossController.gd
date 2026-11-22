@@ -19,7 +19,6 @@ signal level_started(level: int)
 signal level_cleared(level: int)
 signal boss_defeated        # 마지막 라운드까지 모두 처치
 signal boss_failed(reason: String)
-signal skill_announced(info: Dictionary)  # 스킬을 HUD 배너로 알린다: {name, text, lane, delay, boss}. delay>0이면 그 시간 뒤 발동
 
 enum State { WAITING, RUNNING, VICTORY, DEFEAT }  # WAITING: 시작 버튼을 누르기 전 (시간도 몬스터 파견도 멈춰 있음)
 
@@ -32,6 +31,9 @@ const MIN_WAVE_GAP := 10.0    # 웨이브 주기를 수입 시점에 다시 맞�
 
 var state: State = State.WAITING
 var level: int = 1
+var show_nodes := true  # 보낸 몬스터 노드를 직접 보여 줄지 (클라이언트는 스냅샷 껍데기로 그리므로 끈다)
+var events := SimEvents.new()  # 연출 이벤트 통로 (GameField가 세션 것으로 바꿔 끼운다)
+var rng := RandomNumberGenerator.new()  # 보스의 시뮬레이션 랜덤 (GameField가 세션 것으로 바꿔 끼운다). 화면 흔들림 같은 연출 랜덤은 전역 randf()
 var level_data: Dictionary = {}
 var max_hp: float
 var hp: float
@@ -53,8 +55,6 @@ var _attackers: Array[Monster] = []
 var _sent_monsters: Array[Monster] = []
 var _slots_taken: Dictionary = {}  # "고리:번호" -> true
 var _next_monster_id := 1
-var _view: BossView
-var _bar: BossBar
 var _lane_visible := false
 var _dmg_accum := 0.0
 var _dmg_timer := 0.0
@@ -82,20 +82,6 @@ func setup(boss_grid: GridSystem, renderer: GridRenderer, lanes: Dictionary) -> 
 	_lanes = lanes
 	_pathfinder = Pathfinder.new(_grid)
 	_mark_boss_body()
-
-	_view = BossView.new()
-	_view.boss = self
-	_view.renderer = renderer
-	_view.visible = _lane_visible
-	_view.z_index = 0
-	renderer.add_child(_view)
-
-	_bar = BossBar.new()
-	_bar.boss = self
-	_bar.renderer = renderer
-	_bar.visible = _lane_visible
-	_bar.z_index = 5
-	renderer.add_child(_bar)
 
 	_dispatch_timer = Timer.new()
 	_dispatch_timer.wait_time = Balance.INCOME_INTERVAL  # 수입 지급과 같은 주기: 수입이 들어올 때 웨이브도 온다
@@ -144,8 +130,7 @@ func _start_level(new_level: int) -> void:
 	Log.info(Log.Category.GAME, "보스 Lv.%d/%d '%s' 등장: hp=%.0f (참여 %d명), 제한시간=%.0fs, 보스 수입=%d골드/%.0fs" % [
 		level, BossLevels.COUNT, level_data.name, max_hp, _lanes.size(), time_left, level_data.income,
 		Balance.INCOME_INTERVAL])
-	Effects.float_text(_renderer, Balance.BOSS_CENTER + Vector2(-1.2, 0.3), "BOSS Lv.%d  %s" % [level, level_data.name],
-		Color(1.0, 0.85, 0.3), _lane_visible)
+	events.text(GameField.BOSS_LANE_ID, Balance.BOSS_CENTER + Vector2(-1.2, 0.3), "BOSS Lv.%d  %s" % [level, level_data.name], Color(1.0, 0.85, 0.3))
 	_apply_level_skills()
 	level_started.emit(level)
 
@@ -224,10 +209,10 @@ func phase_text() -> String:
 func _announce_level_skills() -> void:
 	if _phase > 0:
 		var info: Dictionary = BossSkills.phases_of(level)[_phase - 1]
-		skill_announced.emit({"name": info.name, "text": info.text, "lane": info.lane, "delay": 0.0, "boss": level_data.name})
+		events.announce({"name": info.name, "text": info.text, "lane": info.lane, "delay": 0.0, "boss": level_data.name})
 	for skill in _active_skills():
 		if not skill.get("quiet", false):
-			skill_announced.emit({"name": skill.name, "text": skill.text, "lane": skill.lane, "delay": 0.0, "boss": level_data.name})
+			events.announce({"name": skill.name, "text": skill.text, "lane": skill.lane, "delay": 0.0, "boss": level_data.name})
 
 
 ## 웨이브 주기를 바꾼다. 평소 주기(수입 주기)로 돌아올 때는 다음 수입 시점에 맞춰서 웨이브와 수입이 다시 같이 오게 한다.
@@ -292,7 +277,6 @@ func _process(delta: float) -> void:
 			_show_damage_text()
 
 	time_left -= delta
-	_view.queue_redraw()
 
 	if hp <= 0.0:
 		hp = 0.0
@@ -352,7 +336,7 @@ func _recalc_dps() -> void:
 func _show_damage_text() -> void:
 	# 체력바(보스 머리 위)와 겹치지 않도록 몸통 위에서 떠오르게 한다
 	var at := Balance.BOSS_CENTER + Vector2(randf_range(-1.3, 1.0), randf_range(0.0, 0.9))
-	Effects.float_text(_renderer, at, "-%d" % int(_dmg_accum), Color(1.0, 0.9, 0.45), _lane_visible)
+	events.text(GameField.BOSS_LANE_ID, at, "-%d" % int(_dmg_accum), Color(1.0, 0.9, 0.45))
 	_dmg_accum = 0.0
 	_dmg_timer = 0.0
 
@@ -368,8 +352,7 @@ func _on_level_cleared() -> void:
 			if lane.active:
 				lane.gold += reward
 				Log.info(Log.Category.ECONOMY, "[P%d] 보스 처치 보상 +%d골드 잔액=%.2f" % [lane.player_id + 1, reward, lane.gold])  # 골드는 소수일 수 있다 (타워 판매 환급)
-		Effects.float_text(_renderer, Balance.BOSS_CENTER + Vector2(-1.0, -0.8), "처치! +%d골드" % reward,
-			Color(1.0, 0.9, 0.3), _lane_visible)
+		events.text(GameField.BOSS_LANE_ID, Balance.BOSS_CENTER + Vector2(-1.0, -0.8), "처치! +%d골드" % reward, Color(1.0, 0.9, 0.3))
 
 	if time_left > 0.0:
 		_enter_ghost_phase()  # 남은 시간은 버리지 않는다: 그 시간 동안 유령 구간이 이어지고, 끝나면 다음 보스(마지막이면 승리)
@@ -409,7 +392,7 @@ func _enter_ghost_phase() -> void:
 	for lane in _lanes.values():
 		lane.start_ghost()
 	var is_last := level >= BossLevels.COUNT
-	skill_announced.emit({
+	events.announce({
 		"name": "유령 구간",
 		"text": "보스를 일찍 잡아서 남은 %d초 동안 유령이 나옵니다. 웨이브는 쉬고 수입은 그대로 들어옵니다. 타워가 유령에게 입힌 피해(레인 데미지)와 보스 앞 몬스터가 입힌 피해(보스 레인 데미지)가 점수가 됩니다. %s" % [
 			ceili(time_left), "구간이 끝나면 승리합니다." if is_last else "구간이 끝나면 다음 보스가 나옵니다."],
@@ -429,7 +412,6 @@ func _process_ghost_phase(delta: float) -> void:
 		if _dmg_timer >= 1.0:
 			_show_damage_text()
 	time_left -= delta
-	_view.queue_redraw()
 	if time_left <= 0.0:
 		time_left = 0.0
 		_end_ghost_phase()
@@ -512,7 +494,7 @@ func _plan_next_wave() -> void:
 			weight_sum += float(Monsters.DATA[id].weight)
 		if options.is_empty():
 			break
-		var roll := randf() * weight_sum
+		var roll := rng.randf() * weight_sum
 		var chosen: String = options[options.size() - 1]
 		for id in options:
 			roll -= float(Monsters.DATA[id].weight)
@@ -593,7 +575,7 @@ func _dispatch_wave() -> void:
 		"[%s] " % affix_id if affix_id != "" else "", current_wave_text, level, _level_wave_no])
 	if affix_id != "":  # 변형 웨이브는 도착할 때 한 번 더 알린다 (미리보기는 이미 한 웨이브 전부터 떠 있다)
 		var a: Dictionary = BossSkills.AFFIXES[affix_id]
-		skill_announced.emit({"name": "%s 웨이브" % a.name, "text": a.text, "lane": "player", "delay": 0.0, "boss": level_data.name})
+		events.announce({"name": "%s 웨이브" % a.name, "text": a.text, "lane": "player", "delay": 0.0, "boss": level_data.name})
 
 	var dispatch_level := level
 	# 몬스터마다 나오는 칸을 따로 랜덤으로 뽑는다 (spawn_cell을 안 주면 레인이 뽑는다). 같은 종류끼리는 연달아 나온다.
@@ -623,13 +605,15 @@ func spawn_player_monster(owner_id: int, kind_id: String) -> void:
 		Log.error(Log.Category.GAME, "보스 레인 스폰 셀이 없음")
 		return
 
-	var spawn_cell: Vector2i = spawn_cells.pick_random()
+	var spawn_cell: Vector2i = SimRandom.pick(rng, spawn_cells)
 	var spawn_pos := Vector2(spawn_cell) + Vector2(0.5, 0.5)
 	var slot_info := _allocate_slot(spawn_pos)
 	var slot: Vector2 = slot_info.pos
 
 	var monster := Monster.new()
 	monster.apply_look(data)
+	monster.events = events
+	monster.fx_lane_id = GameField.BOSS_LANE_ID
 	monster.owner_id = owner_id
 	monster.kind_id = kind_id
 	monster.max_hp = Monsters.max_hp(kind_id)  # setup()이 hp를 가득 채운다
@@ -641,7 +625,7 @@ func spawn_player_monster(owner_id: int, kind_id: String) -> void:
 	monster.aura_bonus = float(data.get("aura_bonus", 0.0))
 	monster.goal_cell = _walkable_cell_near(slot)
 	monster.final_point = slot
-	monster.visible = _lane_visible
+	monster.visible = _lane_visible and show_nodes
 	monster.z_index = 2
 	monster.setup(_next_monster_id, _grid, _renderer, _pathfinder, spawn_cell)
 	monster.reached_exit.connect(_on_monster_arrived)
@@ -727,7 +711,7 @@ func _on_sent_monster_died(monster: Monster) -> void:
 	_sent_monsters.erase(monster)
 	if monster.slot_key != "":
 		_slots_taken.erase(monster.slot_key)  # 비운 자리는 다음에 오는 몬스터가 쓴다
-	Effects.ring(_renderer, monster.cell_pos, 0.6, monster.body_color, _lane_visible)
+	events.ring(GameField.BOSS_LANE_ID, monster.cell_pos, 0.6, monster.body_color)
 	Log.info(Log.Category.GAME, "[P%d] 보스 레인 몬스터#%d(%s) 사망 (공격 중 %d마리 남음)" % [
 		monster.owner_id + 1, monster.monster_id, monster.kind_id, _attackers.size()])
 	monster.queue_free()
@@ -767,7 +751,6 @@ func _update_skills(delta: float) -> void:
 func _cast_skill(skill: Dictionary) -> void:
 	var targets: Array = []
 	var cells := {}       # 분열: 레인 -> 새끼가 나올 칸 (예고 때 정해서 그 칸에 표식을 띄우고, 발동 때 그대로 쓴다)
-	var warnings: Array = []  # 분열: 그 칸에 띄운 표식 노드
 	var text: String = skill.text
 	var warn := Color(0, 0, 0, 0)
 	match skill.effect:
@@ -795,7 +778,7 @@ func _cast_skill(skill: Dictionary) -> void:
 				var spawn_cell: Vector2i = lane.pick_spawn_cell()
 				cells[lane] = spawn_cell
 				if spawn_cell != Pathfinder.NO_GOAL:
-					warnings.append(_add_spawn_warning(lane, spawn_cell, float(skill.get("delay", 0.0))))
+					events.warn(lane.player_id, spawn_cell, maxf(float(skill.get("delay", 0.0)), 0.1))
 		"seal":
 			for lane in _lanes.values():
 				if not lane.active:
@@ -810,8 +793,8 @@ func _cast_skill(skill: Dictionary) -> void:
 	for target in targets:
 		target.set_warn(warn)
 	var delay := float(skill.get("delay", 0.0))
-	_pending_casts.append({"skill": skill, "left": delay, "targets": targets, "cells": cells, "warnings": warnings})
-	skill_announced.emit({"name": skill.name, "text": text, "lane": skill.lane, "delay": delay, "boss": level_data.name})
+	_pending_casts.append({"skill": skill, "left": delay, "targets": targets, "cells": cells})
+	events.announce({"name": skill.name, "text": text, "lane": skill.lane, "delay": delay, "boss": level_data.name})
 	Log.info(Log.Category.GAME, "보스 스킬 예고: %s (%.0f초 뒤, 대상 %d마리)" % [skill.name, delay, targets.size()])
 
 
@@ -819,9 +802,6 @@ func _cast_skill(skill: Dictionary) -> void:
 func _resolve_skill(cast: Dictionary) -> void:
 	var skill: Dictionary = cast.skill
 	var victims: Array = []
-	for warning in cast.warnings:  # 예고 표식은 발동과 함께 사라진다
-		if is_instance_valid(warning):
-			warning.queue_free()
 	for target in cast.targets:
 		if not is_instance_valid(target):  # 예고 중에 죽거나 부서져서 해제됐다
 			continue
@@ -835,7 +815,7 @@ func _resolve_skill(cast: Dictionary) -> void:
 		"seal":
 			for victim in victims:
 				victim.sealed_time = float(skill.duration)
-				Effects.ring(_renderer, victim.center_cell_pos(), 0.9, Color(0.75, 0.35, 0.95), victim.lane.lane_visible)
+				events.ring(victim.lane.player_id, victim.center_cell_pos(), 0.9, Color(0.75, 0.35, 0.95))
 		"split":
 			_spawn_slimelings(skill, cast.cells)
 		"execute":
@@ -845,7 +825,7 @@ func _resolve_skill(cast: Dictionary) -> void:
 		"dread":
 			for victim in victims:
 				victim.dread_time = float(skill.duration)
-				Effects.ring(_renderer, victim.cell_pos, 0.8, Color(0.75, 0.35, 0.95), _lane_visible)
+				events.ring(GameField.BOSS_LANE_ID, victim.cell_pos, 0.8, Color(0.75, 0.35, 0.95))
 			_recalc_dps()
 	Log.info(Log.Category.GAME, "보스 스킬 발동: %s (대상 %d마리)" % [skill.name, victims.size()])
 
@@ -867,8 +847,8 @@ func _execute_attacker(monster: Monster, refund_ratio: float) -> void:
 	var lane: LaneController = _lanes.get(monster.owner_id)
 	if lane != null and lane.active and refund > 0:
 		lane.gold += refund
-	Effects.ring(_renderer, monster.cell_pos, 1.0, Color(1.0, 0.2, 0.2), _lane_visible)
-	Effects.float_text(_renderer, monster.cell_pos, "처단! +%d골드" % refund, Color(1.0, 0.5, 0.4), _lane_visible)
+	events.ring(GameField.BOSS_LANE_ID, monster.cell_pos, 1.0, Color(1.0, 0.2, 0.2))
+	events.text(GameField.BOSS_LANE_ID, monster.cell_pos, "처단! +%d골드" % refund, Color(1.0, 0.5, 0.4))
 	Log.info(Log.Category.ECONOMY, "[P%d] %s 처단됨: 환급 +%d골드 (비용 %d)" % [monster.owner_id + 1, monster.kind_id, refund, cost])
 	monster.execute(null)  # 죽음 처리(자리 비우기, DPS 다시 계산)는 died 시그널을 받는 쪽이 한다
 
@@ -887,7 +867,7 @@ func _spawn_slimelings(skill: Dictionary, cells: Dictionary) -> void:
 	for lane in _lanes.values():
 		var cell: Vector2i = cells.get(lane, Pathfinder.NO_GOAL)
 		if cell != Pathfinder.NO_GOAL:
-			Effects.ring(_renderer, Vector2(cell) + Vector2(0.5, 0.5), 1.0, wave_type.color, lane.lane_visible)
+			events.ring(lane.player_id, Vector2(cell) + Vector2(0.5, 0.5), 1.0, wave_type.color)
 	for i in range(int(skill.count)):
 		if i > 0:
 			await get_tree().create_timer(Balance.WAVE_SPAWN_GAP, false).timeout  # false: 일시정지 중에는 멈춘다
@@ -897,29 +877,13 @@ func _spawn_slimelings(skill: Dictionary, cells: Dictionary) -> void:
 			lane.spawn_wave_monster("slimeling", level, cells.get(lane, Pathfinder.NO_GOAL))
 
 
-## 새끼가 나올 칸에 예고 표식을 띄운다 (그 레인을 보고 있을 때만 보인다). seconds 뒤에 저절로 사라진다.
-func _add_spawn_warning(lane: LaneController, cell: Vector2i, seconds: float) -> SpawnWarning:
-	var warning := SpawnWarning.new()
-	warning.lane = lane
-	warning.renderer = _renderer
-	warning.cell = cell
-	warning.total = maxf(seconds, 0.1)
-	warning.left = warning.total
-	warning.z_index = 3
-	warning.visible = lane.lane_visible
-	_renderer.add_child(warning)
-	return warning
-
-
 ## 예고만 하고 발동하지 못한 스킬을 취소한다 (표식도 지운다)
 func _clear_pending_casts() -> void:
 	for cast in _pending_casts:
 		for target in cast.targets:
 			if is_instance_valid(target):
 				target.clear_warn()
-		for warning in cast.warnings:
-			if is_instance_valid(warning):
-				warning.queue_free()
+	events.warn_clear()  # 화면에 떠 있는 예고 표식도 치운다
 	_pending_casts.clear()
 
 
@@ -953,9 +917,11 @@ func _finish(result: State, reason: String) -> void:
 	if result == State.VICTORY:
 		Log.info(Log.Category.GAME, "승리! %s 기여도=%s" % [reason, damage_by_player])
 		boss_defeated.emit()
+		events.game_over(true, "")
 	else:
 		Log.warn(Log.Category.GAME, "패배: %s (보스 Lv.%d 남은 hp=%.0f/%.0f)" % [reason, level, hp, max_hp])
 		boss_failed.emit(reason)
+		events.game_over(false, reason)
 
 
 func get_sent_monsters() -> Array[Monster]:
@@ -973,17 +939,13 @@ func get_attacker_count() -> int:
 
 func set_lane_visible(is_shown: bool) -> void:
 	_lane_visible = is_shown
-	if _view:
-		_view.visible = is_shown
-	if _bar:
-		_bar.visible = is_shown
 	for m in _sent_monsters:
-		m.visible = is_shown
+		m.visible = is_shown and show_nodes
 
 
 ## 보스 레인 한가운데의 커다란 보스. 라운드마다 색이 다르다.
 class BossView extends Node2D:
-	var boss: BossController
+	var state: Dictionary = {}  # 서버 스냅샷의 보스 항목 (GameField가 매 프레임 넣어 준다). 보스 객체를 직접 읽지 않는다
 	var renderer: GridRenderer
 	var _t := 0.0
 
@@ -995,27 +957,27 @@ class BossView extends Node2D:
 	func _draw_ghost() -> void:
 		var cell: float = renderer.CELL_SIZE
 		var R: float = Balance.BOSS_RADIUS * cell
-		var pressure := minf(1.0, boss.total_dps / 12.0)
+		var pressure := minf(1.0, state.total_dps / 12.0)
 		var shake := Vector2(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0)) * cell * 0.04 * pressure  # 맞을수록 몸을 떤다
 		var c: Vector2 = Balance.BOSS_CENTER * cell + Vector2(0.0, sin(_t * 2.0) * R * 0.06) + shake
 		draw_circle(c, R * 1.3, Color(GhostArt.BODY, 0.10 + 0.06 * sin(_t * 3.0)))  # 기운
 		GhostArt.draw_ghost(self, c, R, _t)  # 플레이어 레인의 유령과 똑같은 그림을 보스 크기로
-		if boss.level_flash > 0.0:
-			draw_circle(c, R * 1.3, Color(1, 1, 1, 0.6 * boss.level_flash))
+		if state.level_flash > 0.0:
+			draw_circle(c, R * 1.3, Color(1, 1, 1, 0.6 * state.level_flash))
 
 	func _draw() -> void:
-		if boss.level_data.is_empty():
+		if not state.get("has_level", false):
 			return
-		if boss.in_ghost_phase:
+		if state.in_ghost:
 			_draw_ghost()
 			return
 		var cell: float = renderer.CELL_SIZE
 		var R: float = Balance.BOSS_RADIUS * cell
-		var pressure := minf(1.0, boss.total_dps / 12.0)  # 공격받을수록 몸을 떤다
+		var pressure := minf(1.0, state.total_dps / 12.0)  # 공격받을수록 몸을 떤다
 		var shake := Vector2(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0)) * cell * 0.04 * pressure
 		var breathe := 1.0 + 0.03 * sin(_t * 2.0)
 		var c: Vector2 = Balance.BOSS_CENTER * cell + shake
-		var body: Color = boss.level_data.color
+		var body: Color = Color.html(state.color)
 
 		# 바닥 그림자 + 기운
 		draw_set_transform(c + Vector2(0, R * 0.95), 0.0, Vector2(1.0, 0.3))
@@ -1055,47 +1017,47 @@ class BossView extends Node2D:
 			]), Color(0.95, 0.95, 0.9))
 
 		# 새 보스 등장 연출: 하얗게 번쩍임
-		if boss.level_flash > 0.0:
-			draw_circle(c, R * 1.3, Color(1, 1, 1, 0.6 * boss.level_flash))
+		if state.level_flash > 0.0:
+			draw_circle(c, R * 1.3, Color(1, 1, 1, 0.6 * state.level_flash))
 
 
 ## 보스 체력바 + 이름 + 플레이어 기여도. 몬스터들이 보스 위쪽에 몰려 서도 가려지지 않게 몬스터(z_index 2)보다 위에 그린다.
 class BossBar extends Node2D:
-	var boss: BossController
+	var state: Dictionary = {}  # 서버 스냅샷의 보스 항목 (GameField가 매 프레임 넣어 준다). 보스 객체를 직접 읽지 않는다
 	var renderer: GridRenderer
 
 	func _process(_delta: float) -> void:
 		queue_redraw()
 
 	func _draw() -> void:
-		if boss.level_data.is_empty():
+		if not state.get("has_level", false):
 			return
 		var cell: float = renderer.CELL_SIZE
 		var R: float = Balance.BOSS_RADIUS * cell
 		var c: Vector2 = Balance.BOSS_CENTER * cell
 		var bar_w := R * 2.2
 		var bar_y := c.y - R * 1.7
-		if boss.in_ghost_phase:  # 보스 체력 대신 유령 구간이 끝날 때까지 남은 시간을 보여 준다
-			var left_ratio := clampf(boss.time_left / maxf(boss.ghost_length, 0.001), 0.0, 1.0)
+		if state.in_ghost:  # 보스 체력 대신 유령 구간이 끝날 때까지 남은 시간을 보여 준다
+			var left_ratio := clampf(state.time_left / maxf(state.ghost_length, 0.001), 0.0, 1.0)
 			draw_rect(Rect2(c.x - bar_w * 0.5 - 3, bar_y - 20, bar_w + 6, 36), Color(0, 0, 0, 0.8))
 			draw_rect(Rect2(c.x - bar_w * 0.5, bar_y, bar_w, 10), Color(0.1, 0.12, 0.25))
 			draw_rect(Rect2(c.x - bar_w * 0.5, bar_y, bar_w * left_ratio, 10), Color(0.6, 0.7, 1.0))
 			draw_string(ThemeDB.fallback_font, Vector2(c.x - bar_w * 0.5, bar_y - 6), "Lv.%d 처치!  유령 구간 %d초" % [
-				boss.level, ceili(boss.time_left)], HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.85, 0.9, 1.0))
+				state.level, ceili(state.time_left)], HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.85, 0.9, 1.0))
 			_draw_contribution(c, R, cell)
 			return
-		var ratio := clampf(boss.hp / boss.max_hp, 0.0, 1.0)
+		var ratio := clampf(state.hp / state.max_hp, 0.0, 1.0)
 		draw_rect(Rect2(c.x - bar_w * 0.5 - 3, bar_y - 20, bar_w + 6, 36), Color(0, 0, 0, 0.8))
 		draw_rect(Rect2(c.x - bar_w * 0.5, bar_y, bar_w, 10), Color(0.25, 0.05, 0.05))
 		draw_rect(Rect2(c.x - bar_w * 0.5, bar_y, bar_w * ratio, 10), Color(0.9, 0.15, 0.15))
 		# 페이즈가 있는 보스는 단계가 바뀌는 체력 위치에 흰 눈금을 그린다
-		var phases := BossSkills.phases_of(boss.level)
+		var phases := BossSkills.phases_of(state.level)
 		for i in range(1, phases.size()):
 			var tick_x: float = c.x - bar_w * 0.5 + bar_w * float(phases[i].from)
 			draw_line(Vector2(tick_x, bar_y - 2.0), Vector2(tick_x, bar_y + 12.0), Color(1, 1, 1, 0.9), 2.0)
 		var font := ThemeDB.fallback_font
 		draw_string(font, Vector2(c.x - bar_w * 0.5, bar_y - 6), "Lv.%d %s   %d / %d" % [
-			boss.level, boss.level_data.name, int(boss.hp), int(boss.max_hp)],
+			state.level, state.name, int(state.hp), int(state.max_hp)],
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color.WHITE)
 
 		# 플레이어 기여도 표시 (보스 오른쪽에 세로로 나열)
@@ -1103,7 +1065,7 @@ class BossBar extends Node2D:
 
 	func _draw_contribution(c: Vector2, R: float, _cell: float) -> void:
 		# 전체 피해 계산 (유령 구간에는 보스 레인 유령에게 준 피해를 보여 준다)
-		var source: Dictionary = boss.ghost_boss_damage_by_player if boss.in_ghost_phase else boss.damage_by_player
+		var source: Dictionary = state.ghost_boss_damage_by_player if state.in_ghost else state.damage_by_player
 		var total_dmg := 0.0
 		for dmg in source.values():
 			total_dmg += dmg
@@ -1115,7 +1077,7 @@ class BossBar extends Node2D:
 		var entries: Array = []
 		for player_id in source:
 			var dmg: float = source[player_id]
-			entries.append({"player_id": player_id, "damage": dmg, "percent": dmg / total_dmg * 100.0})
+			entries.append({"player_id": int(player_id), "damage": dmg, "percent": dmg / total_dmg * 100.0})
 		entries.sort_custom(func(a, b): return a.damage > b.damage)
 
 		# 보스 오른쪽에 표시
@@ -1125,7 +1087,7 @@ class BossBar extends Node2D:
 		var line_h := 16.0
 
 		# 제목
-		draw_string(font, Vector2(start_x, start_y), "유령 피해 (보스 레인)" if boss.in_ghost_phase else "플레이어 기여도",
+		draw_string(font, Vector2(start_x, start_y), "유령 피해 (보스 레인)" if state.in_ghost else "플레이어 기여도",
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.8, 0.9, 1.0))
 		start_y += line_h
 
@@ -1148,7 +1110,7 @@ class BossBar extends Node2D:
 ## 슬라임 새끼가 나올 칸의 예고 표식. 예고 시간 동안 바깥 고리가 칸 쪽으로 오므라들어서 "곧 나온다"는 걸 보여 준다.
 ## 그 레인을 보고 있을 때만 보이고, 시간이 다 되면 저절로 사라진다 (발동 때 BossController가 먼저 치우기도 한다).
 class SpawnWarning extends Node2D:
-	var lane: LaneController
+	var is_shown: Callable  # 지금 이 레인을 보고 있는가 (화면이 정한다)
 	var renderer: GridRenderer
 	var cell: Vector2i
 	var color := Color(0.35, 0.9, 0.4)
@@ -1160,7 +1122,7 @@ class SpawnWarning extends Node2D:
 		if left <= 0.0:
 			queue_free()
 			return
-		visible = lane.lane_visible
+		visible = is_shown.call()
 		position = (Vector2(cell) + Vector2(0.5, 0.5)) * float(renderer.CELL_SIZE)
 		queue_redraw()
 

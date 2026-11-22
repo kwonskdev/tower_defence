@@ -35,8 +35,9 @@ func _draw() -> void:
 		return
 
 	var is_boss_lane := lane_index == GameField.BOSS_LANE_ID
-	var lane: LaneController = game_field.lanes.get(lane_index)
-	var participating := is_boss_lane or lane != null
+	var snap := game_field.snapshot()  # 서버 스냅샷만 읽는다 (시뮬레이션 객체를 직접 읽지 않는다)
+	var lane: Dictionary = snap.lanes.get(str(lane_index), {})
+	var participating := is_boss_lane or not lane.is_empty()
 
 	var area := Rect2(Vector2(2, 2), size - Vector2(4, 4))
 	var sx := area.size.x / GridSystem.GRID_WIDTH
@@ -51,16 +52,14 @@ func _draw() -> void:
 		if is_boss_lane:
 			var c := area.position + Balance.BOSS_CENTER * Vector2(sx, sy)
 			draw_circle(c, Balance.BOSS_RADIUS * sx, Color(0.8, 0.12, 0.15))
-			if game_field.boss:
-				for m in game_field.boss.get_sent_monsters():
-					_dot(area, m.cell_pos, sx, sy, MONSTER_COLOR)
+			for m in snap.boss.get("monsters", []):
+				_dot(area, Vector2(m.pos[0], m.pos[1]), sx, sy, MONSTER_COLOR)
 		else:
 			for t in lane.towers:
-				var cell: Vector2i = t.cell
-				var p := area.position + Vector2(cell.x * sx, cell.y * sy)
+				var p := area.position + Vector2(t.cell[0] * sx, t.cell[1] * sy)
 				draw_rect(Rect2(p, Vector2(maxf(sx, 2.0), maxf(sy, 2.0))), TOWER_COLOR)
 			for m in lane.monsters:
-				_dot(area, m.cell_pos, sx, sy, MONSTER_COLOR)
+				_dot(area, Vector2(m.pos[0], m.pos[1]), sx, sy, MONSTER_COLOR)
 
 	# 레인 번호
 	var label := "B" if is_boss_lane else str(lane_index + 1)

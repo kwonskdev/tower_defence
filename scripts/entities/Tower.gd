@@ -32,6 +32,11 @@ var seal_warn: bool = false
 
 # 아이콘 미리보기용
 var preview: bool = false
+
+# 클라이언트 껍데기 모드(puppet): 서버 스냅샷을 받아 그리기만 한다. 공격/조준/시간 흐름 같은 시뮬레이션은 하지 않는다 (#21).
+var puppet: bool = false
+var puppet_range: float = 0.0       # 서버가 계산해 보낸 실제 사거리 (색깔 보너스 반영)
+var puppet_charge_max: float = 1.0  # 충전형 상한
 var preview_cell: float = 40.0
 var preview_aim: float = -PI * 0.25  # 아이콘에서 포신이 가리키는 방향 (오른쪽 위)
 
@@ -150,12 +155,39 @@ func cur_cooldown() -> float:
 
 ## 실제 사거리 (색깔 보너스 반영)
 func cur_range() -> float:
+	if puppet:
+		return puppet_range
 	var r: float = kind.range
 	# 노랑 색깔 보너스: 사거리 증가
 	if color_info.name == "노랑":
 		var bonus := lane.color_bonus_value("노랑", self)
 		r *= (1.0 + bonus)
 	return r
+
+
+## 그릴 때 필요한 값들 (스냅샷에 실려 클라이언트 껍데기로 간다)
+func view_state() -> Dictionary:
+	return {"aim": _aim, "recoil": _recoil, "sealed": sealed_time > 0.0, "sealed_left": sealed_time, "warn": seal_warn, "charge": charge,
+		"charge_max": charge_max(), "haste": haste_stacks, "range": cur_range(),
+		"damage_now": cur_damage(), "cooldown_now": cur_cooldown(), "crit": crit_chance(),
+		"cluster": lane.cluster_size(self), "cluster_mult": lane.cluster_multiplier(self)}
+
+
+## 스냅샷의 타워 항목(Snapshot의 타워)을 받아 모습을 맞춘다. 껍데기(puppet)용.
+func apply_view(v: Dictionary) -> void:
+	evolution = v.evo
+	b_learned = v.b
+	durability = v.durability
+	sealed_time = 1.0 if v.sealed else 0.0
+	seal_warn = v.warn
+	_aim = v.aim
+	_recoil = v.recoil
+	charge = v.charge
+	puppet_charge_max = v.charge_max
+	haste_stacks = int(v.haste)
+	puppet_range = v.range
+	if color_info.name != v.color:
+		color_info = Balance.color_info_by_name(v.color)
 
 
 ## 색깔을 바꾼다 (LaneController.recolor_tower가 골드 처리를 한 뒤 부른다)
@@ -167,15 +199,7 @@ func set_color_info(info: Dictionary) -> void:
 ## 선택한 타워 정보창에 보여줄 색깔 보너스 한 줄
 func color_bonus_text() -> String:
 	var cname: String = color_info.name
-	var lv := lane.color_level(cname)
-	var type: String = Balance.COLOR_BONUS_TYPES[cname]
-	if lv == 0:
-		return "%s Lv0" % cname
-	var text := "%s Lv%d · %s %s" % [cname, lv, Balance.COLOR_BONUS_LABELS[type], Balance.color_bonus_value_text(cname, lv)]
-	text += " · 군집 %d개 +%s%%" % [lane.cluster_size(self), String.num((lane.cluster_multiplier(self) - 1.0) * 100.0, 2)]
-	if type == "damage" and evolution == "skill":
-		text += " (스킬형은 효과 없음)"
-	return text
+	return EconomyRules.color_bonus_text(lane.color_levels, cname, evolution, lane.cluster_size(self), lane.cluster_multiplier(self))
 
 func armor_penetration() -> float:
 	return minf(lane.color_bonus_value("파랑", self), 0.95) if color_info.name == "파랑" else 0.0
@@ -190,6 +214,8 @@ func crit_chance() -> float:
 
 ## 충전형이 모을 수 있는 최대 충전량 ("충전 상한" 업그레이드)
 func charge_max() -> float:
+	if puppet:
+		return puppet_charge_max
 	return _p("A", "cap") if evolution == "charge" else Evolutions.CHARGE_MIN
 
 
@@ -200,6 +226,10 @@ func charge_ratio() -> float:
 func _process(delta: float) -> void:
 	if preview:
 		return  # 아이콘은 가만히 둔다
+	if puppet:
+		_t += delta  # 봉인 예고 깜빡임 같은 그림용 시간만 흐른다
+		queue_redraw()
+		return
 
 	_t += delta
 	_recoil = maxf(0.0, _recoil - delta * 5.0)
@@ -240,7 +270,7 @@ func _fire(target: Monster) -> void:
 		"barrage":
 			_fire_volley(target)
 			# 연속 발사: 확률로 한 번 더 (위력은 "연발 위력" 항목)
-			if randf() < _p("A", "chance"):
+			if lane.rng.randf() < _p("A", "chance"):
 				_second_volley()
 		_:
 			_shoot(target)
@@ -265,7 +295,7 @@ func _shoot(target: Monster, power: float = 1.0) -> void:
 			if _shot_count >= int(_p("A", "every")):
 				_shot_count = 0
 				dmg *= _p("A", "mult")  # N번에 한 번 더 강한 공격
-				Effects.float_text(_renderer, center_cell_pos(), "강타!", evo_color(), lane.lane_visible)
+				lane.events.text(lane.player_id, center_cell_pos(), "강타!", evo_color())
 			if has_skill("B"):
 				fx.center = {"radius": _p("B", "radius"), "mult": _p("B", "mult")}
 		"skill":
@@ -274,9 +304,9 @@ func _shoot(target: Monster, power: float = 1.0) -> void:
 			if has_skill("B"):
 				fx.capture = {"chance": _p("B", "chance"), "time": _p("B", "time")}
 		"growth":
-			if randf() < crit_chance():
+			if lane.rng.randf() < crit_chance():
 				dmg *= Evolutions.CRIT_MULT
-				Effects.float_text(_renderer, center_cell_pos(), "치명!", evo_color(), lane.lane_visible)
+				lane.events.text(lane.player_id, center_cell_pos(), "치명!", evo_color())
 				if has_skill("B"):  # 광란: 치명타가 터지면 공격속도 중첩, 일정 시간 치명타가 없으면 초기화
 					haste_stacks = mini(haste_stacks + 1, Evolutions.HASTE_MAX_STACKS)
 					_haste_timer = _p("B", "time")
@@ -334,8 +364,8 @@ func _detonate() -> void:
 			m.take_damage(dmg, self)
 			if stun > 0.0 and not m.is_dead():
 				m.apply_stun(stun)
-	Effects.ring(_renderer, center_cell_pos(), r, evo_color(), lane.lane_visible)
-	Effects.float_text(_renderer, center_cell_pos(), "과충전!" if stun > 0.0 else "폭발!", evo_color(), lane.lane_visible)
+	lane.events.ring(lane.player_id, center_cell_pos(), r, evo_color())
+	lane.events.text(lane.player_id, center_cell_pos(), "과충전!" if stun > 0.0 else "폭발!", evo_color())
 	charge = 0.0
 	_recoil = 1.0
 

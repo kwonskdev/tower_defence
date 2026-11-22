@@ -56,7 +56,7 @@ func execute(cmd: Dictionary) -> Dictionary:
 		Command.EVOLVE_TOWER, Command.LEARN_SKILL, Command.RECOLOR_TOWER, Command.HEAL_TOWER:
 			return _tower_command(lane, player_id, cmd)
 		Command.SELL_TOWER:
-			return _sell_tower(lane, cmd["cell"])
+			return _sell_tower(lane, player_id, cmd["cell"])
 		Command.UPGRADE_STAT:
 			return _result(lane.upgrade_stat(cmd["evo"], cmd["skill"], cmd["key"]))
 		Command.UPGRADE_COLOR:
@@ -114,11 +114,15 @@ func _tower_command(lane: LaneController, player_id: int, cmd: Dictionary) -> Di
 
 
 ## 칸 좌표의 타워를 판다 (투입 골드의 일부 환급). 내 레인의 타워만 가능하다 (명령이 내 레인에서만 찾는다).
-func _sell_tower(lane: LaneController, cell: Vector2i) -> Dictionary:
+## 성공하면 연출 이벤트(tower_sold: 받은 골드)를 붙인다. "판매 +N" 글자는 클라이언트가 이 이벤트로 그린다.
+func _sell_tower(lane: LaneController, player_id: int, cell: Vector2i) -> Dictionary:
 	var tower := lane.tower_at(cell)
 	if tower == null:
 		return fail("no_tower")
-	return ok() if lane.sell_tower(tower) else fail("lane_inactive")
+	var gold := LaneController.whole(lane.sell_value(tower))  # 팔면 타워가 사라지니 먼저 계산한다
+	if not lane.sell_tower(tower):
+		return fail("lane_inactive")
+	return ok([{"type": "tower_sold", "player_id": player_id, "cell": cell, "gold": gold}])
 
 
 ## 몬스터를 생산해 보스 레인으로 보낸다 (수입 영구 증가). 검증을 모두 끝낸 뒤 차감 -> 수입 -> 파견을 이어서 한다.

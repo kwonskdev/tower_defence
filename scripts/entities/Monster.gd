@@ -31,6 +31,8 @@ const GNAW_SEEK_RANGE := 4.0          # 갉는 몬스터가 타워를 목표로 
 const GNAW_DISTANCE := 1.15           # 타워 중심까지 이 거리 이하면 멈춰서 갉는다
 
 var monster_id: int = 0
+var events: SimEvents = null     # 연출 이벤트 통로 (없으면 연출 없이 시뮬레이션만)
+var fx_lane_id: int = -1         # 연출이 나올 레인 번호 (보스 레인이면 GameField.BOSS_LANE_ID)
 var owner_id: int = -1           # 보스 레인으로 보낸 플레이어 (보스가 보낸 몬스터는 -1)
 var kind_id: String = "wave"
 var shape: String = "horn"       # 외형 (decor 이름)
@@ -90,6 +92,10 @@ var facing: Vector2 = Vector2.DOWN
 var breaching: bool = false
 var stopped: bool = false
 
+# 클라이언트 껍데기 모드(puppet): 서버 스냅샷을 받아 그리기만 한다. 길찾기/전투/상태 시간은 흐르지 않는다 (#21).
+var puppet: bool = false
+var puppet_moving: bool = false  # 걷는 중인가 (서버의 "정지/갉기/경로 없음"이 아닌 상태)
+
 # 아이콘 미리보기용
 var preview: bool = false
 var preview_cell: float = 40.0
@@ -108,7 +114,7 @@ var _vision_dirty := true
 var _vision_timer := 0.0
 
 var _poisons: Array = []         # [{src, stacks, dps, time}] 독 (타워별로 따로 집계)
-var _empower_buffs: Array = []   # [{end_time: float, boost: float}] 강화 버프 (시간 순 정렬, 중첩 가능)
+var _empower_buffs: Array = []   # [{time_left: float, boost: float}] 강화 버프 (남은 시간 순 정렬, 중첩 가능)
 var _consumed_marks: Array = []  # 이번 타격에 터진 표식
 var _captured := false
 var _killer = null               # 이 몬스터를 처치한 타워 (색깔 보너스 처리용)
@@ -197,8 +203,9 @@ func _revive() -> void:
 	_revived = true
 	hp = max_hp * revive_ratio
 	_hit_flash = 0.25
-	Effects.ring(_renderer, cell_pos, 0.8, Color(0.9, 0.9, 0.8), visible)
-	Effects.float_text(_renderer, cell_pos, "부활!", Color(0.9, 0.9, 0.8), visible)
+	if events != null:
+		events.ring(fx_lane_id, cell_pos, 0.8, Color(0.9, 0.9, 0.8))
+		events.text(fx_lane_id, cell_pos, "부활!", Color(0.9, 0.9, 0.8))
 
 
 func _die() -> void:
@@ -269,20 +276,11 @@ func apply_stun(duration: float) -> void:
 
 # --- 강화 시스템 (남색 색깔 보너스) ---
 
-## 일시정지로 멈춰 있던 시간(ms)의 합. 강화 버프가 실제 시계로 만료되므로, 멈춘 동안은 시간이 흐르지 않은 것으로 친다.
-static var pause_offset_ms: int = 0
-
-
-static func _game_now() -> float:
-	return float(Time.get_ticks_msec() - pause_offset_ms) / 1000.0
-
-
 ## 강화 버프 추가 (중첩 가능)
 func add_empower(duration: float, boost: float) -> void:
-	var now := _game_now()
-	_empower_buffs.append({"end_time": now + duration, "boost": boost})
-	# 종료 시간 순으로 정렬
-	_empower_buffs.sort_custom(func(a, b): return a.end_time < b.end_time)
+	_empower_buffs.append({"time_left": duration, "boost": boost})
+	# 먼저 끝나는 순으로 정렬
+	_empower_buffs.sort_custom(func(a, b): return a.time_left < b.time_left)
 	while _empower_buffs.size() > Balance.EMPOWER_MAX_STACKS:
 		_empower_buffs.remove_at(0)  # 가장 먼저 끝나는 것을 밀어낸다
 	_sync_empower_max_hp()
@@ -299,13 +297,18 @@ func _sync_empower_max_hp() -> void:
 	max_hp = new_max
 
 
+## 강화 버프의 남은 시간을 줄인다. 시뮬레이션이 넘겨주는 delta로만 흐르므로 일시정지/서버 시간과 항상 맞는다 (벽시계를 쓰지 않는다).
+func _tick_empower(delta: float) -> void:
+	for b in _empower_buffs:
+		b.time_left -= delta
+
+
 ## 현재 적용 중인 강화 효과 총합 (만료된 버프는 제거)
 func get_total_empower() -> float:
-	var now := _game_now()
 	var total := 0.0
 	# 만료된 버프 제거 (역순으로)
 	for i in range(_empower_buffs.size() - 1, -1, -1):
-		if _empower_buffs[i].end_time < now:
+		if _empower_buffs[i].time_left < 0.0:
 			_empower_buffs.remove_at(i)
 		else:
 			total += _empower_buffs[i].boost
@@ -438,9 +441,13 @@ func _process(delta: float) -> void:
 	if _hit_flash > 0.0:
 		_hit_flash -= delta
 	queue_redraw()
+	if puppet:
+		_update_position()
+		return
 	if preview:
 		return
 
+	_tick_empower(delta)
 	if not _empower_buffs.is_empty() or not is_equal_approx(max_hp, _base_max_hp):
 		_sync_empower_max_hp()  # 만료된 강화를 바로 반영 (끝난 시점에 체력 비율대로 되돌린다)
 	if regen > 0.0 and hp < max_hp and not _dead:
@@ -588,6 +595,63 @@ func _check_arrival() -> void:
 		reached_exit.emit(self)
 
 
+## 그릴 때 필요한 값들 (스냅샷에 실려 클라이언트 껍데기로 간다)
+func view_state() -> Dictionary:
+	return {
+		"id": monster_id, "kind": kind_id, "owner": owner_id, "pos": [snappedf(cell_pos.x, 0.001), snappedf(cell_pos.y, 0.001)],
+		"hp": hp, "max_hp": max_hp, "flying": flying, "ghost": ghost,
+		"shape": shape, "color": body_color.to_html(false), "size": size_scale, "speed": speed,
+		"facing": [facing.x, facing.y], "attack_dir": [attack_dir.x, attack_dir.y],
+		"stopped": stopped, "gnawing": _gnawing, "moving": not stopped and not _gnawing and not waypoints.is_empty(),
+		"breaching": breaching, "hit": _hit_flash > 0.0, "aura": aura_radius, "time_at_boss": time_at_boss,
+		"poison": not _poisons.is_empty(), "slow": slow_time > 0.0, "stun": stun_time > 0.0 or captured_time > 0.0,
+		"armor_break": armor_break_time > 0.0, "boost": speed_boost > 1.0, "revive": revive_ratio > 0.0 and not _revived,
+		"chill": chill, "dread": dread_time > 0.0, "warn": warn_color.to_html(true) if warn_color.a > 0.0 else "",
+		"marks": marks.size(),
+	}
+
+
+## 스냅샷의 몬스터 항목을 받아 모습을 맞춘다. 껍데기(puppet)용.
+func apply_view(v: Dictionary) -> void:
+	monster_id = v.id
+	kind_id = v.kind
+	shape = v.shape
+	body_color = Color.html(v.color)
+	size_scale = v.size
+	speed = v.speed
+	cell_pos = Vector2(v.pos[0], v.pos[1])
+	facing = Vector2(v.facing[0], v.facing[1])
+	attack_dir = Vector2(v.attack_dir[0], v.attack_dir[1])
+	hp = v.hp
+	max_hp = v.max_hp
+	flying = v.flying
+	ghost = v.ghost
+	stopped = v.stopped
+	_gnawing = v.gnawing
+	puppet_moving = v.moving
+	breaching = v.breaching
+	_hit_flash = 0.1 if v.hit else 0.0
+	aura_radius = v.aura
+	time_at_boss = v.time_at_boss
+	_poisons = [{}] if v.poison else []
+	slow_time = 1.0 if v.slow else 0.0
+	stun_time = 1.0 if v.stun else 0.0
+	armor_break_time = 1.0 if v.armor_break else 0.0
+	speed_boost = 1.5 if v.boost else 1.0
+	revive_ratio = 1.0 if v.revive else 0.0
+	_revived = not v.revive
+	chill = v.chill
+	dread_time = 1.0 if v.dread else 0.0
+	warn_color = Color.html(v.warn) if v.warn != "" else Color(0, 0, 0, 0)
+	marks.resize(int(v.marks))
+
+
+## 껍데기로 쓴다: 시뮬레이션 없이 그리기만 한다 (setup()은 길찾기까지 하므로 부르지 않는다)
+func setup_puppet(renderer: GridRenderer) -> void:
+	puppet = true
+	_renderer = renderer
+
+
 func _cell_px() -> float:
 	return preview_cell if _renderer == null else float(_renderer.CELL_SIZE)
 
@@ -599,7 +663,7 @@ func _update_position() -> void:
 func _draw() -> void:
 	var cell := _cell_px()
 	var r: float = cell * 0.32 * size_scale
-	var moving := preview or (not stopped and not _gnawing and not waypoints.is_empty())
+	var moving := preview or (puppet_moving if puppet else (not stopped and not _gnawing and not waypoints.is_empty()))
 
 	# 걷는 동안 통통 튀고, 멈추면 숨쉬듯 흔들림. 보스 앞에서는 보스 쪽으로 달려들었다 물러남. 타워를 갉을 때도 타워 쪽으로 달려든다.
 	var bob := absf(sin(_anim * speed * 3.0)) * cell * 0.09 if moving else sin(_anim * 3.0) * cell * 0.015
