@@ -166,11 +166,11 @@ func shots_are_events() -> void:
 	lane.evolve_tower(lane.tower_at(Vector2i(5, 3)), "pierce")
 	lane.evolve_tower(lane.tower_at(Vector2i(7, 3)), "support")
 	gf.do_command(Command.START_GAME)
-	lane.spawn_wave_monster("tank", 1)
+	lane.spawn_wave_monster("tank", 1, Vector2i(6, 0))  # 두 타워 사이 위쪽: 둘 다 사거리 안
 	var saw_puppet_shot := false
 	var sim_shot_visible := false
 	var saw_puppet_cloud := false
-	for i in range(240):
+	for i in range(600):
 		await frames(1)
 		for c in gf.grid_renderer.get_children():
 			if c is Effects.Projectile:
