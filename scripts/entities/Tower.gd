@@ -167,8 +167,10 @@ func cur_range() -> float:
 
 ## 그릴 때 필요한 값들 (스냅샷에 실려 클라이언트 껍데기로 간다)
 func view_state() -> Dictionary:
-	return {"aim": _aim, "recoil": _recoil, "sealed": sealed_time > 0.0, "warn": seal_warn, "charge": charge,
-		"charge_max": charge_max(), "haste": haste_stacks, "range": cur_range()}
+	return {"aim": _aim, "recoil": _recoil, "sealed": sealed_time > 0.0, "sealed_left": sealed_time, "warn": seal_warn, "charge": charge,
+		"charge_max": charge_max(), "haste": haste_stacks, "range": cur_range(),
+		"damage_now": cur_damage(), "cooldown_now": cur_cooldown(), "crit": crit_chance(),
+		"cluster": lane.cluster_size(self), "cluster_mult": lane.cluster_multiplier(self)}
 
 
 ## 스냅샷의 타워 항목(Snapshot의 타워)을 받아 모습을 맞춘다. 껍데기(puppet)용.
@@ -197,15 +199,7 @@ func set_color_info(info: Dictionary) -> void:
 ## 선택한 타워 정보창에 보여줄 색깔 보너스 한 줄
 func color_bonus_text() -> String:
 	var cname: String = color_info.name
-	var lv := lane.color_level(cname)
-	var type: String = Balance.COLOR_BONUS_TYPES[cname]
-	if lv == 0:
-		return "%s Lv0" % cname
-	var text := "%s Lv%d · %s %s" % [cname, lv, Balance.COLOR_BONUS_LABELS[type], Balance.color_bonus_value_text(cname, lv)]
-	text += " · 군집 %d개 +%s%%" % [lane.cluster_size(self), String.num((lane.cluster_multiplier(self) - 1.0) * 100.0, 2)]
-	if type == "damage" and evolution == "skill":
-		text += " (스킬형은 효과 없음)"
-	return text
+	return EconomyRules.color_bonus_text(lane.color_levels, cname, evolution, lane.cluster_size(self), lane.cluster_multiplier(self))
 
 func armor_penetration() -> float:
 	return minf(lane.color_bonus_value("파랑", self), 0.95) if color_info.name == "파랑" else 0.0

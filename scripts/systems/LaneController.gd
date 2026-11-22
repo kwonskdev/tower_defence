@@ -155,16 +155,12 @@ func heal_tower(tower: Tower) -> String:
 
 ## 업그레이드 항목 하나의 현재 레벨 (1~3). 안 올렸으면 1.
 func stat_level(evo: String, skill: String, key: String) -> int:
-	return int(stat_levels.get("%s.%s.%s" % [evo, skill, key], 1))
+	return EconomyRules.stat_level(stat_levels, evo, skill, key)
 
 
 ## 설명 문구용: 이 계열의 항목별 레벨 {"A.count": 2, ...}
 func levels_of(evo: String) -> Dictionary:
-	var levels := {}
-	for skill in ["A", "B"]:
-		for key in Evolutions.PARAMS[evo][skill]:
-			levels["%s.%s" % [skill, key]] = stat_level(evo, skill, key)
-	return levels
+	return EconomyRules.levels_of(stat_levels, evo)
 
 
 ## 타워 1기를 진화시킨다 (골드). 같은 기본 타워가 가진 계열 2개 중 하나를 고르며, 한 번 고르면 바꿀 수 없다. 성공하면 "", 실패하면 사유.
@@ -186,9 +182,9 @@ func evolve_tower(tower: Tower, evo: String) -> String:
 
 ## 타워 1기가 B 스킬을 배우는 비용. 진화 전이거나 이미 배웠으면 -1.
 func learn_cost(tower: Tower) -> int:
-	if tower == null or tower.evolution == "" or tower.b_learned:
+	if tower == null:
 		return -1
-	return Balance.SKILL_LEARN_COST
+	return EconomyRules.learn_cost(tower.evolution, tower.b_learned)
 
 
 ## 타워 1기의 B 스킬을 배운다 (진화처럼 타워마다 따로, 골드). 성공하면 "", 실패하면 사유.
@@ -210,10 +206,7 @@ func learn_tower_skill(tower: Tower) -> String:
 
 ## 항목 레벨을 한 단계 올리는 비용. 올릴 수 없으면 -1 (최대 레벨). 계열의 모든 타워에 적용되고, B 항목은 B를 배운 타워에만 효과가 있다.
 func stat_upgrade_cost(evo: String, skill: String, key: String) -> int:
-	var lv := stat_level(evo, skill, key)
-	if lv >= Evolutions.MAX_LEVEL:
-		return -1
-	return int(Balance.STAT_UPGRADE_COSTS[lv - 1])
+	return EconomyRules.stat_upgrade_cost(stat_levels, evo, skill, key)
 
 
 ## 업그레이드 탭: 항목 하나를 올린다. 그 계열로 진화한 모든 타워가 바로 강해진다. 성공하면 "", 실패하면 사유.
@@ -263,7 +256,7 @@ func find_target(from_cell_pos: Vector2, range_cells: float, anti_air: bool = fa
 
 ## 골드를 화면에 보이는 정수로 (소수점은 내림. 2.8이면 2). 부동소수 오차로 3.0이 2.9999999가 되어 2로 보이지 않도록 아주 작은 값을 더한다.
 static func whole(amount: float) -> int:
-	return floori(amount + 0.000001)
+	return EconomyRules.whole(amount)
 
 
 ## 화면에 보이고 구매 가능 판정에 쓰는 골드 (소수점은 내림)
@@ -273,8 +266,7 @@ func gold_shown() -> int:
 
 ## 이 타워를 지금 팔면 받는 골드. 반올림하지 않고 소수까지 그대로 더한다 (2.8골드면 gold에 2.8이 들어간다).
 func sell_value(tower: Tower) -> float:
-	var ratio := Balance.SELL_REFUND_RATIO if started else Balance.SELL_REFUND_RATIO_BEFORE_START
-	return tower.invested * ratio
+	return EconomyRules.sell_value(tower.invested, started)
 
 
 ## 판매 버튼/확인창에 보이는 환급액 (소수점은 내림)
@@ -284,7 +276,7 @@ func sell_value_shown(tower: Tower) -> int:
 
 ## 팔 때 한 번 더 확인해야 하는가 (진화/B 스킬에 골드를 쓴 타워. 건설만 한 타워는 바로 판다)
 func sell_needs_confirm(tower: Tower) -> bool:
-	return tower.evolution != ""
+	return EconomyRules.sell_needs_confirm(tower.evolution)
 
 
 ## 타워를 판다: 투입 골드의 일부를 돌려받고 타워를 치운 뒤 칸을 비운다. 내 레인의 타워만 가능.
@@ -584,15 +576,12 @@ func set_lane_visible(is_shown: bool) -> void:
 
 ## 색깔의 현재 레벨 (0~5). 0=업그레이드 안 함.
 func color_level(color_name: String) -> int:
-	return int(color_levels.get(color_name, 0))
+	return EconomyRules.color_level(color_levels, color_name)
 
 
 ## 색깔 업그레이드 비용 (현재 레벨에서 다음 레벨로). 최대 레벨이면 -1.
 func color_upgrade_cost(color_name: String) -> int:
-	var cur := color_level(color_name)
-	if cur >= Balance.COLOR_MAX_LEVEL:
-		return -1
-	return Balance.COLOR_UPGRADE_COSTS[cur]  # 현재 레벨 cur -> cur+1 비용
+	return EconomyRules.color_upgrade_cost(color_levels, color_name)  # 현재 레벨 -> 다음 레벨 비용
 
 
 ## 색깔을 업그레이드한다 (골드). 성공하면 "", 실패하면 사유.
