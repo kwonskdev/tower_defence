@@ -53,6 +53,7 @@ func run() -> void:
 	await map_view_draws_from_snapshot()
 	await shots_are_events()
 	await warn_events()
+	await loopback_clients()
 	game.queue_free()
 	await frames(3)
 
@@ -235,5 +236,51 @@ func warn_events() -> void:
 	gf.session.events.warn_clear()
 	await frames(3)
 	check(not is_instance_valid(found[0]) or found[0].is_queued_for_deletion(), "취소 이벤트로 표식이 치워진다")
+	game.queue_free()
+	await frames(3)
+
+
+## 클라이언트는 JSON 글자만으로 똑같이 그린다 (네트워크로 보낸 것과 같은 조건). 두 클라이언트가 같은 스냅샷을 받으면 몬스터/타워 위치가 같다.
+## 지연이 있는 진짜 네트워크에서의 보간은 #20 이후에 따로 확인해야 한다.
+func loopback_clients() -> void:
+	print("[맵] JSON만 받는 두 클라이언트")
+	var game := (load("res://scenes/main/MainGame.tscn") as PackedScene).instantiate()
+	get_tree().root.add_child.call_deferred(game)
+	await frames(8)
+	var gf: GameField = game.game_field
+	var lane: LaneController = gf.lanes[0]
+	lane.gold = 1000.0
+	lane.try_build_tower(Vector2i(4, 8), "long", false)
+	lane.evolve_tower(lane.tower_at(Vector2i(4, 8)), "pierce")
+	gf.do_command(Command.START_GAME)
+	for k in ["grunt", "runner", "flyer", "tank"]:
+		lane.spawn_wave_monster(k, 1)
+	gf.do_command(Command.SEND_MONSTER, {"kind_id": "warrior"})
+	await frames(40)
+	var text := JSON.stringify(gf.snapshot(true))  # 네트워크로 보낼 글자
+	var views: Array[MapView] = []
+	var renderers: Array[GridRenderer] = []
+	for i in range(2):
+		var r := GridRenderer.new()
+		game.add_child(r)
+		renderers.append(r)
+		var mv := MapView.new(r)
+		game.add_child(mv)
+		mv.sync(JSON.parse_string(text), 0, "")  # 받는 쪽은 글자를 풀어서만 쓴다
+		views.append(mv)
+	check(views[0].tower_count() == 1 and views[0].monster_count() == lane.monsters.size() + gf.boss.get_sent_monsters().size(), "JSON으로 받은 클라이언트가 타워 1기/몬스터 %d마리(레인 %d + 보스 레인 %d)를 만들었다" % [views[0].monster_count(), lane.monsters.size(), gf.boss.get_sent_monsters().size()])
+	var max_diff := 0.0
+	for m in lane.monsters:
+		var a := views[0].monster_node(0, m.monster_id)
+		var b := views[1].monster_node(0, m.monster_id)
+		if a == null or b == null:
+			max_diff = 99.0
+			continue
+		max_diff = maxf(max_diff, a.cell_pos.distance_to(b.cell_pos))
+		max_diff = maxf(max_diff, a.cell_pos.distance_to(m.cell_pos))  # 서버와도 같다 (보낸 뒤 흐른 프레임만큼은 제외하려고 같은 프레임에 비교)
+	check(max_diff < 0.05, "두 클라이언트와 서버의 몬스터 위치 차이 최대 %.4f칸" % max_diff)
+	var ta := views[0].tower_node(0, Vector2i(4, 8))
+	var tb := views[1].tower_node(0, Vector2i(4, 8))
+	check(ta != null and tb != null and ta.evolution == "pierce" and tb.evolution == "pierce" and absf(ta.cur_range() - tb.cur_range()) < 0.001, "두 클라이언트의 타워 모습(진화/사거리)이 같다")
 	game.queue_free()
 	await frames(3)
