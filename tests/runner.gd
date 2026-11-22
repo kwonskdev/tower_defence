@@ -13,7 +13,13 @@ func _ready() -> void:
 	var total := 0
 	for f in files:
 		print("=== ", f, " ===")
-		var test: Node = load("res://tests/" + f).new()
+		var script: GDScript = load("res://tests/" + f)
+		if script == null or not script.can_instantiate():  # 파싱/컴파일 오류: 멈춰 있지 말고 실패로 세고 다음 파일로 간다
+			printerr("  FAIL  테스트를 불러오지 못했다 (파싱 오류): ", f)
+			failed += 1
+			total += 1
+			continue
+		var test: Node = script.new()
 		add_child(test)
 		await test.finished
 		failed += test.fail_n
