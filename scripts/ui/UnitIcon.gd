@@ -21,7 +21,7 @@ func show_monster(kind_id: String) -> void:
 	m.apply_look(data)
 	m.kind_id = kind_id
 	m.aura_radius = 0.0  # 아이콘에서는 오라 원을 그리지 않는다
-	_tall_decor = data.shape in ["flag", "banner", "tophat", "flame", "sprout", "coin"]
+	_tall_decor = data.shape in ["flag", "banner", "sprout", "coin"]
 	_set_node(m)
 
 
