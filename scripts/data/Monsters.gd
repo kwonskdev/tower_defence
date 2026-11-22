@@ -47,7 +47,7 @@ const PVE_SENDABLE := ["attack", "support"]
 
 # 유형 화면의 칸 배치 (9열 격자를 왼쪽 위부터 차례대로 채운다). 공격형은 싼 것부터 한 줄 계단.
 const SLOTS := {
-	"attack": ["rusher", "warrior", "knight", "sprout", "crusher", "giant"],
+	"attack": ["rusher", "warrior", "knight", "sprout", "crusher", "giant", "titan", "slaughterer", "calamity"],
 	"support": ["cheer", "banner"],
 	"normal": ["grunt", "runner", "swarm", "tank", "armored", "regen", "juggernaut", "slimeling"],
 	"air": ["flyer", "flock", "bomber"],
@@ -72,7 +72,18 @@ const DATA := {
 	"crusher": {"name": "파괴자", "category": "attack", "cost": 260, "income": 9, "hp": 39000.0, "dps": 32.0, "speed": 2.4, "size": 1.25, "shape": "spike",
 		"life": 2, "color": Color(0.7, 0.3, 0.9), "weight": 0.4, "min_level": 6, "desc": "높은 공격력. 가시가 달린 거대 몬스터."},
 	"giant": {"name": "거인", "category": "attack", "cost": 700, "income": 22, "hp": 105000.0, "dps": 95.0, "speed": 1.8, "size": 1.6, "shape": "spike",
-		"life": 3, "color": Color(0.6, 0.15, 0.15), "weight": 0.3, "min_level": 9, "desc": "최강 공격력. 아주 비싸고 느리다."},
+		"life": 3, "color": Color(0.6, 0.15, 0.15), "weight": 0.3, "min_level": 9, "desc": "아주 비싸고 느린 거대 몬스터."},
+	# 돈이 쌓인 후반에 한 번에 큰돈을 쓰는 곳 (이슈 #15): 1000 / 2000 / 4000원 계단. 거인(700원, 생명 3, 공격 95)을 기준으로 위에 얹었다.
+	# 쓰는 이유는 한 마리가 싼 것 여러 마리보다 세다는 것이다: 체력은 골드당 150 그대로, 골드당 공격력은 한 칸마다 조금씩 오르고(0.145 -> 0.155 -> 0.165)
+	# 기지에 닿았을 때 생명도 같이 커진다 (보스 웨이브로 올 때만 쓰인다). 수입은 화력 담당이라 골드당 0.025~0.03으로 낮추고 본전은 35.7 -> 37 -> 40틱으로 더 느려진다 (#14).
+	# 보스 웨이브 후보는 타이탄뿐이다 (마지막 라운드에만). 학살자(2000)는 마지막 라운드 보스 수입(2200)으로 살 수 있지만 생명 5라 보스가 한 마리로 기지를 반쯤 깎아서 뺐고,
+	# 재앙(4000)은 보스 수입으로 못 산다. weight 0 = 보스 웨이브에 안 나오고 유저만 만든다.
+	"titan": {"name": "타이탄", "category": "attack", "cost": 1000, "income": 28, "hp": 150000.0, "dps": 145.0, "speed": 1.6, "size": 1.8, "shape": "spike",
+		"life": 4, "color": Color(0.5, 0.1, 0.2), "weight": 0.2, "min_level": 10, "desc": "거인보다 세다. 후반에 큰돈을 쓸 곳."},
+	"slaughterer": {"name": "학살자", "category": "attack", "cost": 2000, "income": 54, "hp": 300000.0, "dps": 310.0, "speed": 1.5, "size": 2.0, "shape": "spike",
+		"life": 5, "color": Color(0.35, 0.08, 0.3), "weight": 0.0, "min_level": 10, "desc": "한 마리로 후반 보스를 압박한다. 아주 비싸다."},
+	"calamity": {"name": "재앙", "category": "attack", "cost": 4000, "income": 100, "hp": 600000.0, "dps": 660.0, "speed": 1.4, "size": 2.2, "shape": "spike",
+		"life": 6, "color": Color(0.15, 0.05, 0.12), "weight": 0.0, "min_level": 10, "desc": "최강 공격력. 가장 비싸고 가장 느리다."},
 	# --- 지원형 ---
 	"cheer": {"name": "응원단", "category": "support", "cost": 90, "income": 3, "hp": 13500.0, "dps": 0.0, "speed": 3.0, "size": 1.0, "shape": "flag",
 		"aura_radius": 2.2, "aura_bonus": 0.3, "color": Color(0.95, 0.5, 0.7), "weight": 0.3, "min_level": 3,

@@ -95,12 +95,19 @@ func _boss_pool() -> void:
 		if Monsters.candidates(level).is_empty():
 			ok = false
 	check(ok, "보스 라운드 1~%d마다 웨이브 후보가 있다" % BossLevels.COUNT)
+	# 보스 웨이브 후보인 공격형(weight > 0)은 마지막 라운드에 전부 나올 수 있다. weight 0이면 유저 전용이다 (#15: 보스 수입으로 못 사거나 생명이 너무 큰 것)
 	var last: Array = Monsters.candidates(BossLevels.COUNT)
+	var max_income := int(BossLevels.get_level(BossLevels.COUNT).income)
 	var all_in := true
+	var affordable := true
 	for id in ids:
-		if not last.has(id):
-			all_in = false
-	check(all_in, "마지막 라운드에는 공격형이 전부 후보에 있다")
+		if float(Monsters.DATA[id].weight) > 0.0:
+			if not last.has(id):
+				all_in = false
+			if int(Monsters.DATA[id].cost) > max_income:
+				affordable = false  # 보스가 못 사는 몬스터를 후보에 두면 뽑을 수 없는 후보가 된다
+	check(all_in, "마지막 라운드에는 보스 웨이브 후보인(weight > 0) 공격형이 전부 후보에 있다")
+	check(affordable, "보스 웨이브 후보인 공격형은 마지막 라운드 보스 수입(%d)으로 살 수 있다" % max_income)
 	# 공격형이 보스 후보에서 차지하는 가중치 비중: 일반형/공중형이 주력이어야 한다 (30% 이하)
 	var worst := 0.0
 	for level in range(1, BossLevels.COUNT + 1):
