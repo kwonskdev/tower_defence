@@ -57,7 +57,9 @@ const DATA := {
 	# --- 공격형 (한 줄 계단) ---
 	# 전부 공격력(dps)과 수입(income)을 둘 다 가진다. 골드당 공격력은 약 0.1 (보스를 잡는 게 기본), 수입은 골드당 0.03~0.04.
 	# 비쌀수록 골드당 공격력은 조금씩 좋아지고 수입은 조금씩 나빠진다 (싼 건 수입, 비싼 건 화력). 체력은 골드당 150.
-	# 수입 값은 이슈 #14(수입 효율 낮추기)에서 이 열만 다시 맞춘다.
+	# 수입 기준 (이슈 #14): 본전(비용/수입)이 수입 틱 20~32틱(600~960초)이다. 한 판(10라운드)이 약 60틱이라 앞쪽에서 사야 본전이고
+	# 늦게 사면 손해다. 가장 효율이 좋은 건 전사이고 전사부터는 비쌀수록 본전이 느려진다 (비싼 게 수입도 좋은 구조가 아니다). 지원형은 오라가 본업이라 더 느리다.
+	# 수입은 정수라서 값을 바꿀 땐 tests/test_income_growth.gd의 본전 하한을 같이 본다.
 	"rusher": {"name": "돌격병", "category": "attack", "cost": 25, "income": 1, "hp": 3750.0, "dps": 2.0, "speed": 7.0, "size": 0.8, "shape": "runner",
 		"color": Color(1.0, 0.9, 0.3), "weight": 0.8, "min_level": 3, "desc": "거의 즉시 도착한다. 시간이 급할 때 쓴다."},
 	"warrior": {"name": "전사", "category": "attack", "cost": 40, "income": 2, "hp": 6000.0, "dps": 4.0, "speed": 3.0, "size": 1.0, "shape": "horn",
@@ -168,6 +170,18 @@ static func _can_pick(id: String, level: int, flying_only: bool) -> bool:
 		and (not flying_only or bool(d.get("flying", false)))
 
 
+## 올린 수입으로 비용을 되찾기까지 걸리는 수입 틱 수 (비용 / 수입). 수입이 없으면 0.
+static func payback_ticks(kind_id: String) -> float:
+	var d: Dictionary = DATA[kind_id]
+	return float(d.cost) / float(d.income) if int(d.income) > 0 else 0.0
+
+
+## 툴팁에 붙이는 본전 시간 " (본전 750초)". 수입이 없으면 빈 문자열.
+static func payback_text(kind_id: String) -> String:
+	var ticks := payback_ticks(kind_id)
+	return " (본전 %d초)" % roundi(ticks * Balance.INCOME_INTERVAL) if ticks > 0.0 else ""
+
+
 ## 몬스터를 골랐을 때 하단에 보여줄 설명: 이름 / 한 줄 설명(이동 속도·공중 여부 포함) / 수치 한 줄
 static func tooltip(kind_id: String) -> String:
 	var d: Dictionary = DATA[kind_id]
@@ -180,8 +194,8 @@ static func tooltip(kind_id: String) -> String:
 	var atk := "공격 %s" % _num(dps(kind_id)) if dps(kind_id) > 0.0 else "공격 없음"
 	if d.category in ["normal", "air"] and not d.get("gnaws", false):
 		atk = "타워 공격 안 함 (길이 막히면 한 방에 파괴)"  # dps는 보스 레인에서만 쓰이고, 웨이브로 올 땐 타워를 때리지 않는다
-	var text := "%s (%s)\n%s\n비용 %d · 수입 +%d · %s · 체력 %s" % [
-		d.name, cat.name, desc, d.cost, d.income, atk, _num(max_hp(kind_id))]
+	var text := "%s (%s)\n%s\n비용 %d · 수입 +%d%s · %s · 체력 %s" % [
+		d.name, cat.name, desc, d.cost, d.income, payback_text(kind_id), atk, _num(max_hp(kind_id))]
 	if not can_send_in_pve(kind_id):
 		text += "\n협력에서는 만들 수 없음"
 	return text
