@@ -17,7 +17,7 @@ class_name Monsters
 ##          breach_dps: 길이 완전히 막혔을 때만 앞을 막은 타워 내구도(Balance.TOWER_DURABILITY)를 초당 이만큼 깎는다. 길이 열려 있으면 타워를 안 건드린다.
 ##
 ## 유형(category)
-##   attack 공격형: 보스를 때리러 가는 몬스터 (수입/화력/균형/특수 계열). 유저는 PvE에서 공격형과 지원형만 만들 수 있다.
+##   attack 공격형: 보스를 때리러 가는 몬스터 (공격도 하고 수입도 올린다). 유저는 PvE에서 공격형과 지원형만 만들 수 있다.
 ##   support 지원형: 주변 몬스터의 공격력을 올리는 몬스터 (응원단/군기병).
 ##   normal 일반형 / air 공중형: 보스가 웨이브로 보내는 몬스터 (종류마다 이기는 타워가 다르다. 상성은 아래).
 ##
@@ -33,7 +33,7 @@ const CATEGORIES := ["attack", "normal", "support", "air"]
 # 유형 정보 (몬스터 배럭의 유형 버튼)
 const CATEGORY_DATA := {
 	"attack": {"name": "공격형", "color": Color(0.95, 0.4, 0.3),
-		"desc": "보스를 공격하러 가는 몬스터 (수입/화력/균형/특수). 협력(PvE)에서도 만들 수 있다."},
+		"desc": "보스를 공격하러 가는 몬스터. 공격도 하고 수입도 올린다. 협력(PvE)에서도 만들 수 있다."},
 	"normal": {"name": "일반형", "color": Color(0.6, 0.7, 0.85),
 		"desc": "기본 지상 몬스터. 보스가 웨이브로 보낸다 (협력에서는 만들 수 없다)."},
 	"support": {"name": "지원형", "color": Color(0.45, 0.9, 0.55),
@@ -45,58 +45,32 @@ const CATEGORY_DATA := {
 # 협력(PvE)에서 유저가 만들 수 있는 유형
 const PVE_SENDABLE := ["attack", "support"]
 
-# 공격형 계열 색 (버튼 테두리/이름표). 같은 계열끼리 한눈에 묶여 보이도록 쓴다.
-const FAMILY_COLORS := {
-	"수입": Color(0.95, 0.8, 0.25),
-	"화력": Color(0.95, 0.35, 0.3),
-	"균형": Color(0.4, 0.75, 0.95),
-	"특수": Color(0.7, 0.45, 0.95),
-}
-
-# 유형 화면의 칸 배치 (9열 격자를 왼쪽 위부터 차례대로 채운다). ""는 계열 사이를 띄우는 빈칸.
-# 공격형: 윗줄 = 수입 4 + 화력 4 + 빈칸 / 아랫줄 = 균형 2, 빈칸, 특수 3
+# 유형 화면의 칸 배치 (9열 격자를 왼쪽 위부터 차례대로 채운다). 공격형은 싼 것부터 한 줄 계단.
 const SLOTS := {
-	"attack": [
-		"worker", "miner", "vault", "banker", "warrior", "knight", "crusher", "giant", "",
-		"scout", "mercenary", "", "berserker", "rusher", "sprout",
-	],
+	"attack": ["rusher", "warrior", "knight", "sprout", "crusher", "giant"],
 	"support": ["cheer", "banner"],
 	"normal": ["grunt", "runner", "swarm", "tank", "armored", "regen", "juggernaut", "slimeling"],
 	"air": ["flyer", "flock", "bomber"],
 }
 
 const DATA := {
-	# --- 공격형: 수입 계열 ---
-	"worker": {"name": "일꾼", "category": "attack", "family": "수입", "cost": 20, "income": 3, "hp": 3000.0, "dps": 0.3, "speed": 3.0, "size": 0.85, "shape": "hat",
-		"color": Color(0.85, 0.8, 0.3), "weight": 0.6, "min_level": 3, "desc": "싸고 가볍게 수입을 올린다."},
-	"miner": {"name": "광부", "category": "attack", "family": "수입", "cost": 60, "income": 10, "hp": 9000.0, "dps": 0.5, "speed": 2.6, "size": 1.0, "shape": "pick",
-		"color": Color(0.6, 0.5, 0.35), "weight": 0.4, "min_level": 3, "desc": "일꾼보다 비싸지만 골드당 수입이 더 좋다."},
-	"vault": {"name": "금고지기", "category": "attack", "family": "수입", "cost": 150, "income": 28, "hp": 22500.0, "dps": 0.8, "speed": 2.2, "size": 1.2, "shape": "vault",
-		"life": 2, "color": Color(0.55, 0.6, 0.65), "weight": 0.3, "min_level": 5, "desc": "아주 비싸지만 골드당 수입이 훨씬 좋다. 오래 가는 판에서 이득."},
-	"banker": {"name": "투자자", "category": "attack", "family": "수입", "cost": 400, "income": 90, "hp": 60000.0, "dps": 1.0, "speed": 2.0, "size": 1.3, "shape": "tophat",
-		"life": 2, "color": Color(0.25, 0.25, 0.3), "weight": 0.2, "min_level": 8, "desc": "초고가 수입 몬스터. 골드당 수입이 최고지만 본전 회수가 느리다."},
-	# --- 공격형: 화력 계열 ---
-	"warrior": {"name": "전사", "category": "attack", "family": "화력", "cost": 40, "income": 1, "hp": 6000.0, "dps": 4.0, "speed": 3.0, "size": 1.0, "shape": "horn",
-		"color": Color(0.8, 0.35, 0.3), "weight": 0.6, "min_level": 3, "desc": "기본 화력 몬스터."},
-	"knight": {"name": "기사", "category": "attack", "family": "화력", "cost": 100, "income": 2, "hp": 15000.0, "dps": 11.0, "speed": 2.8, "size": 1.1, "shape": "armor",
-		"color": Color(0.35, 0.5, 0.8), "weight": 0.4, "min_level": 3, "desc": "골드당 화력이 전사보다 좋다."},
-	"crusher": {"name": "파괴자", "category": "attack", "family": "화력", "cost": 260, "income": 4, "hp": 39000.0, "dps": 32.0, "speed": 2.4, "size": 1.25, "shape": "spike",
-		"life": 2, "color": Color(0.7, 0.3, 0.9), "weight": 0.3, "min_level": 6, "desc": "높은 화력. 가시가 달린 거대 몬스터."},
-	"giant": {"name": "거인", "category": "attack", "family": "화력", "cost": 700, "income": 8, "hp": 105000.0, "dps": 95.0, "speed": 1.8, "size": 1.6, "shape": "spike",
-		"life": 3, "color": Color(0.6, 0.15, 0.15), "weight": 0.2, "min_level": 9, "desc": "최강 화력. 아주 비싸고 느리다."},
-	# --- 공격형: 균형 계열 ---
-	"scout": {"name": "정찰병", "category": "attack", "family": "균형", "cost": 30, "income": 2, "hp": 4500.0, "dps": 1.5, "speed": 4.5, "size": 0.8, "shape": "runner",
-		"color": Color(0.5, 0.8, 0.95), "weight": 0.6, "min_level": 3, "desc": "빨리 도착한다. 수입과 화력이 모두 낮지만 값이 싸다."},
-	"mercenary": {"name": "용병", "category": "attack", "family": "균형", "cost": 80, "income": 5, "hp": 12000.0, "dps": 5.0, "speed": 3.2, "size": 1.0, "shape": "shield",
-		"color": Color(0.95, 0.65, 0.2), "weight": 0.4, "min_level": 3, "desc": "수입과 화력이 고루 괜찮다."},
-	# --- 공격형: 특수 ---
-	"berserker": {"name": "광전사", "category": "attack", "family": "특수", "cost": 50, "income": 0, "hp": 7500.0, "dps": 8.0, "speed": 3.5, "size": 1.0, "shape": "flame",
-		"color": Color(0.9, 0.25, 0.1), "weight": 0.4, "min_level": 3, "desc": "수입은 전혀 안 오르지만 골드당 화력이 매우 좋다."},
-	"rusher": {"name": "돌격병", "category": "attack", "family": "특수", "cost": 45, "income": 1, "hp": 6750.0, "dps": 3.0, "speed": 7.0, "size": 0.8, "shape": "runner",
-		"color": Color(1.0, 0.9, 0.3), "weight": 0.4, "min_level": 3, "desc": "거의 즉시 도착한다. 시간이 급할 때 쓴다."},
-	"sprout": {"name": "대기만성", "category": "attack", "family": "특수", "cost": 120, "income": 3, "hp": 18000.0, "dps": 1.0, "speed": 2.8, "size": 1.0, "shape": "sprout",
-		"ramp": 0.12, "ramp_cap": 18.0, "color": Color(0.4, 0.75, 0.3), "weight": 0.3, "min_level": 4,
-		"desc": "처음엔 약하지만 보스 앞에 서 있을수록 점점 강해진다 (초당 +0.12, 최대 18)."},
+	# --- 공격형 (한 줄 계단) ---
+	# 전부 공격력(dps)과 수입(income)을 둘 다 가진다. 골드당 공격력은 약 0.1 (보스를 잡는 게 기본), 수입은 골드당 0.03~0.04.
+	# 비쌀수록 골드당 공격력은 조금씩 좋아지고 수입은 조금씩 나빠진다 (싼 건 수입, 비싼 건 화력). 체력은 골드당 150.
+	# 수입 값은 이슈 #14(수입 효율 낮추기)에서 이 열만 다시 맞춘다.
+	"rusher": {"name": "돌격병", "category": "attack", "cost": 25, "income": 1, "hp": 3750.0, "dps": 2.0, "speed": 7.0, "size": 0.8, "shape": "runner",
+		"color": Color(1.0, 0.9, 0.3), "weight": 0.8, "min_level": 3, "desc": "거의 즉시 도착한다. 시간이 급할 때 쓴다."},
+	"warrior": {"name": "전사", "category": "attack", "cost": 40, "income": 2, "hp": 6000.0, "dps": 4.0, "speed": 3.0, "size": 1.0, "shape": "horn",
+		"color": Color(0.8, 0.35, 0.3), "weight": 0.8, "min_level": 3, "desc": "기본 공격형 몬스터."},
+	"knight": {"name": "기사", "category": "attack", "cost": 100, "income": 4, "hp": 15000.0, "dps": 11.0, "speed": 2.8, "size": 1.1, "shape": "armor",
+		"color": Color(0.35, 0.5, 0.8), "weight": 0.6, "min_level": 3, "desc": "골드당 공격력이 전사보다 좋다."},
+	"sprout": {"name": "대기만성", "category": "attack", "cost": 170, "income": 6, "hp": 25500.0, "dps": 4.0, "speed": 2.8, "size": 1.0, "shape": "sprout",
+		"ramp": 0.3, "ramp_cap": 18.0, "color": Color(0.4, 0.75, 0.3), "weight": 0.4, "min_level": 4,
+		"desc": "처음엔 약하지만 보스 앞에 서 있을수록 점점 강해진다 (초당 +0.3, 최대 +18)."},
+	"crusher": {"name": "파괴자", "category": "attack", "cost": 260, "income": 9, "hp": 39000.0, "dps": 32.0, "speed": 2.4, "size": 1.25, "shape": "spike",
+		"life": 2, "color": Color(0.7, 0.3, 0.9), "weight": 0.4, "min_level": 6, "desc": "높은 공격력. 가시가 달린 거대 몬스터."},
+	"giant": {"name": "거인", "category": "attack", "cost": 700, "income": 22, "hp": 105000.0, "dps": 95.0, "speed": 1.8, "size": 1.6, "shape": "spike",
+		"life": 3, "color": Color(0.6, 0.15, 0.15), "weight": 0.3, "min_level": 9, "desc": "최강 공격력. 아주 비싸고 느리다."},
 	# --- 지원형 ---
 	"cheer": {"name": "응원단", "category": "support", "cost": 90, "income": 3, "hp": 13500.0, "dps": 0.0, "speed": 3.0, "size": 1.0, "shape": "flag",
 		"aura_radius": 2.2, "aura_bonus": 0.3, "color": Color(0.95, 0.5, 0.7), "weight": 0.3, "min_level": 3,
@@ -206,8 +180,8 @@ static func tooltip(kind_id: String) -> String:
 	var atk := "공격 %s" % _num(dps(kind_id)) if dps(kind_id) > 0.0 else "공격 없음"
 	if d.category in ["normal", "air"] and not d.get("gnaws", false):
 		atk = "타워 공격 안 함 (길이 막히면 한 방에 파괴)"  # dps는 보스 레인에서만 쓰이고, 웨이브로 올 땐 타워를 때리지 않는다
-	var text := "%s (%s%s)\n%s\n비용 %d · 수입 +%d · %s · 체력 %s" % [
-		d.name, cat.name, " · " + d.family if d.has("family") else "", desc, d.cost, d.income, atk, _num(max_hp(kind_id))]
+	var text := "%s (%s)\n%s\n비용 %d · 수입 +%d · %s · 체력 %s" % [
+		d.name, cat.name, desc, d.cost, d.income, atk, _num(max_hp(kind_id))]
 	if not can_send_in_pve(kind_id):
 		text += "\n협력에서는 만들 수 없음"
 	return text
