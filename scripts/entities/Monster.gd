@@ -759,41 +759,6 @@ func _draw_decor_front(c: Vector2, r: float, color: Color) -> void:
 			for rx in [-0.5, 0.5]:
 				draw_circle(c + Vector2(r * rx, -r * 0.6), r * 0.09, dark)
 			draw_arc(c, r * 1.02, 0.0, TAU, 28, steel, 4.0)
-		"shield":
-			draw_arc(c, r * 1.18, -PI * 0.15, PI * 1.15, 20, Color(0.85, 0.9, 1.0), 3.0)
-			draw_arc(c, r * 1.18, PI * 1.15, PI * 1.85, 10, Color(0.85, 0.9, 1.0, 0.35), 3.0)
-		"hat":
-			var pts := PackedVector2Array()
-			for i in range(9):
-				var a := PI + i * PI / 8.0
-				pts.append(c + Vector2(cos(a) * r * 0.95, sin(a) * r * 0.8 - r * 0.2))
-			draw_colored_polygon(pts, Color(1.0, 0.85, 0.2))
-			draw_line(c + Vector2(-r * 1.1, -r * 0.2), c + Vector2(r * 1.1, -r * 0.2), Color(0.8, 0.6, 0.1), 3.0)
-		"pick":
-			var hand := c + Vector2(r * 0.95, r * 0.5)
-			var tip := c + Vector2(r * 1.55, -r * 0.95)
-			draw_line(hand, tip, Color(0.5, 0.35, 0.2), 3.0)
-			draw_line(tip + Vector2(-r * 0.45, r * 0.1), tip + Vector2(r * 0.4, -r * 0.2), Color(0.8, 0.82, 0.88), 4.0)
-		"vault":
-			var box := Rect2(c + Vector2(-r * 0.5, r * 0.05), Vector2(r * 1.0, r * 0.75))
-			draw_rect(box, Color(0.75, 0.78, 0.85))
-			draw_rect(box, Color(0.25, 0.28, 0.35), false, 2.5)
-			draw_circle(box.get_center(), r * 0.2, Color(1.0, 0.85, 0.2))
-			draw_arc(box.get_center(), r * 0.2, 0.0, TAU, 12, Color(0.4, 0.3, 0.0), 2.0)
-		"tophat":
-			draw_rect(Rect2(c.x - r * 0.5, c.y - r * 1.7, r * 1.0, r * 1.0), Color(0.1, 0.1, 0.12))
-			draw_rect(Rect2(c.x - r * 0.5, c.y - r * 0.95, r * 1.0, r * 0.18), Color(1.0, 0.85, 0.2))
-			draw_line(c + Vector2(-r * 0.9, -r * 0.7), c + Vector2(r * 0.9, -r * 0.7), Color(0.1, 0.1, 0.12), 4.0)
-		"flame":
-			for i in range(3):
-				var x := (i - 1) * r * 0.5
-				var h := r * (0.9 + 0.4 * sin(_anim * 9.0 + i * 2.0))
-				var col := Color(1.0, 0.8, 0.2) if i == 1 else Color(1.0, 0.45, 0.1)
-				draw_colored_polygon(PackedVector2Array([
-					c + Vector2(x - r * 0.25, -r * 0.7),
-					c + Vector2(x, -r * 0.7 - h),
-					c + Vector2(x + r * 0.25, -r * 0.7),
-				]), col)
 		"flag":
 			var base := c + Vector2(0, -r * 0.9)
 			var wave := sin(_anim * 6.0) * r * 0.15
@@ -811,7 +776,7 @@ func _draw_decor_front(c: Vector2, r: float, color: Color) -> void:
 			]), Color(0.9, 0.75, 0.25))
 			draw_circle(base + Vector2(r * 0.55, -r * 1.3 + wave * 0.5), r * 0.18, Color(0.6, 0.1, 0.1))
 		"sprout":
-			var g := 1.0 if preview else 0.6 + 0.4 * clampf(time_at_boss / 40.0, 0.0, 1.0)  # 서 있을수록 자란다
+			var g := 1.0 if preview else 0.6 + 0.4 * clampf(time_at_boss / 60.0, 0.0, 1.0)  # 서 있을수록 자란다
 			var base := c + Vector2(0, -r * 0.85)
 			draw_line(base, base + Vector2(0, -r * 0.5 * g), Color(0.3, 0.6, 0.2), 3.0)
 			for side in [-1.0, 1.0]:
