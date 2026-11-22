@@ -10,7 +10,7 @@ signal lives_changed(lives: int)
 signal lane_failed(player_id: int)
 
 var player_id: int = 0
-var gold: float = float(Balance.START_GOLD)  # 소수점까지 들고 있다 (판매 환급 70% 등). 화면/구매 가능 판정은 gold_shown() (내림)
+var gold: float = float(Balance.START_GOLD)  # 소수점까지 들고 있다 (초록 보너스, 판매 환급 70% 등). 화면/구매 가능 판정은 gold_shown() (내림)
 var income: int = Balance.BASE_INCOME   # 수입 틱마다 받는 골드
 var lives: float = float(Balance.START_LIVES)  # 소수점까지 들고 있다. 화면/패배 판정은 lives_shown() (내림)
 var active := true
@@ -25,10 +25,10 @@ var ghost_active := false      # 지금 유령 구간인가 (보스를 일찍 �
 var ghost_damage := 0.0        # 이 레인의 타워들이 유령에게 준 피해 누적 (게임 전체, 구간마다 쌓인다. 부서진 타워가 준 몫도 남는다)
 
 # 진화 업그레이드 (레인 전체 공유, 같은 계열의 모든 타워에 적용)
-var stat_levels: Dictionary = {} # "계열.스킬.키" -> 레벨 1~3 (없으면 1). B 스킬은 타워마다 배우지만 항목 레벨은 계열 공통
+var stat_levels: Dictionary = {} # "계열.스킬.키" -> 레벨 1~Evolutions.MAX_LEVEL (없으면 1). B 스킬은 타워마다 배우지만 항목 레벨은 계열 공통
 
 # 색깔 시스템 (레인 전체 공유)
-var color_levels: Dictionary = {} # "색깔이름" -> 레벨 0~5 (0=업그레이드 안 함, 1~5=업그레이드 레벨)
+var color_levels: Dictionary = {} # "색깔이름" -> 레벨 0~Balance.COLOR_MAX_LEVEL (0=업그레이드 안 함)
 
 var _grid: GridSystem
 var _renderer: GridRenderer
@@ -153,7 +153,7 @@ func heal_tower(tower: Tower) -> String:
 
 # --- 진화 / 업그레이드 ---
 
-## 업그레이드 항목 하나의 현재 레벨 (1~3). 안 올렸으면 1.
+## 업그레이드 항목 하나의 현재 레벨 (1~Evolutions.MAX_LEVEL). 안 올렸으면 1.
 func stat_level(evo: String, skill: String, key: String) -> int:
 	return EconomyRules.stat_level(stat_levels, evo, skill, key)
 
@@ -387,6 +387,7 @@ func spawn_wave_monster(type_id: String = "grunt", level: int = 1, spawn_cell: V
 	monster.max_hp = Monsters.max_hp(type_id)
 	monster.life_damage = int(wave_type.get("life", 1))
 	monster.armor = float(wave_type.get("armor", 0.0))
+	monster.flat_reduce = float(wave_type.get("flat_reduce", 0.0))
 	monster.regen = float(wave_type.get("regen", 0.0))
 	monster.flying = bool(wave_type.get("flying", false))
 	monster.reward = roundi(Monsters.reward(type_id) * (1.0 + 0.15 * (level - 1)))
@@ -473,7 +474,7 @@ func _spread_marks(monster: Monster) -> void:
 	if spreadable.is_empty():
 		return
 	var radius := Evolutions.p("support", "B", "radius", stat_level("support", "B", "radius"))
-	var count := int(Evolutions.p("support", "B", "count", stat_level("support", "B", "count")))
+	var count := Evolutions.roll_int(Evolutions.p("support", "B", "count", stat_level("support", "B", "count")), rng)
 	var near: Array[Monster] = []
 	for m in monsters:
 		if m != monster and not m.is_dead() and m.flying == monster.flying and m.marks.is_empty() \
@@ -492,7 +493,7 @@ func _on_monster_died(monster: Monster) -> void:
 
 	# 기본 보상
 	var base_reward := monster.reward
-	var actual_reward := base_reward
+	var actual_reward := float(base_reward)  # 소수점까지 더한다 (화면에는 내림)
 
 	# 색깔 보너스 처리
 	if is_instance_valid(monster._killer):
@@ -501,10 +502,13 @@ func _on_monster_died(monster: Monster) -> void:
 			"초록":  # 처치 시 골드 보너스
 				var bonus := color_bonus_value("초록", killer_tower)
 				if bonus > 0.0:
-					actual_reward = roundi(base_reward * (1.0 + bonus))
+					actual_reward = base_reward * (1.0 + bonus)
 
-			"남색":  # 처치 시 보낸 몬스터 N마리 강화
-				var count := int(color_bonus_value("남색", killer_tower))
+			"남색":  # 처치 시 보낸 몬스터 N마리 강화 (N은 소수: 정수 부분은 확정, 소수 부분은 그 확률로 한 마리 더)
+				var expected := color_bonus_value("남색", killer_tower)
+				var count := int(expected)
+				if rng.randf() < expected - float(count):
+					count += 1
 				if count > 0:
 					_empower_sent_monsters(count)
 
@@ -518,11 +522,11 @@ func _on_monster_died(monster: Monster) -> void:
 					Log.info(Log.Category.GAME, "[P%d] 보라 보너스: 체력 +%.2f (현재 %.2f)" % [player_id + 1, gain, lives])
 
 	gold += actual_reward
-	var text := "+%d" % actual_reward if actual_reward == base_reward else "+%d (보너스!)" % actual_reward
+	var text := "+%d" % EconomyRules.whole(actual_reward) if actual_reward <= base_reward else "+%d (보너스!)" % EconomyRules.whole(actual_reward)
 	events.text(player_id, monster.cell_pos, text, Color(1.0, 0.9, 0.3))
 	events.ring(player_id, monster.cell_pos, 0.6, monster.body_color)
 	monster.queue_free()
-	Log.debug(Log.Category.ECONOMY, "[P%d] 몬스터#%d 처치 +%d골드 잔액=%.2f" % [
+	Log.debug(Log.Category.ECONOMY, "[P%d] 몬스터#%d 처치 +%.2f골드 잔액=%.2f" % [
 		player_id + 1, monster.monster_id, actual_reward, gold])
 
 
@@ -574,7 +578,7 @@ func set_lane_visible(is_shown: bool) -> void:
 
 # --- 색깔 시스템 ---
 
-## 색깔의 현재 레벨 (0~5). 0=업그레이드 안 함.
+## 색깔의 현재 레벨 (0~Balance.COLOR_MAX_LEVEL). 0=업그레이드 안 함.
 func color_level(color_name: String) -> int:
 	return EconomyRules.color_level(color_levels, color_name)
 
@@ -611,14 +615,8 @@ func color_bonus_value(color_name: String, tower: Tower = null) -> float:
 	if level == 0:
 		return 0.0
 	var bonus_type := color_bonus_type(color_name)
-	var base := 0.0
-	if bonus_type == "empower":
-		# 강화는 마리수를 반환
-		base = float(Balance.COLOR_LEVEL_BONUS["empower_count"][level - 1])
-	elif Balance.COLOR_LEVEL_BONUS.has(bonus_type):
-		# 나머지는 비율 반환
-		base = Balance.COLOR_LEVEL_BONUS[bonus_type][level - 1]
-	return base * cluster_multiplier(tower)
+	# 남색은 마릿수, 파랑은 방어력 무시량, 나머지는 비율을 돌려준다
+	return Balance.color_level_bonus(bonus_type, level) * cluster_multiplier(tower)
 
 
 ## 생명을 올린다 (소수 가능, 상한 MAX_LIVES)

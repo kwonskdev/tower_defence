@@ -162,8 +162,8 @@ func _invested_gold() -> void:
 	check(lane.evolve_tower(t, evo) == "", "진화 성공")
 	check(t.invested == 4 + Balance.EVOLVE_COST, "진화 후 invested = 4 + 30 (실제 %d)" % t.invested)
 	check(lane.learn_tower_skill(t) == "", "B 스킬 배우기 성공")
-	check(t.invested == 4 + Balance.EVOLVE_COST + Balance.SKILL_LEARN_COST, "B 후 invested = 74 (실제 %d)" % t.invested)
-	near(lane.gold, g - 74, "총 74골드 썼다")
+	check(t.invested == 4 + Balance.EVOLVE_COST + Balance.SKILL_LEARN_COST, "B 후 invested = 4 + 진화 + B (실제 %d)" % t.invested)
+	near(lane.gold, g - float(4 + Balance.EVOLVE_COST + Balance.SKILL_LEARN_COST), "진화+B까지 총 %d골드 썼다" % (4 + Balance.EVOLVE_COST + Balance.SKILL_LEARN_COST))
 	var before := t.invested
 	lane.recolor_tower(t)
 	t.durability = 10.0
@@ -172,10 +172,10 @@ func _invested_gold() -> void:
 	check(lane.upgrade_stat(evo, stat0.s, stat0.k) == "", "(준비) 레인 스탯 업그레이드 구매")
 	check(t.invested == before, "색깔 바꾸기/회복/스탯 업그레이드는 invested에 안 더해진다")
 	check(lane.sell_needs_confirm(t), "진화한 타워는 판매 확인 필요")
-	near(lane.sell_value(t), 74.0, "시작 전이라 환급 74 (전액)")
+	near(lane.sell_value(t), float(4 + Balance.EVOLVE_COST + Balance.SKILL_LEARN_COST), "시작 전이라 투입액 전액 환급")
 	var g2 := lane.gold
 	check(lane.sell_tower(t), "진화 타워 판매")
-	near(lane.gold, g2 + 74, "골드 +74")
+	near(lane.gold, g2 + float(4 + Balance.EVOLVE_COST + Balance.SKILL_LEARN_COST), "골드 +투입액")
 	await frames(3)
 
 
@@ -361,11 +361,11 @@ func _ui_flow() -> void:
 	lane.learn_tower_skill(t2)
 	gf.select_tower_at(t2.lane.player_id, t2.cell)
 	await frames(15)
-	check(game.sell_button.text == "판매 (74골드)", "진화+B 타워 버튼 '%s'" % game.sell_button.text.replace("\n", " "))
+	check(game.sell_button.text == "판매 (%d골드)" % (4 + Balance.EVOLVE_COST + Balance.SKILL_LEARN_COST), "진화+B 타워 버튼 '%s'" % game.sell_button.text.replace("\n", " "))
 	var g2 := lane.gold
 	game.sell_button.pressed.emit()
 	check(game.sell_confirm_dialog.visible, "진화한 타워는 확인창이 뜬다")
-	check(game.sell_confirm_dialog.dialog_text.contains("74"), "확인창에 환급액이 보인다: %s" % game.sell_confirm_dialog.dialog_text.replace("\n", " / "))
+	check(game.sell_confirm_dialog.dialog_text.contains(str(4 + Balance.EVOLVE_COST + Balance.SKILL_LEARN_COST)), "확인창에 환급액이 보인다: %s" % game.sell_confirm_dialog.dialog_text.replace("\n", " / "))
 	check(lane.towers.has(t2) and lane.gold == g2, "확인 전에는 안 팔린다")
 	game._set_paused(true)
 	check(not get_tree().paused, "판매 확인창이 떠 있으면 일시정지로 갇히지 않는다")
@@ -375,7 +375,7 @@ func _ui_flow() -> void:
 	game.sell_confirm_dialog.confirmed.emit()
 	game.sell_confirm_dialog.hide()
 	check(not lane.towers.has(t2), "확인하면 판매")
-	near(lane.gold, g2 + 74, "확인하면 골드 +74")
+	near(lane.gold, g2 + float(4 + Balance.EVOLVE_COST + Balance.SKILL_LEARN_COST), "확인하면 골드 +투입액")
 	check(gf.get_selected_tower().is_empty(), "선택 해제")
 	await frames(15)
 
@@ -390,15 +390,17 @@ func _after_start_ratio() -> void:
 	check(lane.sell_value_shown(t) == 2, "표시는 내림한 정수 2")
 	lane.evolve_tower(t, Evolutions.TREE["long"][0])
 	lane.learn_tower_skill(t)
-	check(t.invested == 74, "투입 74골드")
-	near(lane.sell_value(t), 51.8, "74골드 투입 -> 환급 51.8 (반올림 안 함)")
-	check(lane.sell_value_shown(t) == 51, "표시는 내림한 정수 51")
+	var inv: int = (4 + Balance.EVOLVE_COST + Balance.SKILL_LEARN_COST)
+	check(t.invested == inv, "투입 %d골드 (실제 %d)" % [inv, t.invested])
+	var refund: float = inv * Balance.SELL_REFUND_RATIO
+	near(lane.sell_value(t), refund, "%d골드 투입 -> 환급 %.2f (반올림 안 함)" % [inv, refund])
+	check(lane.sell_value_shown(t) == LaneController.whole(refund), "표시는 내림한 정수")
 	gf.select_tower_at(t.lane.player_id, t.cell)
 	await frames(15)
-	check(game.sell_button.text == "판매 (51골드)", "버튼 '%s'" % game.sell_button.text.replace("\n", " "))
+	check(game.sell_button.text == "판매 (%d골드)" % LaneController.whole(refund), "버튼 '%s'" % game.sell_button.text.replace("\n", " "))
 	var g := lane.gold
 	check(lane.sell_tower(t), "시작 후 판매")
-	near(lane.gold, g + 51.8, "골드에 51.8이 그대로 더해졌다")
+	near(lane.gold, g + refund, "골드에 환급액이 소수 그대로 더해졌다")
 	gf.clear_selection()
 	await frames(5)
 

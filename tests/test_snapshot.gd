@@ -107,7 +107,7 @@ func hud_matches_state(game: Node) -> void:
 	check(not sel.is_empty() and sel.evo == "pierce" and game._view == "tower_sel", "맵에서 누른 타워가 선택되어 타워 화면이 된다 (진화=%s)" % sel.get("evo"))
 	var sim_tower := lane.tower_at(Vector2i(5, 14))
 	check(absf(sel.damage_now - sim_tower.cur_damage()) < 0.0001 and absf(sel.range - sim_tower.cur_range()) < 0.0001, "스냅샷의 피해/사거리가 서버 계산과 같다")
-	check(game.tower_info_label.text.contains("%.2f" % sim_tower.cur_damage()) and game.tower_info_label.text.contains(sim_tower.color_bonus_text()), "정보창 글자가 서버 값 그대로: %s" % game.tower_info_label.text.replace("
+	check(game.tower_info_label.text.contains("피해 %.1f" % sim_tower.cur_damage()) and game.tower_info_label.text.contains("초당 %.2f회" % sim_tower.cur_attack_rate()) and game.tower_info_label.text.contains(sim_tower.color_bonus_text()), "정보창 글자가 서버 값 그대로: %s" % game.tower_info_label.text.replace("
 ", " / ").left(60))
 	check(game.sell_button.text == "판매 (%d골드)" % lane.sell_value_shown(sim_tower), "판매 버튼 환급액 '%s'" % game.sell_button.text)
 	# 생명이 줄면 화면이 붉게 깜빡인다 (스냅샷의 생명 변화로 알아챈다)

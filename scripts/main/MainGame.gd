@@ -10,7 +10,7 @@ class_name MainGame
 @onready var upgrade_tab: Button = $VBoxContainer/TopUI/HBoxContainer/LeftColumn/TabBar/UpgradeTab
 @onready var boss_button: Button = $VBoxContainer/TopUI/HBoxContainer/RightPanel/BonusButton
 
-# 몬스터 버튼은 monster_buttons[0]이 뒤로 가기, [1]부터 지금 고른 유형의 Monsters.SLOTS 순서대로 몬스터 종류 (계열별로 묶고 사이에 빈칸).
+# 몬스터 버튼은 monster_buttons[0]이 뒤로 가기, [1]부터 지금 고른 유형의 Monsters.SLOTS 순서대로 몬스터 종류 (싼 것부터 한 줄).
 
 var hud_panel: PanelContainer            # 맵 아래 별도 메시지 영역 (항상 보이고, 높이는 BOTTOM_HEIGHT로 고정)
 var hud_label: Label
@@ -42,7 +42,6 @@ var status_wave_title: Label
 var status_affix_label: Label            # 다음 웨이브에 변형(돌격/부활/공습)이 붙으면 표시
 var status_guard_label: Label            # 비늘 보호막이 보스 피해를 얼마나 줄이는지
 var status_wave_rows: Array = []         # [{dot: StatusIcon, label: Label}]
-var family_frames: Control               # 몬스터 배럭의 계열 묶음 외곽선
 var monster_type_view: HBoxContainer     # 몬스터 1단계: [←] + 4x2 격자 (유형 4개 + 빈칸 4개)
 var _monster_category := ""              # 지금 열려 있는 몬스터 유형
 var _monster_slots: Array = []           # 지금 열려 있는 유형의 칸 배치 (monster_buttons[i+1] = _monster_slots[i])
@@ -172,7 +171,6 @@ func setup_ui():
 		b.clip_text = true
 		b.focus_mode = Control.FOCUS_NONE  # 탭은 눌러서 강조만 하고, 키보드 포커스 테두리는 쓰지 않는다
 	monster_view.move_child(monster_buttons[0], BACK_CELL)  # 뒤로 가기는 왼쪽 아래 칸
-	_create_family_frames()
 	_create_monster_type_view()
 	_create_tower_view()
 	_create_upgrade_views()
@@ -190,7 +188,7 @@ func setup_ui():
 
 ## 미니맵 바로 왼쪽 우하단에 놓는 실행 버튼 ([생성] / [업그레이드]). 고르기만 해서는 아무 일도 일어나지 않고 이 버튼을 눌러야 실행된다.
 func _make_action_button() -> Button:
-	var b := _make_view_button("", FONT_BODY - 2)
+	var b := _make_view_button("", FONT_SMALL)  # "업그레이드" 5글자가 칸 폭(약 97px)에 들어가는 크기
 	b.pressed.connect(_on_action_pressed)
 	b.focus_mode = Control.FOCUS_NONE
 	action_buttons.append(b)
@@ -198,7 +196,7 @@ func _make_action_button() -> Button:
 
 
 ## 버튼을 "실제 모습 아이콘 + 비용 + 마우스 올리면 상세 설명" 형태로 꾸민다
-func _decorate_unit_button(b: Button, icon: UnitIcon, cost: int, tooltip: String, tag: String = "", tag_color: Color = Color.WHITE):
+func _decorate_unit_button(b: Button, icon: UnitIcon, cost: int, tooltip: String):
 	b.text = ""
 	b.tooltip_text = tooltip
 	b.clip_contents = true
@@ -217,17 +215,6 @@ func _decorate_unit_button(b: Button, icon: UnitIcon, cost: int, tooltip: String
 	b.add_child(cost_label)
 	cost_label.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
 
-	if tag != "":  # 계열 이름표 (왼쪽 위)
-		var tag_label := Label.new()
-		tag_label.text = tag
-		tag_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		tag_label.add_theme_font_size_override("font_size", FONT_TINY - 1)
-		tag_label.add_theme_color_override("font_color", tag_color)
-		tag_label.add_theme_color_override("font_outline_color", Color(0, 0, 0))
-		tag_label.add_theme_constant_override("outline_size", 3)
-		b.add_child(tag_label)
-		tag_label.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
-		tag_label.position += Vector2(3, 0)  # 테두리에 붙지 않게 살짝 안쪽으로
 
 ## 몬스터 배럭은 두 단계다. 1단계: 유형 버튼(공격형/일반형/공중형) - [몬스터] 탭의 첫 화면이라 [←]가 없다. 2단계: 고른 유형의 몬스터 종류 버튼 ([←]로 1단계로).
 ## 보스가 보내는 몬스터(일반형/공중형)도 여기서 볼 수 있다. 협력(PvE)에서 만들 수 없는 것은 회색이고, 눌러도 설명만 나온다.
@@ -254,7 +241,7 @@ func _create_monster_type_view() -> void:
 		var info: Dictionary = Monsters.CATEGORY_DATA[cat]
 		var b := _make_view_button(info.name, FONT_BODY)
 		b.add_theme_color_override("font_color", info.color)
-		_apply_family_style(b, info.color)
+		_apply_tile_style(b, info.color)
 		b.pressed.connect(_on_monster_type_selected.bind(cat))
 		grid.add_child(b)
 
@@ -320,7 +307,7 @@ func _populate_monster_buttons(cat: String) -> void:
 		b.visible = true
 		var kind_id: String = _monster_slots[slot_idx] if slot_idx < _monster_slots.size() else ""
 		if kind_id == "":
-			b.disabled = true  # 계열 사이 빈칸 / 모자라는 칸 채움 (보이지 않고 눌리지도 않는다)
+			b.disabled = true  # 모자라는 칸 채움 (보이지 않고 눌리지도 않는다)
 			b.focus_mode = Control.FOCUS_NONE
 			b.modulate = Color(1, 1, 1, 0)
 			b.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -328,19 +315,17 @@ func _populate_monster_buttons(cat: String) -> void:
 		b.disabled = false
 		b.focus_mode = Control.FOCUS_ALL
 		var data: Dictionary = Monsters.DATA[kind_id]
-		var fam_color: Color = Monsters.FAMILY_COLORS.get(data.get("family", ""), cat_color)
-		b.set_meta("fam_color", fam_color)
+		b.set_meta("tile_color", cat_color)
 		var icon := UnitIcon.new()
 		icon.show_monster(kind_id)
-		_decorate_unit_button(b, icon, data.cost, "", data.get("family", ""), fam_color)  # 설명은 하단 메시지 칸에 나온다
-		_apply_family_style(b, fam_color)
+		_decorate_unit_button(b, icon, data.cost, "")  # 설명은 하단 메시지 칸에 나온다
+		_apply_tile_style(b, cat_color)
 		if not Monsters.can_send_in_pve(kind_id):
 			b.modulate = Color(0.45, 0.45, 0.45)  # 협력에서는 만들 수 없다: 회색 (눌러서 설명은 볼 수 있다)
-	_rebuild_family_frames(cat)
 	_refresh_monster_highlight()
 
 
-## 고른 몬스터를 굵은 노란 테두리로 강조한다 (나머지는 계열 색 테두리)
+## 고른 몬스터를 굵은 노란 테두리로 강조한다 (나머지는 유형 색 테두리)
 func _refresh_monster_highlight() -> void:
 	for i in range(1, monster_buttons.size()):
 		var slot_idx := i - 1
@@ -350,7 +335,7 @@ func _refresh_monster_highlight() -> void:
 		if _monster_slots[slot_idx] == _sel_monster:
 			_style_selected(b)
 		else:
-			_apply_family_style(b, b.get_meta("fam_color", Color.WHITE))
+			_apply_tile_style(b, b.get_meta("tile_color", Color.WHITE))
 
 
 ## 고른 항목 강조 (굵은 노란 테두리)
@@ -369,43 +354,8 @@ func _clear_selected_style(b: Button) -> void:
 		b.remove_theme_stylebox_override(state)
 
 
-## 같은 계열이 이어진 칸들을 한 묶음으로 굵은 외곽선 프레임을 씌운다 (버튼 격자 위에 겹쳐 그리는 안 눌리는 레이어).
-## 계열이 없는 유형(일반형/공중형)은 유형 전체가 한 묶음이다.
-func _rebuild_family_frames(cat: String) -> void:
-	var frames := family_frames as FamilyFrames
-	frames.groups.clear()
-	var run_key := ""
-	var run_color := Color.WHITE
-	var run_buttons: Array[Button] = []
-	var run_row := 0
-	for i in range(_monster_slots.size() + 1):
-		var kind_id: String = _monster_slots[i] if i < _monster_slots.size() else ""
-		var key := ""
-		var color := Color.WHITE
-		if kind_id != "":
-			key = Monsters.DATA[kind_id].get("family", cat)
-			color = Monsters.FAMILY_COLORS.get(key, Monsters.CATEGORY_DATA[cat].color)
-		var row := floori(_slot_cell(i) / float(TILE_COLS))
-		if (key != run_key or (kind_id != "" and row != run_row)) and not run_buttons.is_empty():  # 줄이 바뀌면 묶음 외곽선도 끊는다
-			frames.groups.append({"buttons": run_buttons, "color": run_color})
-			run_buttons = []
-		run_key = key
-		run_color = color
-		if kind_id != "":
-			run_row = row
-			run_buttons.append(monster_buttons[i + 1])
-
-
-func _create_family_frames() -> void:
-	var frames := FamilyFrames.new()
-	family_frames = frames
-	frames.visible = false
-	left_panel.add_child(frames)
-	frames.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-
-
-## 버튼 격자 위에 계열 묶음 외곽선만 그린다
-class FamilyFrames extends Control:
+## 버튼 격자 위에 묶음 외곽선만 그린다 (타워 진화 화면에서 같은 기본 타워의 두 진화 계열을 묶는다)
+class GroupFrames extends Control:
 	var groups: Array = []  # [{buttons: Array[Button], color: Color}]
 
 	func _init() -> void:
@@ -427,12 +377,12 @@ class FamilyFrames extends Control:
 			draw_rect(rect.grow(1.0), g.color, false, 3.0)
 
 
-func _apply_family_style(b: Button, fam_color: Color) -> void:
+func _apply_tile_style(b: Button, tile_color: Color) -> void:
 	for state in ["normal", "hover", "pressed", "disabled"]:
 		var sb := StyleBoxFlat.new()
 		var lift := 0.0 if state == "normal" else (0.12 if state == "hover" else (0.2 if state == "pressed" else -0.05))
-		sb.bg_color = Color(fam_color.r * 0.2 + lift, fam_color.g * 0.2 + lift, fam_color.b * 0.2 + lift, 1.0)
-		sb.border_color = Color(fam_color, 0.5)  # 버튼 테두리는 옅게 (계열 묶음 외곽선이 더 굵고 진하다)
+		sb.bg_color = Color(tile_color.r * 0.2 + lift, tile_color.g * 0.2 + lift, tile_color.b * 0.2 + lift, 1.0)
+		sb.border_color = Color(tile_color, 0.5)
 		sb.set_border_width_all(1)
 		sb.set_corner_radius_all(4)
 		b.add_theme_stylebox_override(state, sb)
@@ -537,7 +487,7 @@ func _create_upgrade_views():
 		evo_buttons[evo] = eb
 
 	# 같은 기본 타워의 두 계열(장거리 2개, 범위 2개 ...)을 그 타워 색 외곽선으로 묶는다
-	var frames := FamilyFrames.new()
+	var frames := GroupFrames.new()
 	evo_frames = frames
 	frames.visible = false
 	left_panel.add_child(frames)
@@ -575,7 +525,6 @@ func _create_upgrade_views():
 	monster_action.offset_right = 0.0
 	monster_action.offset_top = 0.0
 	monster_action.offset_bottom = 0.0
-	monster_action.z_index = 60  # 계열 외곽선(50)보다 위
 
 
 func _make_view_button(text: String, font_size: int = FONT_BODY) -> Button:
@@ -608,7 +557,6 @@ func _show_view(view: String) -> void:
 	tower_sel_view.visible = view == "tower_sel"
 	monster_type_view.visible = view == "monster"
 	monster_view.visible = view == "monster_kinds"
-	family_frames.visible = view == "monster_kinds"
 	monster_action.visible = view == "monster_kinds"
 	upgrade_menu.visible = view == "upgrade"
 	evo_view.visible = view == "evos"
@@ -777,7 +725,7 @@ func _refresh_upgrade_views(lane: Dictionary) -> void:
 			var lv := EconomyRules.color_level(lane.color_levels, cname)
 			var cost := EconomyRules.color_upgrade_cost(lane.color_levels, cname)
 			var type: String = Balance.COLOR_BONUS_TYPES[cname]
-			b.text = "%s\n%s\nLv%d  %s\n%s" % [cname, Balance.COLOR_BONUS_LABELS[type], lv, Balance.color_bonus_value_text(cname, lv), "최대" if cost < 0 else "%d골드" % cost]
+			b.text = "%s\n%s\nLv%d/%d  %s\n%s" % [cname, Balance.COLOR_BONUS_LABELS[type], lv, Balance.COLOR_MAX_LEVEL, Balance.color_bonus_value_text(cname, lv), "최대" if cost < 0 else "%d골드" % cost]
 
 
 ## 하단 메시지 칸에 보여줄 설명: 지금 고른 타워/몬스터/업그레이드 항목 (폰에는 툴팁이 없다)
@@ -833,10 +781,7 @@ func _explain_text(lane: Dictionary) -> String:
 
 
 func _find_stat(evo: String, skill: String, key: String) -> Dictionary:
-	for stat in Evolutions.STATS[evo]:
-		if stat.s == skill and stat.k == key:
-			return stat
-	return {}
+	return Evolutions.find_stat(evo, skill, key)
 
 
 ## [생성]/[업그레이드] 버튼: 고른 것이 있고 살 수 있을 때만 눌린다
@@ -1759,7 +1704,8 @@ class PauseOverlay extends Control:
 		var upgrades: Array = []
 		for evo in Evolutions.ORDER:
 			var d: Dictionary = Evolutions.DATA[evo]
-			var lines: Array[String] = [Evolutions.tooltip(evo), "", "업그레이드 (Lv1 → Lv%d)" % Evolutions.MAX_LEVEL]
+			var lines: Array[String] = [Evolutions.tooltip(evo), "", "업그레이드 (Lv1 → Lv%d)" % Evolutions.MAX_LEVEL,
+					"(올릴 때마다 비용 +%d골드, %d골드부터)" % [Balance.STAT_UPGRADE_COST_STEP, Balance.stat_upgrade_cost_for(2)]]
 			for stat in Evolutions.STATS[evo]:
 				lines.append("%s %s: %s → %s" % [stat.s, stat.name, Evolutions.stat_value_text(evo, stat, 1), Evolutions.stat_value_text(evo, stat, Evolutions.MAX_LEVEL)])
 			upgrades.append({"name": d.name, "color": d.color, "text": "\n".join(lines)})
@@ -1771,7 +1717,7 @@ class PauseOverlay extends Control:
 				if kind_id == "":
 					continue
 				var md: Dictionary = Monsters.DATA[kind_id]
-				kinds.append({"name": md.name, "color": Monsters.FAMILY_COLORS.get(md.get("family", ""), cat_info.color).lightened(0.2),
+				kinds.append({"name": md.name, "color": cat_info.color.lightened(0.2),
 					"text": Monsters.tooltip(kind_id)})
 			monsters.append({"name": cat_info.name, "color": cat_info.color, "children": kinds, "text": "%s\n\n몬스터를 눌러 자세히 보세요." % cat_info.desc})
 		var colors: Array = []
@@ -1941,8 +1887,8 @@ func _update_tower_info(lane: Dictionary):
 	var title: String = kind.name
 	if t.evo != "":
 		title += " · " + Evolutions.evo_name(t.evo)
-	var text := "%s · 피해 %.2f · %.2f초 · 사거리 %.1f\n처치 %d · 누적 %.0f" % [
-		title, t.damage_now, t.cooldown_now, t.range, t.kills, t.damage]
+	var text := "%s · 피해 %.1f · 초당 %.2f회 · 사거리 %.1f\n처치 %d · 누적 %.0f" % [
+		title, t.damage_now, t.attack_rate_now, t.range, t.kills, t.damage]
 	if t.ghost_damage > 0.0:  # 유령 구간에 이 타워가 유령에게 준 피해
 		text += "\n유령 피해 %.0f" % t.ghost_damage
 	if t.durability < Balance.TOWER_DURABILITY - 0.001:  # 슬라임 새끼나 유령에게 갉인 타워 (골드로만 회복된다)
@@ -1958,7 +1904,7 @@ func _update_tower_info(lane: Dictionary):
 	var b_known: bool = t.evo != "" and t.b
 	tower_info_label.text = text.get_slice("\n", 0) if _tower_pick != "" else text  # 진화를 고르는 중에는 설명이 잘 보이게 첫 줄만
 
-	recolor_button.text = "색깔 바꾸기 (%d골드)" % Balance.RECOLOR_COST
+	recolor_button.text = "색깔 바꾸기\n(%d골드)" % Balance.RECOLOR_COST  # 한 줄이면 칸 폭에서 잘린다 (회복 버튼과 같은 두 줄 형식)
 	recolor_button.tooltip_text = "이 타워의 색깔을 지금 색을 뺀 6색 중 랜덤으로 바꿉니다. 색깔 보너스는 그 색의 업그레이드를 따라갑니다."
 	recolor_button.disabled = not mine or gold < Balance.RECOLOR_COST
 	var hurt: bool = t.durability < Balance.TOWER_DURABILITY - 0.001
@@ -2078,6 +2024,11 @@ func _input(event):
 ## (일시정지 중의 뒤로 가기는 PauseOverlay가 "계속하기"로 처리한다)
 ## 앱이 백그라운드로 가거나 창이 포커스를 잃으면 진행 중인 게임을 자동으로 멈춘다.
 func _notification(what: int) -> void:
+	if what == NOTIFICATION_PREDELETE:
+		# [업그레이드] 버튼은 항목 화면을 처음 열 때 트리에 붙는다. 한 번도 안 열고 끝나면 부모 없이 남아 누수가 되므로 직접 정리한다
+		if detail_action != null and is_instance_valid(detail_action) and detail_action.get_parent() == null:
+			detail_action.free()
+		return
 	if what == NOTIFICATION_APPLICATION_PAUSED or what == NOTIFICATION_WM_WINDOW_FOCUS_OUT:
 		if _play_running and pause_overlay != null and game_field.session.is_solo():  # 여럿이 하는 판은 멈출 수 없다
 			_set_paused(true)

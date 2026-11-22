@@ -5,7 +5,8 @@ class_name Monster
 ## - 지상: 타워를 우회해서 목표(EXIT 또는 goal_cell/final_point)로 이동.
 ##   길이 완전히 막히면 앞을 막은 타워를 공격 (일반형 공격력 = 무한대 -> 한 방에 파괴)
 ## - 공중(flying): 미로/타워를 무시하고 맨 아래로 직선 이동. 대공 타워만 공격 가능.
-## - 방어력(armor): 한 발 피해를 평면으로 깎는다. 재생(regen): 초당 최대체력 비율만큼 회복.
+## - 방어력(armor): 받는 피해 = 공격력 x 100 / (100 + 방어력). 갑옷병은 여기에 더해 최종 피해에서 flat_reduce를 뺀다.
+##   재생(regen): 초당 최대체력 비율만큼 회복.
 ## - 유령(ghost): 보스를 일찍 잡았을 때 남은 시간에 나온다. 체력이 무한이라 피해를 받아도 닳지 않고 (받은 피해는 ghost_hit로 알린다),
 ##   기지에 닿아도 생명을 안 깎는다 (LaneController가 처음부터 다시 내보낸다). 길이 완전히 막혔을 때(breaching)만 앞을 막은
 ##   타워의 내구도를 breach_dps만큼 깎고, 길이 열려 있으면 타워를 건드리지 않는다.
@@ -24,7 +25,6 @@ const DEFAULT_SPEED := 3.0
 const ARRIVE_DISTANCE := 0.1
 const TOWER_ATTACK_DISTANCE := 0.95   # 웨이포인트 타워 중심까지 이 거리 이하면 타워를 공격
 const FLY_LIFT := 0.42                # 공중 몬스터가 몸을 띄우는 높이(칸)
-const MIN_DAMAGE_RATIO := 0.2         # 방어력이 아무리 높아도 최소한 이 비율만큼은 들어간다
 const VISION_RANGE := 3               # 사방 이 칸 수 안의 타워만 본다
 const VISION_INTERVAL := 0.1          # 시야를 확인하는 주기(초)
 const GNAW_SEEK_RANGE := 4.0          # 갉는 몬스터가 타워를 목표로 삼는 거리 (본 적 있는 타워 중 이 안에 있는 것)
@@ -44,6 +44,7 @@ var max_hp: float = 1.0
 var _base_max_hp: float = 1.0   # 강화가 없을 때의 최대 체력 (setup에서 정해진다)
 var hp: float = 1.0
 var armor: float = 0.0
+var flat_reduce: float = 0.0     # 방어력으로 줄인 최종 피해에서 추가로 빼는 양 (갑옷병). 피해는 0 밑으로 내려가지 않는다
 var regen: float = 0.0           # 초당 최대체력 회복 비율
 var flying: bool = false
 var body_color: Color = Color(0.85, 0.2, 0.2)
@@ -104,6 +105,7 @@ var preview_cell: float = 40.0
 var marks: Array = []            # 표식 [{src: 타워, dmg: 추가 피해}] - 중첩되며, 타워에게 맞으면 한 번에 터진다
 var death_marks: Array = []      # 죽는 순간 퍼뜨릴 표식 (표식 전파용)
 var armor_break_time: float = 0.0
+var armor_break_ratio: float = 0.0   # 방어구 파괴로 깎인 방어력 비율 (0~1). armor_break_time 동안만 적용
 var slow_time: float = 0.0
 var slow_mult: float = 1.0
 var stun_time: float = 0.0
@@ -113,7 +115,7 @@ var known_towers: Dictionary = {}  # 시야에 들어온 적 있는 타워 칸 {
 var _vision_dirty := true
 var _vision_timer := 0.0
 
-var _poisons: Array = []         # [{src, stacks, dps, time}] 독 (타워별로 따로 집계)
+var _poisons: Array = []         # [{src, dps, time}] 독 중첩 하나하나 (맞을 때마다 하나 추가, 각자 시간이 다 되면 사라진다)
 var _empower_buffs: Array = []   # [{time_left: float, boost: float}] 강화 버프 (남은 시간 순 정렬, 중첩 가능)
 var _consumed_marks: Array = []  # 이번 타격에 터진 표식
 var _captured := false
@@ -164,16 +166,22 @@ func take_damage(amount: float, source = null) -> void:
 	var consumed := marks
 	marks = []
 	_consumed_marks = consumed
-	for mk in consumed:  # 표식을 먼저 터뜨린다 (이 타격이 먼저 죽이면 지원 타워의 추가 피해가 낭비되므로)
-		_lose_hp(float(mk.dmg), mk.src, source)
-	# 방어력: 한 발 피해를 평면으로 깎되, 최소 MIN_DAMAGE_RATIO는 들어간다 (파랑 타워는 방어력의 일부를 무시)
-	var pen := 0.0
-	if is_instance_valid(source) and source.has_method("armor_penetration"):
-		pen = source.armor_penetration()
-	_lose_hp(maxf(amount - effective_armor() * (1.0 - pen), amount * MIN_DAMAGE_RATIO), source, source)
+	for mk in consumed:  # 표식을 먼저 터뜨린다 (이 타격이 먼저 죽이면 지원 타워의 추가 피해가 낭비되므로). 표식 피해도 방어력을 받는다
+		_lose_hp(_damage_after_armor(float(mk.dmg), mk.src), mk.src, source)
+	_lose_hp(_damage_after_armor(amount, source), source, source)
 	_hit_flash = 0.1
 	if not _dead:
 		_consumed_marks = []
+
+
+## 방어력을 거친 실제 피해: 공격력 x 100 / (100 + 방어력) - flat_reduce (0 미만은 0).
+## 파랑 타워(source)는 방어력을 관통량만큼 무시한다 (방어력은 0까지만 깎인다). 독은 이 계산을 거치지 않는다.
+func _damage_after_armor(amount: float, source) -> float:
+	var pen := 0.0
+	if is_instance_valid(source) and source.has_method("armor_penetration"):
+		pen = source.armor_penetration()
+	var a := maxf(0.0, effective_armor() - pen)
+	return maxf(0.0, amount * Balance.ARMOR_SCALE / (Balance.ARMOR_SCALE + a) - flat_reduce)
 
 
 ## 체력을 실제로 깎는다. damage_source: 누적 피해를 올려 줄 타워, kill_source: 죽였을 때 킬을 올려 줄 타워.
@@ -235,7 +243,7 @@ func clear_warn() -> void:
 
 
 func effective_armor() -> float:
-	return 0.0 if armor_break_time > 0.0 else armor
+	return armor * (1.0 - armor_break_ratio) if armor_break_time > 0.0 else armor
 
 
 func speed_mult() -> float:
@@ -248,18 +256,14 @@ func add_mark(src, dmg: float) -> void:
 	marks.append({"src": src, "dmg": dmg})
 
 
-## 독: 같은 타워의 독은 중첩되고 (무한), 맞을 때마다 유지 시간이 갱신된다. 방어력 무시.
+## 독: 맞을 때마다 중첩 하나가 생기고 (상한 없음), 중첩마다 따로 duration초 뒤에 사라진다. 방어력 무시.
 func add_poison(src, dps: float, duration: float) -> void:
-	for e in _poisons:
-		if is_same(e.src, src):
-			e.stacks += 1
-			e.dps = dps
-			e.time = duration
-			return
-	_poisons.append({"src": src, "stacks": 1, "dps": dps, "time": duration})
+	_poisons.append({"src": src, "dps": dps, "time": duration})
 
 
-func apply_armor_break(duration: float) -> void:
+## 방어구 파괴: 방어력을 ratio(0~1)만큼 깎는다 (1이면 0). 걸려 있는 동안 더 센 비율이 우선이고, 시간은 긴 쪽으로 갱신된다.
+func apply_armor_break(duration: float, ratio: float) -> void:
+	armor_break_ratio = maxf(armor_break_ratio, ratio) if armor_break_time > 0.0 else ratio
 	armor_break_time = maxf(armor_break_time, duration)
 
 
@@ -345,7 +349,7 @@ func _update_status(delta: float) -> void:
 		if e.time <= 0.0:
 			_poisons.remove_at(i)
 			continue
-		_lose_hp(e.stacks * e.dps * delta, e.src, e.src)  # 독 피해와 킬은 독을 건 타워 몫
+		_lose_hp(e.dps * delta, e.src, e.src)  # 독 피해와 킬은 독을 건 타워 몫
 		if _dead:
 			return
 
@@ -819,41 +823,6 @@ func _draw_decor_front(c: Vector2, r: float, color: Color) -> void:
 			for rx in [-0.5, 0.5]:
 				draw_circle(c + Vector2(r * rx, -r * 0.6), r * 0.09, dark)
 			draw_arc(c, r * 1.02, 0.0, TAU, 28, steel, 4.0)
-		"shield":
-			draw_arc(c, r * 1.18, -PI * 0.15, PI * 1.15, 20, Color(0.85, 0.9, 1.0), 3.0)
-			draw_arc(c, r * 1.18, PI * 1.15, PI * 1.85, 10, Color(0.85, 0.9, 1.0, 0.35), 3.0)
-		"hat":
-			var pts := PackedVector2Array()
-			for i in range(9):
-				var a := PI + i * PI / 8.0
-				pts.append(c + Vector2(cos(a) * r * 0.95, sin(a) * r * 0.8 - r * 0.2))
-			draw_colored_polygon(pts, Color(1.0, 0.85, 0.2))
-			draw_line(c + Vector2(-r * 1.1, -r * 0.2), c + Vector2(r * 1.1, -r * 0.2), Color(0.8, 0.6, 0.1), 3.0)
-		"pick":
-			var hand := c + Vector2(r * 0.95, r * 0.5)
-			var tip := c + Vector2(r * 1.55, -r * 0.95)
-			draw_line(hand, tip, Color(0.5, 0.35, 0.2), 3.0)
-			draw_line(tip + Vector2(-r * 0.45, r * 0.1), tip + Vector2(r * 0.4, -r * 0.2), Color(0.8, 0.82, 0.88), 4.0)
-		"vault":
-			var box := Rect2(c + Vector2(-r * 0.5, r * 0.05), Vector2(r * 1.0, r * 0.75))
-			draw_rect(box, Color(0.75, 0.78, 0.85))
-			draw_rect(box, Color(0.25, 0.28, 0.35), false, 2.5)
-			draw_circle(box.get_center(), r * 0.2, Color(1.0, 0.85, 0.2))
-			draw_arc(box.get_center(), r * 0.2, 0.0, TAU, 12, Color(0.4, 0.3, 0.0), 2.0)
-		"tophat":
-			draw_rect(Rect2(c.x - r * 0.5, c.y - r * 1.7, r * 1.0, r * 1.0), Color(0.1, 0.1, 0.12))
-			draw_rect(Rect2(c.x - r * 0.5, c.y - r * 0.95, r * 1.0, r * 0.18), Color(1.0, 0.85, 0.2))
-			draw_line(c + Vector2(-r * 0.9, -r * 0.7), c + Vector2(r * 0.9, -r * 0.7), Color(0.1, 0.1, 0.12), 4.0)
-		"flame":
-			for i in range(3):
-				var x := (i - 1) * r * 0.5
-				var h := r * (0.9 + 0.4 * sin(_anim * 9.0 + i * 2.0))
-				var col := Color(1.0, 0.8, 0.2) if i == 1 else Color(1.0, 0.45, 0.1)
-				draw_colored_polygon(PackedVector2Array([
-					c + Vector2(x - r * 0.25, -r * 0.7),
-					c + Vector2(x, -r * 0.7 - h),
-					c + Vector2(x + r * 0.25, -r * 0.7),
-				]), col)
 		"flag":
 			var base := c + Vector2(0, -r * 0.9)
 			var wave := sin(_anim * 6.0) * r * 0.15
@@ -871,7 +840,7 @@ func _draw_decor_front(c: Vector2, r: float, color: Color) -> void:
 			]), Color(0.9, 0.75, 0.25))
 			draw_circle(base + Vector2(r * 0.55, -r * 1.3 + wave * 0.5), r * 0.18, Color(0.6, 0.1, 0.1))
 		"sprout":
-			var g := 1.0 if preview else 0.6 + 0.4 * clampf(time_at_boss / 40.0, 0.0, 1.0)  # 서 있을수록 자란다
+			var g := 1.0 if preview else 0.6 + 0.4 * clampf(time_at_boss / 60.0, 0.0, 1.0)  # 서 있을수록 자란다
 			var base := c + Vector2(0, -r * 0.85)
 			draw_line(base, base + Vector2(0, -r * 0.5 * g), Color(0.3, 0.6, 0.2), 3.0)
 			for side in [-1.0, 1.0]:

@@ -3,7 +3,7 @@ class_name EconomyRules
 ## 클라이언트는 서버 스냅샷의 레벨/골드 값을 넣어 이 함수로 비용을 계산해 보여 줄 뿐이고, 실제 차감과 판정은 서버(CommandBus)가 한다.
 
 
-## 진화 항목 레벨 (1~3). levels: 스냅샷/레인의 stat_levels {"계열.스킬.키": 레벨}
+## 진화 항목 레벨 (1~Evolutions.MAX_LEVEL). levels: 스냅샷/레인의 stat_levels {"계열.스킬.키": 레벨}
 static func stat_level(levels: Dictionary, evo: String, skill: String, key: String) -> int:
 	return int(levels.get("%s.%s.%s" % [evo, skill, key], 1))
 
@@ -22,10 +22,10 @@ static func stat_upgrade_cost(levels: Dictionary, evo: String, skill: String, ke
 	var lv := stat_level(levels, evo, skill, key)
 	if lv >= Evolutions.MAX_LEVEL:
 		return -1
-	return int(Balance.STAT_UPGRADE_COSTS[lv - 1])
+	return Balance.stat_upgrade_cost_for(lv + 1)
 
 
-## 색깔 레벨 (0~5)
+## 색깔 레벨 (0~Balance.COLOR_MAX_LEVEL)
 static func color_level(color_levels: Dictionary, color_name: String) -> int:
 	return int(color_levels.get(color_name, 0))
 
@@ -35,7 +35,7 @@ static func color_upgrade_cost(color_levels: Dictionary, color_name: String) -> 
 	var cur := color_level(color_levels, color_name)
 	if cur >= Balance.COLOR_MAX_LEVEL:
 		return -1
-	return Balance.COLOR_UPGRADE_COSTS[cur]
+	return Balance.color_upgrade_cost_for(cur + 1)
 
 
 ## B 스킬 배우는 비용 (진화 전이거나 이미 배웠으면 -1)

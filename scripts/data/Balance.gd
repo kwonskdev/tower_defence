@@ -2,7 +2,7 @@ extends RefCounted
 class_name Balance
 ## 밸런스 수치 모음. 전부 임시값이며, 밸런스 패치는 data 폴더의 파일들만 고치면 된다.
 ## - Balance.gd     : 경제, 기본 타워 4종, 보스 레인 크기
-## - Evolutions.gd  : 타워 진화 계열 8종과 스킬 수치 (A/B 스킬, 레벨 1~3)
+## - Evolutions.gd  : 타워 진화 계열 8종과 스킬 수치 (A/B 스킬, 항목마다 레벨 1~50)
 ## - BossLevels.gd  : 보스 10라운드
 ## - Monsters.gd     : 모든 몬스터 (공격형/일반형/공중형). 유저가 만드는 것도 보스가 보내는 것도 같은 목록. 비용/수입/체력/공격력 고정
 
@@ -19,26 +19,29 @@ const TOWER_KINDS := ["long", "splash", "air", "trap"]
 
 const TOWER_DEFS := {
 	"long": {
-		"name": "장거리", "cost": 4, "range": 5.5, "damage": 0.3, "cooldown": 1.4, "splash": 0.0,
+		"name": "장거리", "cost": 4, "range": 5.5, "damage": 30.0, "attack_rate": 0.7, "splash": 0.0,
 		"blocks": true, "anti_air": false, "color": Color(0.35, 0.75, 1.0),
 		"desc": "사거리가 길고 느리다. 진화 전엔 길을 막는 벽, 진화하면 한 발이 강해진다.",
 	},
 	"splash": {
-		"name": "범위", "cost": 7, "range": 3.0, "damage": 0.5, "cooldown": 0.7, "splash": 1.5,
+		"name": "범위", "cost": 7, "range": 3.0, "damage": 50.0, "attack_rate": 1.4, "splash": 1.5,
 		"blocks": true, "anti_air": false, "color": Color(0.45, 0.9, 0.45),
 		"desc": "공격이 폭발해서 주변 적에게 모두 들어간다.",
 	},
 	"air": {
-		"name": "대공", "cost": 6, "range": 3.5, "damage": 0.8, "cooldown": 0.7, "splash": 0.0,
+		"name": "대공", "cost": 6, "range": 3.5, "damage": 80.0, "attack_rate": 1.4, "splash": 0.0,
 		"blocks": true, "anti_air": true, "color": Color(1.0, 0.55, 0.85),
 		"desc": "공중 몬스터만 공격한다 (지상은 못 때림).",
 	},
 	"trap": {
-		"name": "트랩", "cost": 5, "range": 1.8, "damage": 0.8, "cooldown": 0.4, "splash": 0.0,
+		"name": "트랩", "cost": 5, "range": 1.8, "damage": 80.0, "attack_rate": 2.5, "splash": 0.0,
 		"blocks": false, "anti_air": false, "color": Color(0.9, 0.85, 0.3),
 		"desc": "길을 막지 못하고 사거리가 짧지만 강하고 빠르다.",
 	},
 }
+
+# 방어력: 받는 피해 = 공격력 x ARMOR_SCALE / (ARMOR_SCALE + 방어력). 방어력 100이면 피해 50%, 400이면 20%.
+const ARMOR_SCALE := 100.0
 
 # 타워 내구도: 타워를 갉아 먹는 몬스터(공격형, 슬라임 새끼)가 자기 공격력(초당)만큼 깎는다. 0이 되면 부서지고, 한 번 닳으면 회복되지 않는다.
 # 가장 센 공격형(거인, 공격력 95)도 3초 이상 걸리도록 300으로 둔다.
@@ -63,26 +66,26 @@ const COLOR_BONUS_TYPES := {
 	"주황": "cooldown",     # 공격속도 증가
 	"노랑": "range",        # 사거리 증가
 	"초록": "income",       # 처치 시 골드 보너스
-	"파랑": "penetration",  # 방어력 관통 (방어력 무시 %)
+	"파랑": "penetration",  # 방어력 관통 (적 방어력을 이만큼 무시. 0까지만)
 	"남색": "empower",      # 처치 시 보낸 몬스터 N마리 랜덤 강화
 	"보라": "lifegain",     # 처치 시 확률로 체력 +1
 }
 
-# 색깔 업그레이드 레벨당 보너스 증가량 [레벨1, 레벨2, 레벨3, 레벨4, 레벨5]
-# 보너스는 "그 색 타워에만" 적용되고 타워 색은 랜덤이라 전체의 약 1/7에만 효과가 있다. 그래서 수치는 넉넉하게 잡았다.
-const COLOR_LEVEL_BONUS := {
-	"damage": [0.10, 0.22, 0.36, 0.52, 0.70],      # 공격력 +10%, 22%, 36%, 52%, 70%
-	"cooldown": [0.08, 0.17, 0.28, 0.41, 0.56],    # 공격속도 +8%, 17%, 28%, 41%, 56% (충전형은 충전 속도)
-	"range": [0.10, 0.20, 0.30, 0.40, 0.50],       # 사거리 +10% ... +50% (+96%는 장거리 타워가 맵 전체를 덮어서 낮췄다)
-	"income": [0.15, 0.30, 0.50, 0.75, 1.00],      # 처치 골드 +15% ... +100%
-	"penetration": [0.15, 0.25, 0.35, 0.45, 0.60], # 방어력 15%, 25%, 35%, 45%, 60% 무시
-	"empower_count": [1, 2, 3, 4, 5],              # 강화할 몬스터 마리수
-	"lifegain": [0.02, 0.04, 0.06, 0.09, 0.12],    # 처치당 생명 +1 확률 (웨이브 한 번에 수십 마리를 잡아서 처음보다 낮췄다)
+# 색깔 업그레이드는 선형이다: 레벨 L의 보너스 = L x 레벨당 증가량 (상한 없음).
+# 보너스는 "그 색 타워에만" 적용되고 타워 색은 랜덤이라 전체의 약 1/7에만 효과가 있다.
+const COLOR_LEVEL_STEP := {
+	"damage": 0.01,       # 공격력 +1%씩
+	"cooldown": 0.01,     # 초당 공격 횟수 +1%씩 (충전형은 충전 속도)
+	"range": 0.01,        # 사거리 +1%씩
+	"income": 0.05,       # 처치 골드 +5%씩
+	"penetration": 1.0,   # 적 방어력을 1씩 무시 (방어력은 0까지만 깎인다. 몬스터 방어력은 100이 피해 50% 감소인 척도)
+	"empower": 0.1,       # 처치 시 강화할 내 몬스터 0.1마리씩 (정수 부분은 확정, 소수 부분은 그 확률로 한 마리 더)
+	"lifegain": 0.001,    # 처치당 생명 +1 확률 +0.1%p씩
 }
 
-# 색깔 업그레이드 비용: 레벨 N으로 올리는 비용 = COLOR_UPGRADE_COSTS[N-1] (0→1, 1→2, ..., 4→5)
-const COLOR_MAX_LEVEL := 5
-const COLOR_UPGRADE_COSTS := [20, 30, 45, 65, 90]   # 합계 250골드 (진화 항목 하나가 80골드, 타워 진화 30골드 기준)
+# 색깔 업그레이드 비용: 레벨 N으로 올리는 비용 = N x COLOR_UPGRADE_COST_STEP (10, 20, 30, ... 500골드. 50단계 합계 12,750)
+const COLOR_MAX_LEVEL := 50
+const COLOR_UPGRADE_COST_STEP := 10
 
 # 타워 색깔 바꾸기: 비용을 내면 지금 색을 뺀 6색 중 랜덤으로 바뀐다
 const RECOLOR_COST := 10
@@ -111,24 +114,42 @@ const COLOR_BONUS_LABELS := {
 }
 
 
-## 색깔 보너스 수치 글자 (level 0이면 "-"). 예: "+22%", "2마리"
+## 색깔 업그레이드 레벨의 보너스 값 (군집 배율 전). type: COLOR_BONUS_TYPES의 값
+static func color_level_bonus(type: String, level: int) -> float:
+	return float(COLOR_LEVEL_STEP[type]) * level
+
+
+## 색깔을 level-1에서 level로 올리는 비용
+static func color_upgrade_cost_for(level: int) -> int:
+	return COLOR_UPGRADE_COST_STEP * level
+
+
+## 업그레이드 탭 항목을 level-1에서 level로 올리는 비용 (level은 2 이상)
+static func stat_upgrade_cost_for(level: int) -> int:
+	return STAT_UPGRADE_COST_STEP * level
+
+
+## 색깔 보너스 수치 글자 (level 0이면 "-"). 예: "+22%", "2.3마리", "5 무시"
 static func color_bonus_value_text(color_name: String, level: int) -> String:
 	if level <= 0:
 		return "-"
 	var type: String = COLOR_BONUS_TYPES[color_name]
-	if type == "empower":
-		return "%d마리" % COLOR_LEVEL_BONUS["empower_count"][level - 1]
-	return "+%d%%" % roundi(float(COLOR_LEVEL_BONUS[type][level - 1]) * 100.0)
+	var value := color_level_bonus(type, level)
+	match type:
+		"empower": return "%.1f마리" % value
+		"penetration": return "%d 무시" % roundi(value)
+		"lifegain": return "+%.1f%%" % (value * 100.0)
+	return "+%d%%" % roundi(value * 100.0)
 
 
 ## 색깔 보너스가 어떤 효과인지 한 문장
 static func color_effect(type: String) -> String:
 	match type:
 		"damage": return "공격력이 오른다."
-		"cooldown": return "공격 간격이 짧아진다."
+		"cooldown": return "초당 공격 횟수가 늘어난다."
 		"range": return "사거리가 늘어난다."
 		"income": return "처치 골드가 늘어난다."
-		"penetration": return "적 방어력을 일부 무시한다."
+		"penetration": return "적 방어력을 그만큼 무시한다 (0까지만)."
 		"empower": return "처치하면 내 몬스터 몇 마리가 %d초간 공격력과 최대 체력 +%d%%." % [roundi(EMPOWER_DURATION), roundi(EMPOWER_BOOST * 100.0)]
 		"lifegain": return "처치하면 확률로 생명 +1."
 	return ""
@@ -137,8 +158,8 @@ static func color_effect(type: String) -> String:
 ## 색깔 보너스 설명 (업그레이드 화면에서 색을 골랐을 때)
 static func color_tooltip(color_name: String, level: int) -> String:
 	var type: String = COLOR_BONUS_TYPES[color_name]
-	var text := "%s · %s\n이 색 타워는 %s 같은 색이 붙을수록 더 강해진다.\n현재 %s" % [
-		color_name, COLOR_BONUS_LABELS[type], color_effect(type), color_bonus_value_text(color_name, level)]
+	var text := "%s · %s\n이 색 타워는 %s 같은 색이 붙을수록 더 강해진다.\n현재 Lv%d/%d %s" % [
+		color_name, COLOR_BONUS_LABELS[type], color_effect(type), level, COLOR_MAX_LEVEL, color_bonus_value_text(color_name, level)]
 	if level < COLOR_MAX_LEVEL:
 		text += " → 다음 %s" % color_bonus_value_text(color_name, level + 1)
 	return text
@@ -147,9 +168,10 @@ static func color_tooltip(color_name: String, level: int) -> String:
 ## 설명서용 색깔 설명: 효과와 레벨별 범위
 static func color_guide(color_name: String) -> String:
 	var type: String = COLOR_BONUS_TYPES[color_name]
-	return "%s · %s\n이 색 타워는 %s\n\n업그레이드: Lv1 %s → Lv%d %s" % [
+	return "%s · %s\n이 색 타워는 %s\n\n업그레이드: Lv1 %s → Lv%d %s\n(올릴 때마다 비용 +%d골드, 10골드부터)" % [
 		color_name, COLOR_BONUS_LABELS[type], color_effect(type),
-		color_bonus_value_text(color_name, 1), COLOR_MAX_LEVEL, color_bonus_value_text(color_name, COLOR_MAX_LEVEL)]
+		color_bonus_value_text(color_name, 1), COLOR_MAX_LEVEL, color_bonus_value_text(color_name, COLOR_MAX_LEVEL),
+		COLOR_UPGRADE_COST_STEP]
 
 
 # 강화 효과 상수
@@ -161,9 +183,10 @@ const EMPOWER_MAX_STACKS := 10     # 한 몬스터에 동시에 쌓이는 최대
 # 타워 1기를 진화시키는 비용. 선택하는 순간 A 스킬을 배운다 (그 계열을 처음 진화하면 A 스킬 1레벨).
 const EVOLVE_COST := 30
 # B 스킬 배우기: 타워 1기마다 (진화처럼 개별).
-# 업그레이드 탭(같은 계열의 모든 타워에 적용): 항목 레벨 올리기 비용 (현재 레벨 1 -> 2, 2 -> 3, 항목마다 따로)
-const SKILL_LEARN_COST := 40
-const STAT_UPGRADE_COSTS := [30, 50]
+const SKILL_LEARN_COST := 50
+# 업그레이드 탭(같은 계열의 모든 타워에 적용): 항목 레벨 올리기 비용. 레벨 N으로 올리는 비용 = N x STAT_UPGRADE_COST_STEP
+# (20, 30, ... 500골드. 항목 하나를 Lv50까지 올리는 합계 12,740골드. 항목마다 따로 올린다. 최대 레벨은 Evolutions.MAX_LEVEL)
+const STAT_UPGRADE_COST_STEP := 10
 
 
 ## 기본 타워 종류 ID("long" 등)로 능력치 딕셔너리를 만든다.
@@ -183,7 +206,7 @@ static func tower_kind(kind_id: String) -> Dictionary:
 		"cost": d.cost,
 		"range": d.range,
 		"damage": d.damage,
-		"cooldown": d.cooldown,
+		"attack_rate": d.attack_rate,
 		"splash": d.splash,
 		"blocks": d.blocks,
 		"anti_air": d.anti_air,
@@ -194,8 +217,8 @@ static func tower_kind(kind_id: String) -> Dictionary:
 
 ## 마우스를 올렸을 때 보여줄 타워 상세 설명
 static func tower_tooltip(kind: Dictionary) -> String:
-	return "%s 타워 · %d골드\n%s\n사거리 %.1f · 피해 %.1f · %.2f초마다" % [
-		kind.name, kind.cost, kind.desc, kind.range, kind.damage, kind.cooldown]
+	return "%s 타워 · %d골드\n%s\n사거리 %.1f · 피해 %.0f · 초당 %.2f회" % [
+		kind.name, kind.cost, kind.desc, kind.range, kind.damage, kind.attack_rate]
 
 
 # --- 웨이브 ---

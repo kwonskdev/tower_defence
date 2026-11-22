@@ -4,7 +4,7 @@ extends RefCounted
 ## 클라이언트가 이 이벤트를 받아 폭발/글자를 그린다. 이벤트는 순수 데이터라서 그대로 네트워크로 보낼 수 있다.
 ## 이벤트 모양: {"type": "fx_ring"|"fx_text", "lane": 레인 번호(보스 레인은 GameField.BOSS_LANE_ID), "pos": [x, y](셀 단위),
 ##              "radius"(링) / "text"(글자), "color": "RRGGBB"}
-##          {"type": "fx_shot", "lane", "from": [x, y], "target": 몬스터 번호(없으면 -1), "dest": [x, y], "style", "speed", "color", "pierce": bool}  투사체를 쐈다
+##          {"type": "fx_shot", "lane", "from": [x, y], "target": 몬스터 번호(없으면 -1), "dest": [x, y], "style", "speed", "color", "pierce_range": float}  투사체를 쐈다 (pierce_range > 0이면 관통: 쏜 자리에서 그 거리까지 직진)
 ##          {"type": "fx_cloud", "lane", "pos": [x, y], "radius", "life", "color"}  표식 구름이 깔렸다
 ##          {"type": "fx_warn", "lane", "cell": [x, y], "seconds"}  슬라임 새끼가 나올 칸의 예고 표식 (seconds 뒤 저절로 사라진다)
 ##          {"type": "fx_warn_clear"}  예고 중이던 표식을 모두 치운다 (스킬이 취소됐다)
@@ -36,9 +36,9 @@ func announce(info: Dictionary) -> void:
 
 
 ## 투사체를 쐈다 (피해는 서버가 처리하고, 클라이언트는 날아가는 모습만 그린다)
-func shot(lane_id: int, from: Vector2, target_id: int, dest: Vector2, style: String, speed: float, color: Color, pierce: bool) -> void:
+func shot(lane_id: int, from: Vector2, target_id: int, dest: Vector2, style: String, speed: float, color: Color, pierce_range: float) -> void:
 	emitted.emit({"type": "fx_shot", "lane": lane_id, "from": [from.x, from.y], "target": target_id, "dest": [dest.x, dest.y],
-		"style": style, "speed": speed, "color": color.to_html(false), "pierce": pierce})
+		"style": style, "speed": speed, "color": color.to_html(false), "pierce_range": pierce_range})
 
 
 ## 표식 구름이 깔렸다
