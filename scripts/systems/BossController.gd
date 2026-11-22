@@ -937,9 +937,11 @@ func _finish(result: State, reason: String) -> void:
 	if result == State.VICTORY:
 		Log.info(Log.Category.GAME, "승리! %s 기여도=%s" % [reason, damage_by_player])
 		boss_defeated.emit()
+		events.game_over(true, "")
 	else:
 		Log.warn(Log.Category.GAME, "패배: %s (보스 Lv.%d 남은 hp=%.0f/%.0f)" % [reason, level, hp, max_hp])
 		boss_failed.emit(reason)
+		events.game_over(false, reason)
 
 
 func get_sent_monsters() -> Array[Monster]:

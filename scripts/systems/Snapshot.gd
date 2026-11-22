@@ -7,7 +7,7 @@ class_name Snapshot
 ##   {"v", "boss_lane": int, "players": [id...],
 ##    "lanes": {"<id>": 레인}, "boss": 보스}
 ##   레인: gold, lives, income, income_left, active, started, ghost_damage, stat_levels, color_levels, towers[], monsters[]
-##   타워: cell[x,y], kind, color, evo, b, invested, durability, kills, damage, ghost_damage + Tower.view_state()(aim, recoil, sealed, warn, charge, charge_max, haste, range)
+##   타워: lane, cell[x,y], kind, color, evo, b, invested, durability, kills, damage, ghost_damage + Tower.view_state()(aim, recoil, sealed, warn, charge, charge_max, haste, range)
 ##   몬스터: Monster.view_state() (id, kind, owner, pos[x,y], hp, max_hp, flying, ghost, shape, color, size, facing, 상태이상 ...)
 ##   보스: state, level, hp, max_hp, time_left, in_ghost, ghost_length, total_dps, damage_mult, wave_text,
 ##         next_wave_in, sent_count, attackers, damage_by_player, ghost_boss_damage_by_player, monsters[],
@@ -39,7 +39,7 @@ static func _lane(lane: LaneController) -> Dictionary:
 	var towers: Array = []
 	for t in lane.towers:
 		var entry := {
-			"cell": [t.cell.x, t.cell.y], "kind": t.kind.id, "color": t.color_info.name, "evo": t.evolution, "b": t.b_learned,
+			"lane": lane.player_id, "cell": [t.cell.x, t.cell.y], "kind": t.kind.id, "color": t.color_info.name, "evo": t.evolution, "b": t.b_learned,
 			"invested": t.invested, "durability": t.durability, "kills": t.kills,
 			"damage": t.total_damage, "ghost_damage": t.ghost_damage,
 		}

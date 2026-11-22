@@ -52,7 +52,7 @@ var heal_button: Button                  # 타워 화면의 [회복] 버튼 (골
 var _view_before_tower := "tower"         # 맵에서 타워를 누르기 전에 보던 상단 화면 (뒤로 가면 여기로 돌아간다)
 var tower_action: Button                 # 오른쪽 아래 [진화] 버튼 (고른 진화를 실행)
 var _tower_pick := ""                    # 고른 진화: 계열 이름 또는 "B"
-var _pick_tower: Tower = null            # _tower_pick을 고른 타워 (다른 타워를 누르면 선택을 지운다)
+var _pick_tower := ""            # _tower_pick을 고른 타워 (다른 타워를 누르면 선택을 지운다)
 var recolor_button: Button               # 선택한 타워의 색깔을 랜덤으로 바꾸는 버튼 (항상 보인다)
 var evolve_ids: Array[String] = ["", ""]     # 진화 선택 버튼이 가리키는 값 ("" = 안 쓰는 칸)
 var upgrade_menu: HBoxContainer          # 업그레이드 탭의 첫 화면: [타워] [색깔]
@@ -661,8 +661,8 @@ func _refresh_tabs() -> void:
 ## 맵에서 고른 타워 화면에서 눌렀다면 타워 선택도 풀어 준다. 선택이 남아 있으면 _update_hud가 다시 타워 화면으로 되돌린다.
 func _on_tab_pressed(tab: String) -> void:
 	Log.info(Log.Category.UI, "탭 열기: %s" % tab)
-	if game_field.get_selected_tower() != null:
-		game_field.select_tower(null)
+	if not game_field.get_selected_tower().is_empty():
+		game_field.clear_selection()
 	_view_before_tower = "tower"
 	_show_view(tab)
 
@@ -748,13 +748,12 @@ func _refresh_item_highlight() -> void:
 
 
 func _refresh_now() -> void:
-	var lane: LaneController = game_field.lanes.get(game_field.session.local_player_id)
-	var boss: BossController = game_field.boss
-	if lane:
+	var snap := game_field.snapshot()
+	var lane: Dictionary = snap.lanes.get(str(game_field.session.local_player_id), {})
+	if not lane.is_empty() and not snap.boss.is_empty():
 		_refresh_upgrade_views(lane)
 		_update_explain(lane)
-		if boss:
-			_refresh_action_buttons(lane, boss)
+		_refresh_action_buttons(lane, snap.boss)
 
 
 ## 다음 프레임에 상단/하단을 바로 갱신한다 (0.1초 주기를 기다리지 않게)
@@ -763,27 +762,27 @@ func _request_refresh() -> void:
 
 
 ## 업그레이드 화면 글자 갱신 (설명은 하단 메시지 칸: _update_explain)
-func _refresh_upgrade_views(lane: LaneController) -> void:
+func _refresh_upgrade_views(lane: Dictionary) -> void:
 	if detail_view.visible and _detail_evo != "":
 		var evo := _detail_evo
 		for item in _detail_items:
 			var b: Button = item.btn
 			var stat: Dictionary = item.stat
-			var lv := lane.stat_level(evo, stat.s, stat.k)
-			var cost := lane.stat_upgrade_cost(evo, stat.s, stat.k)
+			var lv := EconomyRules.stat_level(lane.stat_levels, evo, stat.s, stat.k)
+			var cost := EconomyRules.stat_upgrade_cost(lane.stat_levels, evo, stat.s, stat.k)
 			b.text = "%s %s\nLv%d  %s\n%s" % [stat.s, stat.name, lv, Evolutions.stat_value_text(evo, stat, lv), "최대" if lv >= Evolutions.MAX_LEVEL else "%d골드" % cost]
 	if color_view.visible:
 		for cname in color_buttons:
 			var b: Button = color_buttons[cname]
-			var lv := lane.color_level(cname)
-			var cost := lane.color_upgrade_cost(cname)
+			var lv := EconomyRules.color_level(lane.color_levels, cname)
+			var cost := EconomyRules.color_upgrade_cost(lane.color_levels, cname)
 			var type: String = Balance.COLOR_BONUS_TYPES[cname]
 			b.text = "%s\n%s\nLv%d  %s\n%s" % [cname, Balance.COLOR_BONUS_LABELS[type], lv, Balance.color_bonus_value_text(cname, lv), "최대" if cost < 0 else "%d골드" % cost]
 
 
 ## 하단 메시지 칸에 보여줄 설명: 지금 고른 타워/몬스터/업그레이드 항목 (폰에는 툴팁이 없다)
 ## 거절 사유 안내가 떠 있는 동안은 설명 대신 그 문구를 (다른 색으로) 보여 준다.
-func _update_explain(lane: LaneController) -> void:
+func _update_explain(lane: Dictionary) -> void:
 	var showing_notice := _notice_time > 0.0
 	var text := _notice_text if showing_notice else _explain_text(lane)
 	explain_label.add_theme_color_override("font_color", NOTICE_COLOR if showing_notice else EXPLAIN_COLOR)
@@ -791,7 +790,7 @@ func _update_explain(lane: LaneController) -> void:
 	explain_label.visible = text != ""
 
 
-func _explain_text(lane: LaneController) -> String:
+func _explain_text(lane: Dictionary) -> String:
 	match _view:
 		"tower":
 			if game_field.current_tool == GameField.PlacementTool.TOWER:
@@ -804,13 +803,13 @@ func _explain_text(lane: LaneController) -> String:
 				return "몬스터를 고르세요." if _monster_category in Monsters.PVE_SENDABLE else "협력에서는 볼 수만 있는 유형입니다."
 			return Monsters.tooltip(_sel_monster)
 		"tower_sel":
-			var t := game_field.get_selected_tower()
-			if t == null or _tower_pick == "":
-				return "진화를 고르세요." if t != null and (t.can_evolve() or (t.evolution != "" and not t.b_learned)) else ""
+			var t: Dictionary = game_field.get_selected_tower()
+			if t.is_empty() or _tower_pick == "":
+				return "진화를 고르세요." if not t.is_empty() and (t.evo == "" or not t.b) else ""
 			if _tower_pick == "B":
-				return "B 진화\n%s" % Evolutions.skill_text(t.evolution, "B", lane.levels_of(t.evolution))
+				return "B 진화\n%s" % Evolutions.skill_text(t.evo, "B", EconomyRules.levels_of(lane.stat_levels, t.evolution))
 			var bonus := " · 한 발 피해 x%.1f" % Evolutions.DAMAGE_MULT[_tower_pick] if Evolutions.DAMAGE_MULT.has(_tower_pick) else ""
-			return "%s 진화%s\n%s" % [Evolutions.evo_name(_tower_pick), bonus, Evolutions.skill_text(_tower_pick, "A", lane.levels_of(_tower_pick))]
+			return "%s 진화%s\n%s" % [Evolutions.evo_name(_tower_pick), bonus, Evolutions.skill_text(_tower_pick, "A", EconomyRules.levels_of(lane.stat_levels, _tower_pick))]
 		"upgrade":
 			return "종류를 고르세요."
 		"evos":
@@ -819,8 +818,8 @@ func _explain_text(lane: LaneController) -> String:
 			if _sel.size() == 4 and _sel[1] == "stat":
 				var evo: String = _sel[0]
 				var stat := _find_stat(evo, _sel[2], _sel[3])
-				var lv := lane.stat_level(evo, stat.s, stat.k)
-				var text := Evolutions.skill_text(evo, _sel[2], lane.levels_of(evo))
+				var lv := EconomyRules.stat_level(lane.stat_levels, evo, stat.s, stat.k)
+				var text := Evolutions.skill_text(evo, _sel[2], EconomyRules.levels_of(lane.stat_levels, evo))
 				if lv >= Evolutions.MAX_LEVEL:
 					return "%s\n%s 최대 레벨" % [text, stat.name]
 				return "%s\n%s Lv%d → Lv%d: %s → %s" % [text, stat.name, lv, lv + 1,
@@ -828,7 +827,7 @@ func _explain_text(lane: LaneController) -> String:
 			return Evolutions.tooltip(_detail_evo)
 		"colors":
 			if _sel.size() == 4 and _sel[1] == "color":
-				return Balance.color_tooltip(_sel[0], lane.color_level(_sel[0]))
+				return Balance.color_tooltip(_sel[0], EconomyRules.color_level(lane.color_levels, _sel[0]))
 			return "색을 고르세요."
 	return ""
 
@@ -841,7 +840,7 @@ func _find_stat(evo: String, skill: String, key: String) -> Dictionary:
 
 
 ## [생성]/[업그레이드] 버튼: 고른 것이 있고 살 수 있을 때만 눌린다
-func _refresh_action_buttons(lane: LaneController, boss: BossController) -> void:
+func _refresh_action_buttons(lane: Dictionary, boss: Dictionary) -> void:
 	var text := ""
 	var enabled := false
 	match _view:
@@ -851,27 +850,27 @@ func _refresh_action_buttons(lane: LaneController, boss: BossController) -> void
 			else:
 				var cost: int = Monsters.DATA[_sel_monster].cost
 				text = "생성\n%d골드" % cost
-				enabled = Monsters.can_send_in_pve(_sel_monster) and lane.gold_shown() >= cost and boss.state == BossController.State.RUNNING
+				enabled = Monsters.can_send_in_pve(_sel_monster) and EconomyRules.whole(lane.gold) >= cost and boss.state == BossController.State.RUNNING
 		"detail":
 			if _sel.size() == 4 and _sel[1] == "stat":
-				var cost := lane.stat_upgrade_cost(_sel[0], _sel[2], _sel[3])
+				var cost := EconomyRules.stat_upgrade_cost(lane.stat_levels, _sel[0], _sel[2], _sel[3])
 				text = "업그레이드\n최대" if cost < 0 else "업그레이드\n%d골드" % cost
-				enabled = cost >= 0 and lane.gold_shown() >= cost
+				enabled = cost >= 0 and EconomyRules.whole(lane.gold) >= cost
 			else:
 				text = "업그레이드"
 		"tower_sel":
-			var t := game_field.get_selected_tower()
-			var cost := _pick_cost(t, lane)
+			var t: Dictionary = game_field.get_selected_tower()
+			var cost := _pick_cost(t)
 			if cost < 0:
 				text = "진화"
 			else:
 				text = "진화\n%d골드" % cost
-				enabled = t.lane == lane and lane.gold_shown() >= cost
+				enabled = t.lane == game_field.session.local_player_id and EconomyRules.whole(lane.gold) >= cost
 		"colors":
 			if _sel.size() == 4 and _sel[1] == "color":
-				var cost := lane.color_upgrade_cost(_sel[0])
+				var cost := EconomyRules.color_upgrade_cost(lane.color_levels, _sel[0])
 				text = "업그레이드\n최대" if cost < 0 else "업그레이드\n%d골드" % cost
-				enabled = cost >= 0 and lane.gold_shown() >= cost
+				enabled = cost >= 0 and EconomyRules.whole(lane.gold) >= cost
 			else:
 				text = "업그레이드"
 		_:
@@ -1025,7 +1024,7 @@ func _create_tower_sel_view() -> void:
 
 ## 맵에서 지어진 타워를 눌렀다: 건설 모드 중이어도 상단이 그 타워 화면으로 바뀌고 건설 모드는 꺼진다.
 ## 다시 지으려면 타워를 새로 골라야 하고, 그동안 빈 칸을 눌러도 짓지 않는다.
-func _on_tower_selected(_tower: Tower) -> void:
+func _on_tower_selected() -> void:
 	_enter_tower_sel()
 
 
@@ -1038,7 +1037,7 @@ func _enter_tower_sel() -> void:
 
 
 func _on_tower_sel_back_pressed() -> void:
-	game_field.select_tower(null)
+	game_field.clear_selection()
 	_leave_tower_sel()
 
 
@@ -1252,12 +1251,7 @@ func _create_game_over_screen() -> void:
 
 
 func _connect_boss(boss: BossController) -> void:
-	var my_lane: LaneController = game_field.lanes.get(game_field.session.local_player_id)
-	if my_lane != null:
-		_prev_lives = my_lane.lives
-		my_lane.lives_changed.connect(_on_lives_changed)
-	boss.boss_defeated.connect(_on_boss_defeated)
-	boss.boss_failed.connect(_on_boss_failed)
+	_prev_lives = Balance.START_LIVES  # 첫 스냅샷에서 실제 값으로 맞춘다
 	game_field.session.events.emitted.connect(_on_sim_event)
 
 
@@ -1323,13 +1317,6 @@ func _create_alerts() -> void:
 
 
 ## 내 레인의 생명이 줄면 화면을 붉게 두 번 깜빡인다 (보라 보너스로 늘어날 때는 깜빡이지 않는다)
-func _on_lives_changed(lives: int) -> void:
-	var lost := lives < _prev_lives
-	_prev_lives = lives
-	if lost:
-		_flash_life_loss()
-
-
 func _flash_life_loss() -> void:
 	if _life_flash_tween != null:
 		_life_flash_tween.kill()
@@ -1363,8 +1350,14 @@ func _check_boss_time_warning(boss: Dictionary) -> void:
 
 ## 시뮬레이션 이벤트 중 화면이 직접 보여 주는 것: 보스 스킬 배너
 func _on_sim_event(ev: Dictionary) -> void:
-	if ev["type"] == "skill_announced":
-		_banner_queue.append(ev["info"])
+	match ev["type"]:
+		"skill_announced":
+			_banner_queue.append(ev["info"])
+		"game_over":
+			if ev["victory"]:
+				_on_boss_defeated()
+			else:
+				_on_boss_failed(ev["reason"])
 
 
 ## 대기 중인 알림을 하나씩 보여 주고, 예고 시간이 있으면 발동까지 카운트다운을 붙인다
@@ -1874,25 +1867,25 @@ func _process(delta):
 func _update_hud():
 	if not hud_label or not game_field:
 		return
-	var lane: LaneController = game_field.lanes.get(game_field.session.local_player_id)
-	var boss: BossController = game_field.boss
-	if lane == null or boss == null:
-		return
+	var snap := game_field.snapshot()  # 화면의 숫자와 글자는 모두 서버 스냅샷만 읽는다
+	var sb: Dictionary = snap.boss
+	var lane: Dictionary = snap.lanes.get(str(game_field.session.local_player_id), {})
+	if sb.is_empty() or lane.is_empty():
+		return  # 레인/보스가 아직 만들어지기 전
+	# 내 생명이 줄면 화면을 붉게 깜빡인다
+	var lives_now := floori(lane.lives)
+	if lives_now < _prev_lives:
+		_flash_life_loss()
+	_prev_lives = lives_now
 	# 맵에서 타워를 누르면 상단이 그 타워 화면으로 바뀌고, 선택이 풀리면 원래 보던 화면으로 돌아온다
-	var picked := game_field.get_selected_tower()
-	if picked != null:
+	if not game_field.get_selected_tower().is_empty():
 		_enter_tower_sel()
 	elif _view == "tower_sel":
 		_leave_tower_sel()
 	_update_tower_info(lane)
 	_refresh_upgrade_views(lane)
 	_update_explain(lane)
-	_refresh_action_buttons(lane, boss)
-
-	var snap := game_field.snapshot()  # 아래 상태 패널과 하단 안내는 서버 스냅샷만 읽는다
-	var sb: Dictionary = snap.boss
-	if sb.is_empty() or not snap.lanes.has(str(game_field.session.local_player_id)):
-		return  # 레인/보스가 아직 만들어지기 전
+	_refresh_action_buttons(lane, sb)
 	_update_status_panel(snap)
 	_refresh_tower_highlight()
 	_refresh_start_button()
@@ -1936,51 +1929,54 @@ func _ghost_hud_lines(boss: Dictionary) -> Array[String]:
 	return lines
 
 
-func _update_tower_info(lane: LaneController):
-	var t := game_field.get_selected_tower()
-	if t == null:
+func _update_tower_info(lane: Dictionary):
+	var t: Dictionary = game_field.get_selected_tower()
+	if t.is_empty():
 		tower_info_label.visible = false
 		return
 	tower_info_label.visible = _view == "tower_sel"  # 타워 화면일 때만 (몬스터/업그레이드 화면에서는 하단을 비운다)
-	var title: String = t.kind.name
-	if t.evolution != "":
-		title += " · " + Evolutions.evo_name(t.evolution)
+	var mine: bool = t.lane == game_field.session.local_player_id
+	var gold := EconomyRules.whole(lane.gold)
+	var kind: Dictionary = Balance.tower_kind(t.kind)
+	var title: String = kind.name
+	if t.evo != "":
+		title += " · " + Evolutions.evo_name(t.evo)
 	var text := "%s · 피해 %.2f · %.2f초 · 사거리 %.1f\n처치 %d · 누적 %.0f" % [
-		title, t.cur_damage(), t.cur_cooldown(), t.cur_range(), t.kills, t.total_damage]
+		title, t.damage_now, t.cooldown_now, t.range, t.kills, t.damage]
 	if t.ghost_damage > 0.0:  # 유령 구간에 이 타워가 유령에게 준 피해
 		text += "\n유령 피해 %.0f" % t.ghost_damage
 	if t.durability < Balance.TOWER_DURABILITY - 0.001:  # 슬라임 새끼나 유령에게 갉인 타워 (골드로만 회복된다)
 		text += "\n내구도 %d / %d" % [roundi(t.durability), roundi(Balance.TOWER_DURABILITY)]
-	if t.sealed_time > 0.0:
-		text += "\n봉인 %d초" % ceili(t.sealed_time)
-	match t.evolution:
+	if t.sealed_left > 0.0:
+		text += "\n봉인 %d초" % ceili(t.sealed_left)
+	match t.evo:
 		"growth":
-			text += "\n치명타 %.1f%% · 광란 x%d" % [t.crit_chance() * 100.0, t.haste_stacks]
+			text += "\n치명타 %.1f%% · 광란 x%d" % [t.crit * 100.0, t.haste]
 		"charge":
-			text += "\n충전 %.1f / %.0f초" % [t.charge, t.charge_max()]
-	text += "\n" + t.color_bonus_text()
-	var b_known := t.evolution != "" and t.b_learned
+			text += "\n충전 %.1f / %.0f초" % [t.charge, t.charge_max]
+	text += "\n" + EconomyRules.color_bonus_text(lane.color_levels, t.color, t.evo, t.cluster, t.cluster_mult)
+	var b_known: bool = t.evo != "" and t.b
 	tower_info_label.text = text.get_slice("\n", 0) if _tower_pick != "" else text  # 진화를 고르는 중에는 설명이 잘 보이게 첫 줄만
 
 	recolor_button.text = "색깔 바꾸기 (%d골드)" % Balance.RECOLOR_COST
 	recolor_button.tooltip_text = "이 타워의 색깔을 지금 색을 뺀 6색 중 랜덤으로 바꿉니다. 색깔 보너스는 그 색의 업그레이드를 따라갑니다."
-	recolor_button.disabled = t.lane != lane or lane.gold_shown() < Balance.RECOLOR_COST
-	var hurt := t.durability < Balance.TOWER_DURABILITY - 0.001
-	heal_button.text = "회복 (%d골드)
-내구도 %d/%d" % [Balance.HEAL_COST, roundi(t.durability), roundi(Balance.TOWER_DURABILITY)]
-	heal_button.disabled = t.lane != lane or not hurt or lane.gold_shown() < Balance.HEAL_COST
+	recolor_button.disabled = not mine or gold < Balance.RECOLOR_COST
+	var hurt: bool = t.durability < Balance.TOWER_DURABILITY - 0.001
+	heal_button.text = "회복 (%d골드)\n내구도 %d/%d" % [Balance.HEAL_COST, roundi(t.durability), roundi(Balance.TOWER_DURABILITY)]
+	heal_button.disabled = not mine or not hurt or gold < Balance.HEAL_COST
 
-	sell_button.text = "판매 (%d골드)" % lane.sell_value_shown(t)
+	sell_button.text = "판매 (%d골드)" % EconomyRules.whole(EconomyRules.sell_value(t.invested, lane.started))
 	sell_button.tooltip_text = "타워에 쓴 골드(건설 + 진화 + B 스킬)의 %d%%를 돌려받고 타워를 치웁니다 (시작 전에는 전액). 스탯/색깔 업그레이드는 레인 전체 공유라 환급되지 않습니다." % roundi(Balance.SELL_REFUND_RATIO * 100.0)
-	sell_button.disabled = t.lane != lane or not lane.active
+	sell_button.disabled = not mine or not lane.active
 
 	# 진화 선택: 진화 전이면 계열 2개 중 하나, 진화했는데 B가 남았으면 B 진화 하나. 고르면 하단에 설명이 나오고 [진화]를 눌러야 진화한다.
-	if _pick_tower != t:
+	var key := "%d:%d:%d" % [t.lane, t.cell[0], t.cell[1]]
+	if _pick_tower != key:
 		_tower_pick = ""
-		_pick_tower = t
-	var can_pick := t.can_evolve()
-	var can_b := t.evolution != "" and not b_known
-	var choices: Array = Evolutions.TREE[t.kind.id]
+		_pick_tower = key
+	var can_pick: bool = t.evo == ""
+	var can_b: bool = t.evo != "" and not b_known
+	var choices: Array = Evolutions.TREE[t.kind]
 	for i in range(evolve_buttons.size()):
 		var eb := evolve_buttons[i]
 		var id := ""
@@ -1990,8 +1986,8 @@ func _update_tower_info(lane: LaneController):
 			eb.add_theme_color_override("font_color", Evolutions.DATA[id].color)
 		elif can_b and i == 0:
 			id = "B"
-			eb.text = "B 진화\n%s" % Evolutions.skill_name(t.evolution, "B")
-			eb.add_theme_color_override("font_color", Evolutions.DATA[t.evolution].color)
+			eb.text = "B 진화\n%s" % Evolutions.skill_name(t.evo, "B")
+			eb.add_theme_color_override("font_color", Evolutions.DATA[t.evo].color)
 		evolve_ids[i] = id
 		eb.modulate = Color.WHITE if id != "" else Color(1, 1, 1, 0)  # 안 쓰는 칸은 투명하게 (격자 배치 유지)
 		eb.mouse_filter = Control.MOUSE_FILTER_STOP if id != "" else Control.MOUSE_FILTER_IGNORE
@@ -2005,10 +2001,10 @@ func _update_tower_info(lane: LaneController):
 
 
 ## 고른 진화의 비용 (-1: 고른 것 없음)
-func _pick_cost(t: Tower, lane: LaneController) -> int:
-	if t == null or _tower_pick == "":
+func _pick_cost(t: Dictionary) -> int:
+	if t.is_empty() or _tower_pick == "":
 		return -1
-	return lane.learn_cost(t) if _tower_pick == "B" else Balance.EVOLVE_COST
+	return EconomyRules.learn_cost(t.evo, t.b) if _tower_pick == "B" else Balance.EVOLVE_COST
 
 
 ## 선택한 타워의 색깔 바꾸기 (골드, 랜덤)
@@ -2018,17 +2014,18 @@ func _on_recolor_selected_pressed():
 
 ## [판매]: 건설만 한 타워는 바로 팔고, 진화/B 스킬에 골드를 쓴 타워는 환급액을 보여 주며 한 번 더 확인한다
 func _on_sell_pressed() -> void:
-	var t := game_field.get_selected_tower()
-	var lane: LaneController = game_field.lanes.get(game_field.session.local_player_id)
-	if t == null or lane == null or t.lane != lane:
+	var t: Dictionary = game_field.get_selected_tower()
+	var lane: Dictionary = game_field.snapshot().lanes.get(str(game_field.session.local_player_id), {})
+	if t.is_empty() or lane.is_empty() or t.lane != game_field.session.local_player_id:
 		return
-	if not lane.sell_needs_confirm(t):
+	if not EconomyRules.sell_needs_confirm(t.evo):
 		game_field.sell_selected_tower()
 		return
-	var title: String = t.kind.name + " · " + Evolutions.evo_name(t.evolution)
-	if t.b_learned:
-		title += " (B 스킬: %s)" % Evolutions.skill_name(t.evolution, "B")
-	sell_confirm_dialog.dialog_text = "%s 타워를 팝니다.\n투입한 %d골드 중 %d골드를 돌려받고, 타워는 사라집니다.\n그래도 팔까요?" % [title, t.invested, lane.sell_value_shown(t)]
+	var title: String = Balance.tower_kind(t.kind).name + " · " + Evolutions.evo_name(t.evo)
+	if t.b:
+		title += " (B 스킬: %s)" % Evolutions.skill_name(t.evo, "B")
+	var refund := EconomyRules.whole(EconomyRules.sell_value(t.invested, lane.started))
+	sell_confirm_dialog.dialog_text = "%s 타워를 팝니다.\n투입한 %d골드 중 %d골드를 돌려받고, 타워는 사라집니다.\n그래도 팔까요?" % [title, t.invested, refund]
 	sell_confirm_dialog.popup_centered()
 
 
@@ -2105,8 +2102,8 @@ func _notification(what: int) -> void:
 			return
 	if game_field.current_tool != GameField.PlacementTool.NONE:
 		game_field.set_current_tool(GameField.PlacementTool.NONE)
-	elif game_field.get_selected_tower() != null:
-		game_field.select_tower(null)
+	elif not game_field.get_selected_tower().is_empty():
+		game_field.clear_selection()
 	elif _play_running:
 		_set_paused(true)
 	else:

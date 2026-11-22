@@ -6,10 +6,16 @@ extends RefCounted
 ##              "radius"(링) / "text"(글자), "color": "RRGGBB"}
 ##          {"type": "fx_shot", "lane", "from": [x, y], "target": 몬스터 번호(없으면 -1), "dest": [x, y], "style", "speed", "color", "pierce": bool}  투사체를 쐈다
 ##          {"type": "fx_cloud", "lane", "pos": [x, y], "radius", "life", "color"}  표식 구름이 깔렸다
+##          {"type": "game_over", "victory": bool, "reason": String}  한 판이 끝났다 (화면이 결과 창을 띄운다)
 ##          {"type": "skill_announced", "info": {name, text, lane, delay, boss}}  보스 스킬 배너. delay>0이면 그 시간 뒤 발동
 ## 레인이 지금 화면에 보이는지는 클라이언트가 정한다 (서버는 보이는지 모른다).
 
 signal emitted(ev: Dictionary)
+
+
+## 한 판이 끝났다
+func game_over(victory: bool, reason: String) -> void:
+	emitted.emit({"type": "game_over", "victory": victory, "reason": reason})
 
 
 ## 보스 스킬을 HUD 배너로 알린다

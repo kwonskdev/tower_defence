@@ -77,6 +77,12 @@ func _find_tower(cell: Vector2i) -> Tower:
 	return null
 
 
+## 선택한 타워가 이 타워인가 (선택은 스냅샷 항목으로 읽는다)
+func _is_selected(t: Tower) -> bool:
+	var sel: Dictionary = gf.get_selected_tower()
+	return not sel.is_empty() and sel.lane == t.lane.player_id and sel.cell == [t.cell.x, t.cell.y]
+
+
 func _sell_all() -> void:
 	for t in lane.towers.duplicate():
 		lane.sell_tower(t)
@@ -94,14 +100,14 @@ func _sell_before_start() -> void:
 	check(t.invested == 4, "invested == 건설가 4")
 	near(lane.sell_value(t), 4.0, "시작 전 환급 = 전액 4")
 	check(_state(c) == GridSystem.CellState.TOWER, "칸 상태 TOWER")
-	gf.select_tower(t)
-	check(t.selected and gf.get_selected_tower() == t, "타워 선택됨")
+	gf.select_tower_at(t.lane.player_id, t.cell)
+	check(_is_selected(t), "타워 선택됨")
 	_clear_float_texts()
 	check(gf.sell_selected_tower(), "sell_selected_tower() 성공")
 	near(lane.gold, g0, "골드가 원래대로 (전액 환급)")
 	check(lane.towers.is_empty(), "towers에서 빠짐")
 	check(_state(c) == GridSystem.CellState.EMPTY, "칸이 EMPTY")
-	check(gf.selected_tower == null and gf.get_selected_tower() == null, "선택이 풀림")
+	check(gf.get_selected_tower().is_empty(), "선택이 풀림")
 	var texts := _float_texts()
 	check(not ("파괴!" in texts), "판매에는 '파괴!' 연출이 없다 (texts=%s)" % [texts])
 	check("판매 +4" in texts, "판매 글자 '판매 +4'가 뜬다")
@@ -310,18 +316,18 @@ func _other_lanes() -> void:
 	var t := lane1.build_tower(Vector2i(3, 3), "long")
 	var g := lane.gold
 	check(not lane.sell_tower(t), "내 레인이 남의 타워를 못 판다 (sell_tower)")
-	gf.select_tower(t)
+	gf.select_tower_at(t.lane.player_id, t.cell)
 	check(not gf.sell_selected_tower(), "sell_selected_tower도 실패")
 	check(lane1.towers.has(t) and gf.grid_systems[1].get_cell_state(Vector2i(3, 3)) == GridSystem.CellState.TOWER, "남의 타워와 칸이 그대로")
-	check(lane.gold == g and gf.get_selected_tower() == t, "골드/선택 변화 없음")
+	check(lane.gold == g and _is_selected(t), "골드/선택 변화 없음")
 	await frames(15)
 	check(game.sell_button.disabled, "남의 타워를 선택하면 판매 버튼 비활성")
 	game._on_sell_pressed()
 	check(lane1.towers.has(t) and not game.sell_confirm_dialog.visible, "버튼 핸들러를 직접 불러도 안 팔리고 창도 안 뜬다")
-	gf.select_tower(null)
+	gf.clear_selection()
 	check(not gf.lanes.has(GameField.BOSS_LANE_ID), "보스 레인에는 LaneController가 없어 판매할 수 있는 타워가 없다")
 	gf.switch_player(GameField.BOSS_LANE_ID)
-	check(gf._tower_at(Vector2i(6, 25)) == null, "보스 레인에서는 어떤 칸도 타워로 선택되지 않는다")
+	check(gf._tower_view_at(GameField.BOSS_LANE_ID, Vector2i(6, 25)).is_empty(), "보스 레인에서는 어떤 칸도 타워로 선택되지 않는다")
 	gf.switch_player(0)
 	var mine := _build(Vector2i(8, 3))
 	lane.active = false
@@ -337,7 +343,7 @@ func _ui_flow() -> void:
 	print("[10] 타워 화면: 판매 버튼, 환급액 표시, 확인창")
 	var c := Vector2i(3, 30)
 	var t := _build(c)
-	gf.select_tower(t)
+	gf.select_tower_at(t.lane.player_id, t.cell)
 	await frames(15)
 	check(game._view == "tower_sel" and game.sell_button.is_visible_in_tree(), "타워 화면에 판매 버튼이 보인다")
 	check(game.sell_button.text == "판매 (4골드)", "버튼 문구 '%s' (시작 전 전액 4)" % game.sell_button.text.replace("\n", " "))
@@ -346,14 +352,14 @@ func _ui_flow() -> void:
 	game.sell_button.pressed.emit()
 	check(not game.sell_confirm_dialog.visible, "건설만 한 타워는 확인창 없이 바로 판매")
 	check(absf(lane.gold - (g + 4)) < 0.000001 and _find_tower(c) == null, "바로 판매됨 (+4)")
-	check(gf.get_selected_tower() == null, "선택 해제")
+	check(gf.get_selected_tower().is_empty(), "선택 해제")
 	await frames(15)
 	check(game._view != "tower_sel", "타워 화면에서 메인으로 돌아왔다 (view=%s)" % game._view)
 
 	var t2 := _build(Vector2i(4, 30))
 	lane.evolve_tower(t2, Evolutions.TREE["long"][0])
 	lane.learn_tower_skill(t2)
-	gf.select_tower(t2)
+	gf.select_tower_at(t2.lane.player_id, t2.cell)
 	await frames(15)
 	check(game.sell_button.text == "판매 (74골드)", "진화+B 타워 버튼 '%s'" % game.sell_button.text.replace("\n", " "))
 	var g2 := lane.gold
@@ -364,13 +370,13 @@ func _ui_flow() -> void:
 	game._set_paused(true)
 	check(not get_tree().paused, "판매 확인창이 떠 있으면 일시정지로 갇히지 않는다")
 	game.sell_confirm_dialog.hide()  # 취소
-	check(lane.towers.has(t2) and lane.gold == g2 and gf.get_selected_tower() == t2, "취소하면 그대로")
+	check(lane.towers.has(t2) and lane.gold == g2 and _is_selected(t2), "취소하면 그대로")
 	game.sell_button.pressed.emit()
 	game.sell_confirm_dialog.confirmed.emit()
 	game.sell_confirm_dialog.hide()
 	check(not lane.towers.has(t2), "확인하면 판매")
 	near(lane.gold, g2 + 74, "확인하면 골드 +74")
-	check(gf.get_selected_tower() == null, "선택 해제")
+	check(gf.get_selected_tower().is_empty(), "선택 해제")
 	await frames(15)
 
 
@@ -387,13 +393,13 @@ func _after_start_ratio() -> void:
 	check(t.invested == 74, "투입 74골드")
 	near(lane.sell_value(t), 51.8, "74골드 투입 -> 환급 51.8 (반올림 안 함)")
 	check(lane.sell_value_shown(t) == 51, "표시는 내림한 정수 51")
-	gf.select_tower(t)
+	gf.select_tower_at(t.lane.player_id, t.cell)
 	await frames(15)
 	check(game.sell_button.text == "판매 (51골드)", "버튼 '%s'" % game.sell_button.text.replace("\n", " "))
 	var g := lane.gold
 	check(lane.sell_tower(t), "시작 후 판매")
 	near(lane.gold, g + 51.8, "골드에 51.8이 그대로 더해졌다")
-	gf.select_tower(null)
+	gf.clear_selection()
 	await frames(5)
 
 

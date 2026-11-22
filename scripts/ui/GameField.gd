@@ -16,12 +16,13 @@ var selected_tower_kind: String = Balance.TOWER_KINDS[0]
 var current_tool: PlacementTool = PlacementTool.NONE
 signal path_block_confirm(cell: Vector2i)  # 이 타워를 지으면 길이 막힌다: 사용자에게 확인을 받아야 한다
 signal command_failed(type: String, reason: String)  # 내가 보낸 명령이 거절됐다 (UI가 사유를 안내한다)
-signal tower_selected(tower: Tower)           # 맵에서 지어진 타워를 눌러 선택했다 (건설 모드 중이어도: 상단이 그 타워 화면으로 바뀐다)
+signal tower_selected()           # 맵에서 지어진 타워를 눌러 선택했다 (건설 모드 중이어도: 상단이 그 타워 화면으로 바뀐다)
 signal boss_ready(boss: BossController)    # 보스가 만들어졌다 (한 프레임 기다린 뒤라서 MainGame._ready 시점에는 아직 없다)
 
 var awaiting_confirm: bool = false  # 길 막힘 확인을 기다리는 중 (이 클릭으로는 타워 선택/해제를 하지 않는다)
 var bus: CommandBus  # 상태를 바꾸는 행동은 모두 여기를 지난다 (setup_game_field에서 만든다)
-var selected_tower: Tower = null  # 클릭해서 선택한 타워 (정보/업그레이드 대상)
+var selected_lane := -1                 # 클릭해서 선택한 타워의 레인 번호 (-1 = 선택 없음)
+var selected_cell := Vector2i(-1, -1)   # 클릭해서 선택한 타워의 칸. 타워 정보는 스냅샷에서 읽는다 (정보/업그레이드 대상)
 var side_inset: float = 0.0  # 화면 좌우 안전 여백의 합 (폰 노치/둥근 모서리). 맵이 쓰는 폭 = 화면 폭 - 이 값
 var ui_blockers: Array[Control] = []  # 이 영역 위의 클릭은 맵 클릭으로 처리하지 않는다 (필드 위에 겹친 UI)
 
@@ -103,6 +104,7 @@ func set_side_inset(value: float) -> void:
 ## 연출 이벤트는 여기(클라이언트)에서만 재생한다. 서버는 CommandBus를 직접 쓰고 이벤트를 무시한다.
 func execute(cmd: Dictionary) -> Dictionary:
 	var result := bus.execute(cmd)
+	_snapshot_frame = -1  # 명령이 상태를 바꿨으니 캐시된 스냅샷은 낡았다
 	_play_events(result["events"])
 	return result
 
@@ -129,8 +131,9 @@ var boss_bar: BossController.BossBar = null    # 보스 체력바/기여도 (스
 func _process(_delta: float) -> void:
 	if map_view == null or boss == null:
 		return
-	var sel := get_selected_tower()
-	var sel_key := "" if sel == null else "%d:%d:%d" % [sel.lane.player_id, sel.cell.x, sel.cell.y]
+	var sel_key := ""
+	if selected_lane >= 0:
+		sel_key = "%d:%d:%d" % [selected_lane, selected_cell.x, selected_cell.y]
 	var snap := snapshot()
 	map_view.sync(snap, current_player_id, sel_key)
 	if boss_view != null:
@@ -312,44 +315,55 @@ func _on_grid_cell_clicked(grid_position: Vector2i):
 		return
 
 	# 건설 도구가 꺼져 있거나 건설할 수 없는 칸이면: 그 칸의 타워를 선택 (타워가 없으면 선택 해제)
-	select_tower(_tower_at(grid_position))
+	if _tower_view_at(current_player_id, grid_position).is_empty():
+		clear_selection()
+	else:
+		select_tower_at(current_player_id, grid_position)
 
 
-## 지금 보는 레인의 grid_position 칸에 있는 타워 (없으면 null)
-func _tower_at(grid_position: Vector2i) -> Tower:
-	var lane: LaneController = lanes.get(current_player_id)
-	if lane == null:
-		return null
-	for t in lane.towers:
-		if t.cell == grid_position:
+## 레인의 cell 칸에 있는 타워의 스냅샷 항목 (없으면 빈 Dictionary). 방금 일어난 변화도 보이게 새 스냅샷으로 찾는다.
+func _tower_view_at(lane_id: int, cell: Vector2i) -> Dictionary:
+	var lane: Dictionary = snapshot(true).lanes.get(str(lane_id), {})
+	for t in lane.get("towers", []):
+		if t.cell[0] == cell.x and t.cell[1] == cell.y:
 			return t
-	return null
+	return {}
 
 
-## 선택한 타워. 몬스터가 부수는 등으로 사라졌으면 null (해제된 객체를 타입 변수에 담으면 오류라서 꼭 이 함수로 읽는다)
-func get_selected_tower() -> Tower:
-	if is_instance_valid(selected_tower):
-		return selected_tower
-	selected_tower = null
-	return null
+## 선택한 타워의 스냅샷 항목 (lane, cell, kind, evo, ... 은 Snapshot 참고). 선택이 없거나 몬스터가 부수는 등으로 사라졌으면 빈 Dictionary (선택도 풀린다).
+func get_selected_tower() -> Dictionary:
+	if selected_lane < 0:
+		return {}
+	var lane: Dictionary = snapshot().lanes.get(str(selected_lane), {})
+	for t in lane.get("towers", []):
+		if t.cell[0] == selected_cell.x and t.cell[1] == selected_cell.y:
+			return t
+	selected_lane = -1
+	return {}
 
 
-func select_tower(tower: Tower) -> void:
-	if is_instance_valid(selected_tower):
-		selected_tower.selected = false
-	selected_tower = tower
-	if tower != null:
-		tower.selected = true
-		tower_selected.emit(tower)
-		Log.info(Log.Category.UI, "타워 선택 %s: %s %s" % [tower.cell, tower.kind.name, Evolutions.evo_name(tower.evolution) if tower.evolution != "" else "(진화 전)"])
+## lane_id 레인의 cell 칸 타워를 선택한다 (없는 칸이면 선택 해제)
+func select_tower_at(lane_id: int, cell: Vector2i) -> void:
+	var t := _tower_view_at(lane_id, cell)
+	if t.is_empty():
+		clear_selection()
+		return
+	selected_lane = lane_id
+	selected_cell = cell
+	tower_selected.emit()
+	Log.info(Log.Category.UI, "타워 선택 %s: %s %s" % [cell, Balance.tower_kind(t.kind).name, Evolutions.evo_name(t.evo) if t.evo != "" else "(진화 전)"])
+
+
+func clear_selection() -> void:
+	selected_lane = -1
 
 
 ## 선택한 타워를 가리키는 칸 좌표 인자. 선택이 없거나 남의 레인의 타워면 빈 Dictionary (명령은 내 레인의 타워만 가리킬 수 있다)
 func _selected_cell_args() -> Dictionary:
 	var t := get_selected_tower()
-	if t == null or t.lane == null or t.lane.player_id != session.local_player_id:
+	if t.is_empty() or t.lane != session.local_player_id:
 		return {}
-	return {"cell": t.cell}
+	return {"cell": Vector2i(t.cell[0], t.cell[1])}
 
 
 ## 선택한 타워에 하는 명령을 보낸다 (선택한 타워가 없으면 보내지 않고 false)
@@ -386,7 +400,7 @@ func heal_selected_tower() -> bool:
 func sell_selected_tower() -> bool:
 	if not _do_on_selected(Command.SELL_TOWER):
 		return false
-	select_tower(null)  # 사라진 타워를 계속 선택하고 있지 않게 (사거리 표시, 타워 화면)
+	clear_selection()  # 사라진 타워를 계속 선택하고 있지 않게 (사거리 표시, 타워 화면)
 	return true
 
 
@@ -412,7 +426,7 @@ func switch_player(player_id: int):
 	# 떠나는 레인의 스크롤 위치를 기억해 둔다 (칸 크기가 바뀌어도 되도록 줄 번호로 저장)
 	lane_scroll_rows[current_player_id] = get_v_scroll() / float(grid_renderer.CELL_SIZE)
 
-	select_tower(null)  # 다른 레인으로 가면 선택 해제
+	clear_selection()  # 다른 레인으로 가면 선택 해제
 
 	# 이전 플레이어의 렌더러 연결 해제
 	get_current_grid_system().disconnect_renderer()
@@ -450,7 +464,7 @@ func scroll_to_row(row: float):
 ## 건설 명령을 보낸다. confirmed: 길이 막히는 걸 알고도 짓겠다고 사용자가 확인한 경우 true
 func place_tower(grid_position: Vector2i, confirmed: bool = false) -> bool:
 	# 이미 타워가 있는 칸을 누른 건 건설 실패가 아니라 타워 선택이다 (호출한 쪽이 선택한다). 거절 안내를 띄우지 않는다.
-	if _tower_at(grid_position) != null:
+	if not _tower_view_at(current_player_id, grid_position).is_empty():
 		return false
 	# 보고 있는 레인이 남의 레인이면 클릭한 칸은 내 레인의 칸이 아니다 (명령은 내 레인만 가리킨다)
 	if current_player_id != session.local_player_id:

@@ -95,6 +95,26 @@ func hud_matches_state(game: Node) -> void:
 	check(stats.boss_level == 1 and stats.final_gold == LaneController.whole(lane.gold), "통계: 보스 레벨/최종 골드 (%s)" % stats.final_gold)
 	check(stats.towers_built == lane.towers.size() and stats.final_income == lane.income, "통계: 타워 수/수입")
 	check(stats.boss_damage == 0.0 and stats.ghost.has("lane_ranking"), "통계: 보스 피해/유령 요약")
+	# 선택한 타워의 정보창과 버튼은 스냅샷 값으로 그려진다
+	lane.gold = 500.0
+	lane.try_build_tower(Vector2i(5, 14), "long", false)
+	lane.evolve_tower(lane.tower_at(Vector2i(5, 14)), "pierce")
+	gf.select_tower_at(0, Vector2i(5, 14))
+	await frames(15)
+	var sel: Dictionary = gf.get_selected_tower()
+	check(not sel.is_empty() and sel.evo == "pierce" and game._view == "tower_sel", "맵에서 누른 타워가 선택되어 타워 화면이 된다 (진화=%s)" % sel.get("evo"))
+	var sim_tower := lane.tower_at(Vector2i(5, 14))
+	check(absf(sel.damage_now - sim_tower.cur_damage()) < 0.0001 and absf(sel.range - sim_tower.cur_range()) < 0.0001, "스냅샷의 피해/사거리가 서버 계산과 같다")
+	check(game.tower_info_label.text.contains("%.2f" % sim_tower.cur_damage()) and game.tower_info_label.text.contains(sim_tower.color_bonus_text()), "정보창 글자가 서버 값 그대로: %s" % game.tower_info_label.text.replace("
+", " / ").left(60))
+	check(game.sell_button.text == "판매 (%d골드)" % lane.sell_value_shown(sim_tower), "판매 버튼 환급액 '%s'" % game.sell_button.text)
+	# 생명이 줄면 화면이 붉게 깜빡인다 (스냅샷의 생명 변화로 알아챈다)
+	game.life_flash.color.a = 0.0
+	lane.lives -= 1.0
+	await frames(60)  # HUD는 0.1초마다 갱신된다
+	check(game._prev_lives == floori(lane.lives), "생명 변화를 스냅샷으로 알아챘다 (%d)" % game._prev_lives)
+	gf.clear_selection()
+
 	# 보스 스킬 배너는 시뮬레이션 이벤트(skill_announced)로 뜬다
 	gf.session.events.announce({"name": "테스트 스킬", "text": "설명", "lane": "both", "delay": 0.0, "boss": "시험 보스"})
 	await frames(5)
@@ -142,7 +162,7 @@ func map_view_draws_from_snapshot() -> void:
 	check(not pup.visible, "다른 레인을 보면 이 레인의 껍데기는 숨는다")
 	gf.switch_player(0)
 	# 판매하면 껍데기가 사라진다
-	gf.select_tower(sim_t)
+	gf.select_tower_at(0, sim_t.cell)
 	gf.sell_selected_tower()
 	await frames(5)
 	check(mv.tower_count() == 1 and not is_instance_valid(pup) or pup.is_queued_for_deletion(), "판매한 타워의 껍데기가 치워진다 (남은 %d)" % mv.tower_count())

@@ -31,7 +31,7 @@ func run() -> void:
 	for t in ["grunt", "runner", "tank", "flyer", "swarm", "armored"]:
 		lane.spawn_wave_monster(t, 1)
 	await frames(1)
-	gf.select_tower(lane.tower_at(cells[0]))
+	gf.select_tower_at(0, cells[0])
 	if "--lane=boss" in OS.get_cmdline_user_args():  # 보스 레인: 보낸 몬스터와 보스를 본다
 		for k in ["worker", "warrior", "knight", "cheer"]:
 			gf.do_command(Command.SEND_MONSTER, {"kind_id": k})
