@@ -5,14 +5,15 @@ class_name NetProtocol
 ## 밖에서 온 바이트가 객체를 만들 수 없게 하려는 것이고, 명령(Command.to_wire/from_wire)과 같은 방식이다.
 ##
 ## 클라이언트 -> 서버
-##   hello   {proto, snapshot, game, name}   접속 직후 첫 메시지. 버전이 다르면 서버가 reject하고 끊는다
+##   hello   {proto, snapshot, game, name, mode?, code?}   접속 직후 첫 메시지. 버전이 다르면 서버가 reject하고 끊는다.
+##                                           방 코드 서버(RoomHub)에서는 mode가 "create"(방 만들기) / "join"(code로 입장) / "quick"(빠른 시작: 공개 방) (#26)
 ##   cmd     {seq, cmd: Command.to_wire 글자}  명령 하나. 서버는 결과를 같은 seq로 돌려준다
 ##   view    {lane}                          지금 보고 있는 레인 (이 레인은 자주 받고 나머지는 드물게 받는다)
 ##   ping    {n}                             왕복 시간 재기용 (서버가 같은 n으로 pong)
 ##   ready   {on}                            로비에서 준비/준비 취소 (방장은 늘 준비됨) (#22)
 ##   start   {}                              로비에서 방장이 시작한다. 모두 준비했을 때만 받아 준다 (#22)
 ## 서버 -> 클라이언트
-##   welcome {proto, player_id, players, snap_hz, summary_hz}   접속 허가. player_id는 서버가 정한다
+##   welcome {proto, player_id, players, snap_hz, summary_hz, room, mode}   접속 허가. player_id는 서버가 정한다
 ##   reject  {reason, proto, snapshot}       접속 거부 (REJECT_* 중 하나). 이 뒤에 서버가 연결을 끊는다
 ##   snap    {tick, key, snap: {...}}        내가 받기로 한 범위(자기 레인, 보고 있는 레인, 보스 HUD)의 스냅샷. key=true면 전체(키프레임: 그대로 교체),
 ##                                           false면 이전 틱 위에 적용할 변경분(SnapshotDelta.apply). 모두 신뢰 순서로 오므로 빠지지 않는다
@@ -20,13 +21,13 @@ class_name NetProtocol
 ##   result  {seq, ok, reason}               내 명령의 결과
 ##   events  {list: [...]}                   연출 이벤트 (SimEvents 모양 그대로)
 ##   pong    {n}
-##   lobby   {members: [{lane, name, ready, host}], host, max, can_start}   로비 상태 (바뀔 때마다) (#22)
+##   lobby   {members: [{lane, name, ready, host}], host, max, can_start, room, mode, public}   로비 상태 (바뀔 때마다) (#22)
 ##   started {players, names: {"<레인>": 닉네임}, auto_start}   방장이 시작해서 게임 화면으로 넘어간다. 이 뒤로 snap이 온다. 이때 참여자(레인)가 확정된다.
 ##                                           auto_start = 몬스터 출몰(start_game)까지 남은 초. 2명 이상이면 서버가 센다(-1이 아님), 1명이면 -1 (시작 버튼)
 ##   countdown {left}                        게임 화면의 자동 시작 카운트다운 (정수초가 바뀔 때마다). 0이 되면 서버가 start_game을 실행한다 (#22)
 
 ## 선로 형식(메시지 모양)이 바뀌면 올린다. 클라이언트와 서버가 같은 값이어야만 접속된다 (큰 호환 규칙: 다르면 거부).
-const PROTOCOL_VERSION := 2  # 2: 로비(lobby/started), 닉네임 (#22)
+const PROTOCOL_VERSION := 3  # 2: 로비(lobby/started), 닉네임 (#22) / 3: 방 코드(hello mode/code, welcome/lobby room) (#26)
 
 const MSG_HELLO := "hello"
 const MSG_CMD := "cmd"
@@ -50,6 +51,14 @@ const REJECT_PROTOCOL := "protocol_mismatch"   # 프로토콜/스냅샷 버전�
 const REJECT_FULL := "room_full"                # 자리가 없다
 const REJECT_BAD_HELLO := "bad_hello"           # 첫 메시지가 hello가 아니거나 모양이 틀렸다
 const REJECT_STARTED := "already_started"       # 판이 이미 시작했다 (재접속은 #23에서)
+const REJECT_NO_ROOM := "room_not_found"        # 없는 방 코드 (모양이 틀린 코드, 반납/만료된 코드 포함) (#26)
+const REJECT_TOO_MANY := "too_many_attempts"    # 잘못된 코드를 너무 많이 시도했다 (그 연결을 끊는다) (#26)
+const REJECT_BUSY := "server_busy"              # 방을 더 만들 수 없다 (방 수 상한) (#26)
+
+## hello의 mode (방 코드 서버). 없거나 다르면 bad_hello
+const MODE_CREATE := "create"
+const MODE_JOIN := "join"
+const MODE_QUICK := "quick"      # 빠른 시작: 자리 있는 공개 방에 들어가고, 없으면 새 공개 방을 만든다 (코드 없이)
 
 ## 서버가 받아 주는 클라이언트 메시지의 최대 크기(바이트). 명령 하나는 100바이트 안팎이다.
 const MAX_CLIENT_PACKET := 2048
@@ -95,8 +104,14 @@ static func decode(bytes: PackedByteArray) -> Dictionary:
 
 
 ## 클라이언트가 보낼 hello
-static func make_hello(player_name: String) -> Dictionary:
-	return {"t": MSG_HELLO, "proto": PROTOCOL_VERSION, "snapshot": Snapshot.VERSION, "game": game_version(), "name": player_name}
+## mode/code는 방 코드 서버용 (#26): MODE_CREATE면 code 없이, MODE_JOIN이면 방 코드를 준다. 안 주면 필드를 싣지 않는다 (예전 서버와 같은 모양).
+static func make_hello(player_name: String, mode := "", code := "") -> Dictionary:
+	var hello := {"t": MSG_HELLO, "proto": PROTOCOL_VERSION, "snapshot": Snapshot.VERSION, "game": game_version(), "name": player_name}
+	if mode != "":
+		hello["mode"] = mode
+	if code != "":
+		hello["code"] = code
+	return hello
 
 
 ## 앱 버전 글자 (project.godot의 application/config/version. 없으면 빈 글자). 안내/로그용이고 호환 판정은 PROTOCOL_VERSION이 한다.

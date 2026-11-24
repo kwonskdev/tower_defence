@@ -102,3 +102,13 @@ static func would_overflow(peer: MultiplayerPeer, peer_id: int, size: int) -> bo
 ## 연결 하나를 끊는다 (force=false: ENet은 보낼 것을 보낸 뒤 끊는다)
 static func disconnect_peer(peer: MultiplayerPeer, peer_id: int) -> void:
 	peer.disconnect_peer(peer_id, false)
+
+
+## 연결 상대의 주소 글자 (시도 횟수 제한의 구별값). 알 수 없으면 "". 리버스 프록시 뒤에서는 프록시 주소가 나온다.
+static func address_of(peer: MultiplayerPeer, peer_id: int) -> String:
+	if peer is WebSocketMultiplayerPeer:
+		return str((peer as WebSocketMultiplayerPeer).get_peer_address(peer_id))
+	if peer is ENetMultiplayerPeer:
+		var p: ENetPacketPeer = (peer as ENetMultiplayerPeer).get_peer(peer_id)
+		return "" if p == null else str(p.get_remote_address())
+	return ""
