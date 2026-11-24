@@ -4,11 +4,14 @@ class_name NetProbe
 ## 서버와 다른 프로세스로 돌려서 "헤드리스 서버 1개 + 클라이언트 2개"를 손으로 확인할 때 쓴다 (자동 테스트는 tests/test_net_prototype.gd).
 ##
 ##   Godot --headless --path . -- --server --port=47300 --players=2 --start-when-full   (고정 인원)
-##   Godot --headless --path . -- --server --port=47300                                   (대기방: 방장 = 첫 입장자, 모두 준비 -> 방장 시작 -> 게임 화면에서 30초 뒤 자동 시작 #22)
+##   Godot --headless --path . -- --server --port=47300                                   (대기방: 방장 = 첫 입장자, 모두 준비 -> 방장 시작 -> 바로 시작, 첫 몬스터는 30초 뒤. 자동 시작 없음)
 ##   (대기방 서버에는 방장 쪽 프로브를 --expect=2로 먼저 띄운다: 나머지는 자동으로 준비하고, 방장은 2명이 모여 모두 준비하면 시작한다)
 ##   Godot --headless --path . -- --connect=127.0.0.1:47300 --cell=5,10 --name=A
 ##   Godot --headless --path . -- --connect=127.0.0.1:47300 --cell=7,12 --name=B
 ##
+## 방 코드 서버(기본 서버)에는 --create(방 만들기: 입장하면 "PROBE ROOM 코드"를 찍는다) 또는 --room=코드(그 방에 입장)를 줘야 한다 (#26).
+##   Godot --headless --path . -- --connect=127.0.0.1:47300 --create --expect=2 --name=A     (방장: 코드를 찍고 2명이 모이면 시작)
+##   Godot --headless --path . -- --connect=127.0.0.1:47300 --room=ABC234 --name=B
 ## 인자: --connect=호스트:포트 (필수)  --transport=ws|enet (기본 ws)  --tls (wss로 접속, 기기의 인증서 목록으로 서버 확인)  --cell=x,y (지을 칸)  --name=이름  --timeout=초 (기본 30)
 ## 끝나면 한 줄 요약을 찍고 종료한다 (모든 참여자의 타워를 봤으면 0, 아니면 1, 거부당하면 2).
 
@@ -35,6 +38,11 @@ func _ready() -> void:
 		_cell = Vector2i(int(cell_parts[0]), int(cell_parts[1]))
 	_timeout = float(ServerMain.arg_value("timeout", "30"))
 	client.player_name = ServerMain.arg_value("name", "probe")
+	if "--create" in OS.get_cmdline_args() + OS.get_cmdline_user_args():
+		client.join_mode = NetProtocol.MODE_CREATE
+	elif ServerMain.arg_value("room") != "":
+		client.join_mode = NetProtocol.MODE_JOIN
+		client.join_code = ServerMain.arg_value("room")
 	add_child(client)
 	client.joined.connect(_on_joined)
 	client.game_started.connect(func(_players, _names): _build())  # 로비 방식 서버: 방장이 시작해서 게임 화면에 들어간 뒤에 짓는다 (#22)
@@ -55,6 +63,8 @@ func _ready() -> void:
 
 
 func _on_joined(player_id: int) -> void:
+	if client.room_code != "":
+		print("PROBE ROOM %s" % client.room_code)
 	print("PROBE %s: 입장 P%d (%s)" % [client.player_name, player_id + 1, "참여자 %s" % [client.players] if not client.players.is_empty() else "로비에서 시작을 기다림"])
 	if not client.players.is_empty():  # 고정 인원 서버: 참여자가 이미 정해져 있으니 바로 짓는다
 		_build()

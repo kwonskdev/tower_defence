@@ -37,6 +37,10 @@ func _draw() -> void:
 	var is_boss_lane := lane_index == GameField.BOSS_LANE_ID
 	var snap := game_field.snapshot()  # 서버 스냅샷만 읽는다 (시뮬레이션 객체를 직접 읽지 않는다)
 	var lane: Dictionary = snap.lanes.get(str(lane_index), {})
+	var summarized := false   # 온라인: 자기/보고 있는 레인이 아니면 서버가 요약(타워 칸/몬스터 점)만 보낸다
+	if lane.is_empty() and game_field.remote != null:
+		lane = game_field.summary_of(lane_index)
+		summarized = not lane.is_empty()
 	var participating := is_boss_lane or not lane.is_empty()
 
 	var area := Rect2(Vector2(2, 2), size - Vector2(4, 4))
@@ -52,14 +56,19 @@ func _draw() -> void:
 		if is_boss_lane:
 			var c := area.position + Balance.BOSS_CENTER * Vector2(sx, sy)
 			draw_circle(c, Balance.BOSS_RADIUS * sx, Color(0.8, 0.12, 0.15))
-			for m in snap.boss.get("monsters", []):
-				_dot(area, Vector2(m.pos[0], m.pos[1]), sx, sy, MONSTER_COLOR)
+			var boss_dots: Array = snap.boss.get("monsters", [])
+			var boss_dots_summary := boss_dots.is_empty() and game_field.remote != null
+			if boss_dots_summary:
+				boss_dots = game_field.summary_of(GameField.BOSS_LANE_ID).get("monsters", [])
+			for m in boss_dots:
+				_dot(area, Vector2(m[0], m[1]) if boss_dots_summary else Vector2(m.pos[0], m.pos[1]), sx, sy, MONSTER_COLOR)
 		else:
 			for t in lane.towers:
-				var p := area.position + Vector2(t.cell[0] * sx, t.cell[1] * sy)
+				var cell: Array = t if summarized else t.cell
+				var p := area.position + Vector2(cell[0] * sx, cell[1] * sy)
 				draw_rect(Rect2(p, Vector2(maxf(sx, 2.0), maxf(sy, 2.0))), TOWER_COLOR)
 			for m in lane.monsters:
-				_dot(area, Vector2(m.pos[0], m.pos[1]), sx, sy, MONSTER_COLOR)
+				_dot(area, Vector2(m[0], m[1]) if summarized else Vector2(m.pos[0], m.pos[1]), sx, sy, MONSTER_COLOR)
 
 	# 탈락한 레인은 어둡게 (관전만 된다)
 	var eliminated: bool = participating and not is_boss_lane and not lane.get("active", true)

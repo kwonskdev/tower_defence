@@ -7,6 +7,10 @@ var events := SimEvents.new()  # 시뮬레이션이 내는 연출 이벤트 통�
 var rng := RandomNumberGenerator.new()  # 이 판의 시뮬레이션 랜덤 하나. 레인과 보스가 같이 쓴다 (서버만 뽑는다)
 var participants: Array[int] = [0]  # 레인을 가지는 플레이어 번호들 (보스 레인 제외)
 
+## 게임 모드 (#26). 지금은 협력(PvE)뿐이고, PvP는 나중에 같은 필드로 붙인다. 방(NetServer.game_mode)과 같은 값을 쓴다.
+const MODE_COOP := "coop"
+var game_mode := MODE_COOP
+
 
 func is_participant(player_id: int) -> bool:
 	return player_id in participants

@@ -1,13 +1,13 @@
 extends "res://tests/case_base.gd"
 ## 이슈 #22: 다인원 세션 (대기방, 레인 배정, 인원별 보스 체력, 탈락 규칙, 닉네임, 게임 화면 자동 시작).
-##  흐름: 방장이 방을 만든다 -> 모이고 -> 각자 [준비] -> 모두 준비하면 방장이 [시작] -> 게임 화면 -> 다인은 30초 뒤 자동 start_game (1인은 시작 버튼)
+##  흐름: 방장이 방을 만든다 -> 모이고 -> 각자 [준비] -> 모두 준비하면 방장이 [시작] -> 바로 시작 (대기 시간 제한/자동 시작 없음. 첫 몬스터는 시작 30초 뒤)
 ##  [1] Lobby 규칙: 입장 순서대로 빈 레인 / 방장 / 준비 / 모두 준비해야 방장이 시작 / 시작 뒤 입장 거부 / 가득 참
 ##  [2] 닉네임: 형용사+명사 자동 생성, 정리(제어문자/길이/공백), 중복 구별
 ##  [3] 인원별 보스 체력: 1명은 지금 값, 인원당 +BOSS_HP_PER_EXTRA_PLAYER, 시작 인원으로 고정
 ##  [4] 레인이 무너지면: 그 사람만 탈락(명령 불가, 관전 가능) + 보스 레인의 그 사람 몬스터 철수 + 기여도 보존 / 전원 탈락이면 패배
-##  [5] 네트워크 대기방: 접속 순서 레인, 닉네임 중복 구별, 준비/방장 시작, 시작 뒤 입장 거부, 게임 화면 카운트다운 뒤 자동 start_game, 스냅샷의 이름
-##  [6] 대기방에서 나가면 자리가 비고 방장이 넘어간다 / [7] 혼자는 시작 버튼
-##  [8] 대기방 화면 / [9] 결과 화면과 미니맵 / [10] 게임 화면(MainGame)의 카운트다운
+##  [5] 네트워크 대기방: 접속 순서 레인, 닉네임 중복 구별, 준비/방장 시작, 시작 뒤 입장 거부, 기다려도 자동 시작하지 않음, 시작하면 바로 start_game
+##  [6] 대기방에서 나가면 자리가 비고 방장이 넘어간다 / [7] 혼자도 방장 시작
+##  [8] 대기방 화면 / [9] 결과 화면과 미니맵 / [10] 게임 화면(MainGame)은 자동 시작하지 않는다
 ## (폰 실기기/실제 지연은 보지 않는다: #28. 대기방 화면 그림은 눈으로 확인해야 한다)
 
 const PORT_BASE := 47240
@@ -214,11 +214,10 @@ func _lane_fall() -> void:
 
 # ---- [5] 네트워크 로비 -----------------------------------------------------
 
-func _server(port: int, auto_sec: float, max_players: int = 8) -> ServerMain:
+func _server(port: int, max_players: int = 8) -> ServerMain:
 	var server := ServerMain.new()
 	server.use_lobby = true
 	server.net_port = port
-	server.game_auto_start_sec = auto_sec
 	server.lobby_max_players = max_players
 	server.session.rng.seed = 9
 	get_tree().root.add_child.call_deferred(server)
@@ -235,10 +234,9 @@ func _client(player_name: String, port: int) -> NetClient:
 
 
 func _net_lobby() -> void:
-	print("[5] 네트워크 대기방 -> 게임 화면 -> 카운트다운 뒤 자동 시작")
+	print("[5] 네트워크 대기방 -> 기다려도 자동 시작 없음 -> 방장 시작하면 바로 시작")
 	var port := PORT_BASE
-	var auto_sec := 3.0
-	var server := await _server(port, auto_sec)
+	var server := await _server(port)
 	var net: NetServer = server.net
 	check(net != null and net.peer != null and server.field == null, "대기방 서버가 열렸고 판(필드)은 아직 없다")
 	var a := _client("철수", port)
@@ -277,14 +275,14 @@ func _net_lobby() -> void:
 	c.set_ready(true)
 	await wait_until(func(): return a.lobby.can_start, 5000)
 	check(a.lobby.can_start, "모두 준비하면 시작 가능 표시")
+	await wait_seconds(4.0)  # 모두 준비했어도 방장이 누르기 전에는 시작하지 않는다 (자동 시작/대기 제한 없음)
+	check(not net.game_started and server.field == null and a.lobby.can_start, "모두 준비해도 기다리기만 하면 시작하지 않는다 (자동 시작 없음)")
 	b.request_start()
 	await frames(20)
 	check(not net.game_started, "방장이 아닌 사람이 시작을 눌러도 무시")
 
 	# 방장 시작 -> 게임 화면
 	var started := {}
-	var ticks := {"a": []}
-	a.countdown_changed.connect(func(left): ticks.a.append(left))
 	for cl in [a, b, c]:
 		cl.game_started.connect(func(players, names): started[cl.player_id] = [players, names])
 	a.request_start()
@@ -292,13 +290,15 @@ func _net_lobby() -> void:
 	check(begun, "방장이 시작하면 모두가 started를 받는다")
 	check(started.get(0, [[]])[0] == [0, 1, 2], "참여자(레인)가 접속자로 확정됐다 %s" % [started.get(0, [[]])[0]])
 	check(server.session.participants == [0, 1, 2] and server.field != null and server.field.lanes.size() == 3, "서버 시뮬레이션에 레인이 3개만 만들어졌다")
-	check(not server.field.bus.started and server.field.boss.state == BossController.State.WAITING, "게임 화면에 들어왔지만 아직 몬스터는 나오지 않는다 (카운트다운 중)")
-	check(a.auto_start_left > 0 and a.auto_start_left <= int(auto_sec), "클라이언트가 자동 시작까지 남은 시간을 안다 (%d초)" % a.auto_start_left)
+	check(await wait_until(func(): return server.field.bus.started, 5000) and server.field.boss.state == BossController.State.RUNNING, "방장이 시작하면 서버가 바로 start_game을 했다 (모든 레인과 보스 동시)")
+	check(server.field.lanes.values().all(func(l): return l.started), "모든 레인이 시작했다")
+	var wave_timer: Timer = server.field.boss._dispatch_timer
+	check(is_equal_approx(wave_timer.wait_time, Balance.INCOME_INTERVAL) and wave_timer.time_left > Balance.INCOME_INTERVAL - 5.0, "첫 웨이브(몬스터)는 시작 %d초 뒤에 온다 (남은 %.1f초)" % [int(Balance.INCOME_INTERVAL), wave_timer.time_left])
 	var forced := {}
 	b.command_result.connect(func(seq, ok, reason, _ev): forced[seq] = [ok, reason])
 	var s1 := b.send(Command.START_GAME)
 	await wait_until(func(): return forced.has(s1), 5000)
-	check(forced.get(s1, [true, ""]) == [false, "auto_start"] and not server.field.bus.started, "다인 판은 시작 명령을 직접 보낼 수 없다 (시작 버튼 없음: %s)" % [forced.get(s1)])
+	check(forced.get(s1, [true, ""]) == [false, "already_started"], "시작한 판에 시작 명령을 또 보내도 이미 시작했다고 거절된다 (%s)" % [forced.get(s1)])
 	near(server.field.boss.max_hp, float(BossLevels.get_level(1).hp) * (1.0 + Balance.BOSS_HP_PER_EXTRA_PLAYER * 2), "3명 판 보스 체력")
 	var names: Dictionary = started.get(1, [[], {}])[1]
 	check(names.get("0") == a.my_name and names.get("1") == b.my_name and names.get("2") == c.my_name, "started에 레인별 닉네임이 있다")
@@ -306,25 +306,19 @@ func _net_lobby() -> void:
 	check(got_snap and c.snapshot.names.get("0") == a.my_name and c.snapshot.names.get("2") == c.my_name, "스냅샷에 닉네임이 실려 온다")
 	check(c.snapshot.lanes.has("2") and not c.snapshot.lanes.has("5"), "참여하지 않은 레인은 스냅샷에 없다")
 
-	# 카운트다운 중에도 입장은 거부, 건설은 된다 (자기 레인에만)
+	# 시작한 뒤에는 입장 거부, 건설은 된다 (자기 레인에만)
 	var late := _client("늦은사람", port)
 	var reject := {}
 	late.rejected.connect(func(reason, _info): reject["reason"] = reason)
 	await wait_until(func(): return not reject.is_empty(), 8000)
-	check(reject.get("reason", "") == NetProtocol.REJECT_STARTED, "게임 화면에 들어온 뒤의 입장은 already_started로 거부 (%s)" % [reject.get("reason")])
+	check(reject.get("reason", "") == NetProtocol.REJECT_STARTED, "시작한 뒤의 입장은 already_started로 거부 (%s)" % [reject.get("reason")])
 	check(net.joined_count() == 3, "거부된 연결이 자리를 쓰지 않았다")
 	var res := {}
 	b.command_result.connect(func(seq, ok, reason, _ev): res[seq] = [ok, reason])
 	var s2 := b.send(Command.BUILD_TOWER, {"cell": Vector2i(7, 12), "kind_id": "long", "confirmed": false})
 	await wait_until(func(): return res.has(s2), 5000)
-	check(res.get(s2, [false])[0] and server.field.lanes[1].tower_at(Vector2i(7, 12)) != null and server.field.lanes[0].tower_at(Vector2i(7, 12)) == null, "카운트다운 중 B의 건설은 B 레인에만 생긴다")
+	check(res.get(s2, [false])[0] and server.field.lanes[1].tower_at(Vector2i(7, 12)) != null and server.field.lanes[0].tower_at(Vector2i(7, 12)) == null, "B의 건설은 B 레인에만 생긴다")
 
-	# 카운트다운이 끝나면 모든 레인과 보스가 동시에 시작한다
-	var auto := await wait_until(func(): return server.field.bus.started, 8000)
-	check(auto and server.field.boss.state == BossController.State.RUNNING, "카운트다운 뒤 서버가 start_game을 했다 (모든 레인과 보스 동시)")
-	check(server.field.lanes.values().all(func(l): return l.started), "모든 레인이 시작했다")
-	await wait_until(func(): return ticks.a.has(0), 3000)
-	check(ticks.a.size() >= 2 and ticks.a[-1] == 0, "카운트다운 메시지가 줄어들며 0까지 왔다 %s" % [ticks.a])
 	for cl in [a, b, c, late]:
 		cl.queue_free()
 	server.queue_free()
@@ -336,7 +330,7 @@ func _net_lobby() -> void:
 func _net_auto_start() -> void:
 	print("[6] 대기방에서 나가면 자리가 비고 방장이 넘어간다")
 	var port := PORT_BASE + 3
-	var server := await _server(port, 60.0, 2)
+	var server := await _server(port, 2)
 	var a := _client("a", port)
 	await wait_until(func(): return a.is_joined(), 8000)
 	var b := _client("b", port)
@@ -361,24 +355,23 @@ func _net_auto_start() -> void:
 # ---- [7] 혼자는 시작 버튼 ----------------------------------------------------
 
 func _net_solo() -> void:
-	print("[7] 혼자: 방장이 시작하면 게임 화면, 자동 시작은 없고 시작 버튼(START_GAME)")
+	print("[7] 혼자: 방장이 시작하면 바로 시작")
 	var port := PORT_BASE + 4
-	var server := await _server(port, 1.0)
+	var server := await _server(port)
 	var a := _client("", port)
 	await wait_until(func(): return a.is_joined(), 8000)
 	await wait_until(func(): return a.lobby.get("members", []).size() == 1 and a.lobby.can_start, 5000)
 	check(a.lobby.can_start, "혼자여도(방장만) 시작할 수 있다 (최소 1명)")
 	a.request_start()
 	var ok := await wait_until(func(): return a.in_game, 8000)
-	check(ok and a.players == [0] and a.auto_start_left == -1, "혼자 시작하면 참여자는 [0], 자동 시작 카운트다운은 없다")
+	check(ok and a.players == [0], "혼자 시작하면 참여자는 [0]")
 	near(server.field.boss.max_hp, float(BossLevels.get_level(1).hp), "1명 판 보스 체력은 지금과 같다")
-	await wait_seconds(2.0)
-	check(not server.field.bus.started, "게임 화면에서 기다려도 저절로 시작하지 않는다 (시작 버튼을 눌러야 한다)")
+	check(await wait_until(func(): return server.field.bus.started, 5000), "혼자여도 방장이 시작하면 바로 시작한다 (시작 버튼을 또 누르지 않는다)")
 	var res := {}
 	a.command_result.connect(func(seq, ok2, reason, _ev): res[seq] = [ok2, reason])
 	var sq := a.send(Command.START_GAME)
 	await wait_until(func(): return res.has(sq), 5000)
-	check(res.get(sq, [false])[0] and server.field.bus.started, "시작 버튼(START_GAME)으로 시작한다")
+	check(res.get(sq, [true, ""]) == [false, "already_started"], "이미 시작한 판의 START_GAME은 거절")
 	a.queue_free()
 	server.queue_free()
 	await frames(4)
@@ -413,7 +406,9 @@ func _screens() -> void:
 	screen.show_lobby(view)
 	check(not screen._start_button.visible and screen._ready_button.visible, "방장이 아니면 [준비]만")
 	check(screen._title.text == "대기방 3/8", "제목에 인원")
-	check(LobbyScreen.hint_text(true, true, 3).contains("30초"), "방장 안내: 게임 화면에서 30초 뒤 자동 시작")
+	var host_hint := LobbyScreen.hint_text(true, true, 3)
+	check(host_hint.contains(str(int(Balance.INCOME_INTERVAL))) and not host_hint.contains("자동"), "방장 안내: 시작하면 바로 시작, 첫 몬스터는 30초 뒤 (자동 시작이라고 하지 않는다: %s)" % host_hint)
+	check(not LobbyScreen.hint_text(false, true, 3).contains("자동") and not LobbyScreen.hint_text(false, false, 3).contains("자동"), "다른 안내에도 자동 시작 설명이 없다")
 	await frames(2)
 	check(screen._list.get_child_count() == 3, "참여자 3줄")
 	var buttons := screen.find_children("*", "Button", true, false)
@@ -458,9 +453,9 @@ func _main_game_screens() -> void:
 	await frames(3)
 
 
-## 게임 화면(MainGame)의 카운트다운: 다인이면 시작 버튼 없이 N초 뒤 자동 start_game
+## 게임 화면(MainGame)은 사람 수와 상관없이 저절로 시작하지 않는다 (카운트다운 없음)
 func _main_game_countdown() -> void:
-	print("[10] 게임 화면: 다인은 카운트다운 뒤 자동 시작, 1인은 시작 버튼")
+	print("[10] 게임 화면: 다인이어도 자동 시작하지 않는다 / 1인은 시작 버튼")
 	var multi := (load("res://scenes/main/MainGame.tscn") as PackedScene).instantiate()
 	var gf: GameField = multi.find_children("*", "GameField", true, false)[0]
 	gf.session.participants.clear()
@@ -468,15 +463,8 @@ func _main_game_countdown() -> void:
 		gf.session.participants.append(i)
 	get_tree().root.add_child.call_deferred(multi)
 	await wait_until(func(): return gf.boss != null and multi.is_inside_tree(), 5000)
-	await frames(5)
-	check(not gf.bus.started and gf.boss.state == BossController.State.WAITING, "다인: 게임 화면에 들어와도 바로 시작하지 않는다")
-	# 버튼 표시는 HUD 갱신 주기(0.1초)에서 바뀌므로 프레임 수가 아니라 조건으로 기다린다
-	var hidden := await wait_until(func(): return not multi.pause_button.visible, 3000)
-	check(hidden, "다인: 시작 버튼이 없다")
-	check(multi.auto_start_left > Balance.GAME_AUTO_START_SEC - 5.0 and multi.auto_start_left <= Balance.GAME_AUTO_START_SEC, "다인: %.0f초 카운트다운이 돈다 (%.1f)" % [Balance.GAME_AUTO_START_SEC, multi.auto_start_left])
-	multi.auto_start_left = 0.3
-	var ok := await wait_until(func(): return gf.bus.started, 3000)
-	check(ok and gf.boss.state == BossController.State.RUNNING and gf.lanes.values().all(func(l): return l.started), "카운트다운이 끝나면 모든 레인과 보스가 동시에 시작한다")
+	await wait_seconds(1.5)
+	check(not gf.bus.started and gf.boss.state == BossController.State.WAITING, "다인: 기다려도 저절로 시작하지 않는다")
 	multi.queue_free()
 	await frames(3)
 
@@ -485,7 +473,6 @@ func _main_game_countdown() -> void:
 	get_tree().root.add_child.call_deferred(solo)
 	await wait_until(func(): return sgf.boss != null and solo.is_inside_tree(), 5000)
 	await frames(5)
-	solo.auto_start_left = 0.0
 	await wait_seconds(0.5)
 	check(not sgf.bus.started and solo.pause_button.visible, "1인: 카운트다운 없이 시작 버튼을 눌러야 시작한다 (현행 유지)")
 	solo._on_start_pressed()
@@ -494,11 +481,11 @@ func _main_game_countdown() -> void:
 	await frames(3)
 
 
-## 시작 실패 / 카운트다운 중 전원 이탈 / 자동 시작 실패 (리뷰 반영)
+## 시작 실패 (리뷰 반영)
 func _net_failures() -> void:
-	print("[11] 판을 못 만들면 대기방으로 되돌린다 / 접속자가 없으면 자동 시작하지 않는다")
+	print("[11] 판을 못 만들면 대기방으로 되돌린다")
 	var port := PORT_BASE + 5
-	var server := await _server(port, 1.5)
+	var server := await _server(port)
 	var net: NetServer = server.net
 	var a := _client("a", port)
 	await wait_until(func(): return a.is_joined(), 8000)
@@ -518,29 +505,10 @@ func _net_failures() -> void:
 	a.request_start()
 	var ok := await wait_until(func(): return a.in_game and b.in_game, 8000)
 	check(ok, "다시 시작하면 정상으로 시작한다")
-	# 카운트다운 중 모두 나간다
 	a.close()
 	b.close()
 	await wait_until(func(): return net.joined_count() == 0, 5000)
-	await wait_seconds(2.5)
-	check(not server.field.bus.started, "카운트다운 중에 접속자가 모두 나가면 자동 시작하지 않는다")
 	a.queue_free()
 	b.queue_free()
 	server.queue_free()
 	await frames(4)
-
-	print("[12] 자동 시작이 거절돼도 한 번만 시도한다")
-	var multi := (load("res://scenes/main/MainGame.tscn") as PackedScene).instantiate()
-	var gf: GameField = multi.find_children("*", "GameField", true, false)[0]
-	gf.session.participants.clear()
-	for i in range(2):
-		gf.session.participants.append(i)
-	get_tree().root.add_child.call_deferred(multi)
-	await wait_until(func(): return gf.boss != null and multi.is_inside_tree(), 5000)
-	await frames(5)
-	gf.bus.started = true  # 이미 시작된 것으로 만들어 start_game이 거절되게 한다 (보스는 아직 대기 상태)
-	multi.auto_start_left = 0.1
-	await wait_seconds(0.8)
-	check(multi.auto_start_attempts == 1, "거절돼도 매 프레임 다시 시도하지 않는다 (시도 %d번)" % multi.auto_start_attempts)
-	multi.queue_free()
-	await frames(3)
