@@ -4,7 +4,8 @@ class_name NetProbe
 ## 서버와 다른 프로세스로 돌려서 "헤드리스 서버 1개 + 클라이언트 2개"를 손으로 확인할 때 쓴다 (자동 테스트는 tests/test_net_prototype.gd).
 ##
 ##   Godot --headless --path . -- --server --port=47300 --players=2 --start-when-full   (고정 인원)
-##   Godot --headless --path . -- --server --port=47300                                   (로비: 첫 입장 뒤 30초에 시작 #22)
+##   Godot --headless --path . -- --server --port=47300                                   (대기방: 방장 = 첫 입장자, 모두 준비 -> 방장 시작 -> 게임 화면에서 30초 뒤 자동 시작 #22)
+##   (대기방 서버에는 방장 쪽 프로브를 --expect=2로 먼저 띄운다: 나머지는 자동으로 준비하고, 방장은 2명이 모여 모두 준비하면 시작한다)
 ##   Godot --headless --path . -- --connect=127.0.0.1:47300 --cell=5,10 --name=A
 ##   Godot --headless --path . -- --connect=127.0.0.1:47300 --cell=7,12 --name=B
 ##
@@ -19,6 +20,8 @@ var _built := false
 var _seen_all := false
 var _seen := {}        # 레인 번호(글자) -> 본 타워 수
 var _view_sent := -1
+var _ready_sent := false
+var _started_sent := false
 
 
 static func requested() -> bool:
@@ -34,7 +37,8 @@ func _ready() -> void:
 	client.player_name = ServerMain.arg_value("name", "probe")
 	add_child(client)
 	client.joined.connect(_on_joined)
-	client.game_started.connect(func(_players, _names): _build())  # 로비 방식 서버: 판이 시작된 뒤에 짓는다 (#22)
+	client.game_started.connect(func(_players, _names): _build())  # 로비 방식 서버: 방장이 시작해서 게임 화면에 들어간 뒤에 짓는다 (#22)
+	client.lobby_changed.connect(_on_lobby)
 	client.rejected.connect(func(reason, info):
 		print("PROBE 거부됨: %s (서버 프로토콜 %d, 스냅샷 %d / 내 프로토콜 %d, 스냅샷 %d)" % [reason, info.proto, info.snapshot, NetProtocol.PROTOCOL_VERSION, Snapshot.VERSION])
 		get_tree().quit(2))
@@ -54,6 +58,18 @@ func _on_joined(player_id: int) -> void:
 	print("PROBE %s: 입장 P%d (%s)" % [client.player_name, player_id + 1, "참여자 %s" % [client.players] if not client.players.is_empty() else "로비에서 시작을 기다림"])
 	if not client.players.is_empty():  # 고정 인원 서버: 참여자가 이미 정해져 있으니 바로 짓는다
 		_build()
+
+
+## 대기방: 방장이 아니면 준비하고, 방장(--host)이면 --expect=N명이 모여 모두 준비했을 때 시작한다
+func _on_lobby(view: Dictionary) -> void:
+	var members: Array = view.get("members", [])
+	if int(view.get("host", -1)) == client.player_id:
+		if view.get("can_start", false) and members.size() >= int(ServerMain.arg_value("expect", "2")) and not _started_sent:
+			_started_sent = true
+			client.request_start()
+	elif not _ready_sent:
+		_ready_sent = true
+		client.set_ready(true)
 
 
 func _build() -> void:

@@ -11,7 +11,7 @@ const START_GOLD := 150
 const BASE_INCOME := 30            # 수입 틱마다 기본으로 들어오는 골드
 const INCOME_INTERVAL := 30.0      # 수입 지급 주기(초)
 const START_LIVES := 10
-const LOBBY_AUTO_START_SEC := 30.0  # 다인 로비가 열린 뒤(첫 입장 기준) 이 시간이 지나면 자동으로 시작한다 (#22)
+const GAME_AUTO_START_SEC := 30.0   # 다인(2명 이상) 판은 게임 화면에 들어간 뒤 이 시간이 지나면 자동으로 start_game 한다 (#22). 1인은 시작 버튼
 const NICKNAME_MAX_LENGTH := 12     # 닉네임 최대 글자 수
 const MAX_PLAYERS := 8             # 최대 참여 인원 (레인 수). 유령 점수를 인원이 달라도 비교되게 환산할 때 기준이 된다
 

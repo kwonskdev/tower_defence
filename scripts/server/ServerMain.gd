@@ -14,9 +14,9 @@ class_name ServerMain
 ##   --transport=ws|enet 전송 계층 (기본 ws = WebSocket/TCP, enet = UDP. 개발/LAN용)
 ##   --tls-cert=경로 --tls-key=경로  주면 서버가 직접 wss로 연다 (ws 전용). 운영에서는 보통 리버스 프록시가 TLS를 맡아서 필요 없다
 ##   --start-when-full   (고정 인원 모드) --players=N 자리가 다 차면 자동으로 시작한다. 주면 로비를 쓰지 않는다 (개발/부하 측정용)
-## --port=가 있고 --start-when-full이 없으면 로비 방식이다 (#22): 접속한 사람이 먼저 로비에 모이고,
-##   첫 입장 뒤 30초가 지나면 그 접속자들로 판이 시작된다 (참여자/레인이 그때 확정). 이때 --players=N은 최대 인원(기본 8)이다.
-##   자동 시작은 2명 이상일 때만이다 (혼자 하는 1인 플레이는 로비 없이 지금처럼 시작 버튼). 시작 버튼/방장/준비는 없다.
+## --port=가 있고 --start-when-full이 없으면 로비 방식이다 (#22): 접속한 사람이 먼저 로비에 모이고(방장 = 첫 입장자),
+##   모두 [준비]하면 방장이 [시작]해서 그 접속자들로 게임 화면에 들어간다 (참여자/레인이 그때 확정). 이때 --players=N은 최대 인원(기본 8)이다.
+##   게임 화면에서 2명 이상이면 30초 카운트다운 뒤 서버가 start_game을 하고, 혼자면 시작 버튼(START_GAME 명령)을 기다린다.
 ## 한 판이 끝나면 결과를 로그에 한 줄 남기고 종료한다 (승리 0, 패배 1).
 
 signal finished(victory: bool, info: Dictionary)
@@ -30,7 +30,7 @@ var net_transport := NetTransport.DEFAULT
 var net_tls: TLSOptions = null       # 주면 wss (--tls-cert/--tls-key 인자가 있으면 그 파일로 만든다)
 var use_lobby := false               # 로비 방식 (위 설명). --port가 있고 --start-when-full이 없으면 _ready가 켠다. 테스트는 직접 켠다
 var lobby_max_players := Balance.MAX_PLAYERS
-var lobby_auto_start_sec := Balance.LOBBY_AUTO_START_SEC
+var game_auto_start_sec := Balance.GAME_AUTO_START_SEC
 
 
 ## 이 프로세스를 서버로 시작해야 하는가
@@ -77,7 +77,7 @@ func _ready() -> void:
 		use_lobby = true
 	if use_lobby:  # 로비 방식: --players는 최대 인원이고, 참여자는 시작할 때 접속자로 정해진다
 		if arg_value("players") != "":
-			lobby_max_players = clampi(int(arg_value("players")), 2, Balance.MAX_PLAYERS)  # 자동 시작이 2명 이상이라 1은 의미가 없다
+			lobby_max_players = clampi(int(arg_value("players")), 1, Balance.MAX_PLAYERS)
 		session.participants.clear()
 	elif arg_value("players") != "":  # 인자가 없으면 세션에 이미 들어 있는 참여자를 그대로 쓴다 (기본은 혼자)
 		session.participants.clear()
@@ -107,7 +107,7 @@ func _ready() -> void:
 		if use_lobby:
 			net.lobby = Lobby.new()
 			net.lobby.max_players = lobby_max_players
-			net.lobby.auto_start_sec = lobby_auto_start_sec
+			net.game_auto_start_sec = game_auto_start_sec
 			net.session = session
 			net.field_factory = _make_field
 		net.start_when_full = "--start-when-full" in OS.get_cmdline_args() or "--start-when-full" in OS.get_cmdline_user_args()

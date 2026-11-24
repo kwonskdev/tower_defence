@@ -9,6 +9,8 @@ class_name NetProtocol
 ##   cmd     {seq, cmd: Command.to_wire 글자}  명령 하나. 서버는 결과를 같은 seq로 돌려준다
 ##   view    {lane}                          지금 보고 있는 레인 (이 레인은 자주 받고 나머지는 드물게 받는다)
 ##   ping    {n}                             왕복 시간 재기용 (서버가 같은 n으로 pong)
+##   ready   {on}                            로비에서 준비/준비 취소 (방장은 늘 준비됨) (#22)
+##   start   {}                              로비에서 방장이 시작한다. 모두 준비했을 때만 받아 준다 (#22)
 ## 서버 -> 클라이언트
 ##   welcome {proto, player_id, players, snap_hz, summary_hz}   접속 허가. player_id는 서버가 정한다
 ##   reject  {reason, proto, snapshot}       접속 거부 (REJECT_* 중 하나). 이 뒤에 서버가 연결을 끊는다
@@ -18,8 +20,10 @@ class_name NetProtocol
 ##   result  {seq, ok, reason}               내 명령의 결과
 ##   events  {list: [...]}                   연출 이벤트 (SimEvents 모양 그대로)
 ##   pong    {n}
-##   lobby   {members: [{lane, name}], max, countdown}   로비 상태 (바뀔 때 + 자동 시작 카운트다운이 1초 줄 때). 시작은 시간이 되면 서버가 알아서 한다 (#22)
-##   started {players, names: {"<레인>": 닉네임}}   판이 시작됐다. 이 뒤로 snap이 온다. 이때 참여자(레인)가 확정된다 (#22)
+##   lobby   {members: [{lane, name, ready, host}], host, max, can_start}   로비 상태 (바뀔 때마다) (#22)
+##   started {players, names: {"<레인>": 닉네임}, auto_start}   방장이 시작해서 게임 화면으로 넘어간다. 이 뒤로 snap이 온다. 이때 참여자(레인)가 확정된다.
+##                                           auto_start = 몬스터 출몰(start_game)까지 남은 초. 2명 이상이면 서버가 센다(-1이 아님), 1명이면 -1 (시작 버튼)
+##   countdown {left}                        게임 화면의 자동 시작 카운트다운 (정수초가 바뀔 때마다). 0이 되면 서버가 start_game을 실행한다 (#22)
 
 ## 선로 형식(메시지 모양)이 바뀌면 올린다. 클라이언트와 서버가 같은 값이어야만 접속된다 (큰 호환 규칙: 다르면 거부).
 const PROTOCOL_VERSION := 2  # 2: 로비(lobby/started), 닉네임 (#22)
@@ -37,6 +41,9 @@ const MSG_EVENTS := "events"
 const MSG_PONG := "pong"
 const MSG_LOBBY := "lobby"
 const MSG_STARTED := "started"
+const MSG_READY := "ready"
+const MSG_START := "start"
+const MSG_COUNTDOWN := "countdown"
 
 ## 접속 거부 사유
 const REJECT_PROTOCOL := "protocol_mismatch"   # 프로토콜/스냅샷 버전이 다르다
