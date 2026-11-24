@@ -45,6 +45,21 @@ const MAX_CLIENT_PACKET := 2048
 ## 접속하고 hello를 안 보내는 연결을 끊기까지(초)
 const HELLO_TIMEOUT := 5.0
 
+## 동시에 열 수 있는 연결 수 (hello 전 연결 포함). WebSocket에는 엔진 쪽 상한이 없어서 서버가 직접 막는다 (ENet은 NetTransport.MAX_CLIENTS)
+const MAX_CONNECTIONS := 16
+## 그중 아직 hello를 안 보낸 연결 수. 이것만 가득 채워서 자리를 막는 접속을 줄인다 (참여자 8명이 한꺼번에 들어와도 넉넉하다)
+const MAX_PENDING := 8
+
+## 클라이언트 메시지 속도 제한 (연결마다 토큰 통). 정상 플레이는 초당 몇 번이라 한참 아래다 (건설을 연타해도 초당 10번 안팎).
+const RATE_BURST := 30.0        # 통 크기: 한꺼번에 이만큼까지는 받는다
+const RATE_PER_SEC := 20.0      # 초당 채워지는 양
+## 보는 레인 바꾸기(view)는 바꿀 때마다 서버가 키프레임(최대 수백 KB)을 만들어 보내므로 따로 더 엄격하게 막는다
+const VIEW_BURST := 4.0
+const VIEW_PER_SEC := 2.0
+## 제한을 넘어 무시한 메시지가 이만큼 쌓이면(1초에 RATE_IGNORED_DECAY개씩 줄어든다) 계속 퍼붓는 것으로 보고 연결을 끊는다
+const RATE_IGNORED_LIMIT := 100.0
+const RATE_IGNORED_DECAY := 10.0
+
 ## 채널(ENet만 의미가 있다): 0 = 접속/명령 결과/이벤트, 1 = 스냅샷/요약. 둘 다 신뢰 순서이고, 나눈 건 서로 기다리게 하지 않으려는 것이다
 const CHANNEL_RELIABLE := 0
 const CHANNEL_SNAPSHOT := 1

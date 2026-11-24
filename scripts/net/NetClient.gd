@@ -27,6 +27,7 @@ var summary: Dictionary = {}        # 나머지 레인의 요약 (타워 칸/몬
 var last_tick := 0
 var snapshot_count := 0
 var reject_reason := ""
+var pongs := 0                      # 받은 pong 수 (테스트가 속도 제한을 볼 때 쓴다)
 var rtt_ms := -1.0                  # 가장 최근 ping 왕복(밀리초)
 
 var _server_gone := false
@@ -143,19 +144,26 @@ func _on_message(msg: Dictionary) -> void:
 		NetProtocol.MSG_RESULT:
 			command_result.emit(int(msg.get("seq", 0)), bool(msg.get("ok", false)), str(msg.get("reason", "")), msg.get("events", []))
 		NetProtocol.MSG_PONG:
+			pongs += 1
 			var n := int(msg.get("n", 0))
 			if _ping_sent_at.has(n):
 				rtt_ms = float(Time.get_ticks_msec() - _ping_sent_at[n])
 				_ping_sent_at.erase(n)
 
 
-func _send(msg: Dictionary) -> void:
+## 보내기가 실패하면(버퍼가 가득 참 등) 경고를 남기고 false
+func _send(msg: Dictionary) -> bool:
 	if peer == null:
-		return
+		return false
 	peer.set_target_peer(MultiplayerPeer.TARGET_PEER_SERVER)
 	peer.transfer_channel = NetProtocol.CHANNEL_RELIABLE
 	peer.transfer_mode = MultiplayerPeer.TRANSFER_MODE_RELIABLE
-	peer.put_packet(NetProtocol.encode(msg))
+	var bytes := NetProtocol.encode(msg)
+	var err := ERR_OUT_OF_MEMORY if NetTransport.would_overflow(peer, MultiplayerPeer.TARGET_PEER_SERVER, bytes.size()) else peer.put_packet(bytes)
+	if err != OK:
+		Log.warn(Log.Category.NETWORK, "서버로 보내기 실패: %s (%s)" % [msg.get("t", "?"), error_string(err)])
+		return false
+	return true
 
 
 ## 명령을 서버로 보낸다. 돌려주는 값은 seq: command_result 신호가 같은 seq로 결과를 알려 준다. 가입 전이면 -1.
@@ -164,7 +172,8 @@ func send_command(cmd: Dictionary) -> int:
 		return -1
 	var seq := _next_seq
 	_next_seq += 1
-	_send({"t": NetProtocol.MSG_CMD, "seq": seq, "cmd": Command.to_wire(cmd)})
+	if not _send({"t": NetProtocol.MSG_CMD, "seq": seq, "cmd": Command.to_wire(cmd)}):
+		return -1
 	return seq
 
 

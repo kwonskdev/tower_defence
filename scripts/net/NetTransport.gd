@@ -14,6 +14,13 @@ const DEFAULT := WEBSOCKET
 ## 서버가 받을 수 있는 최대 연결 수 (참여자 8명 + 아직 hello를 안 보낸 연결 여유)
 const MAX_CLIENTS := 16
 
+## WebSocket 송수신 버퍼 크기(바이트). 엔진 기본값은 약 64KB라서 보스 레인 몬스터가 수백 마리인 키프레임(1000마리에서 약 490KB)이
+## 한 메시지로 안 들어가 보내기가 실패한다 (측정은 tests/test_net_big_keyframe.gd). 2MB는 보스 레인 몬스터 약 4300마리까지의 JSON 키프레임이 들어가는 크기다 (3000마리 = 1.43MB로 실측).
+## 연결마다 송신/수신 버퍼를 따로 잡으므로 2MB x 2 x 최대 연결 수(16)가 최대 메모리다. 이보다 큰 키프레임은 보내기가 실패하고 서버가 경고를 남기며 매 틱 다시 시도한다 (PR #48에 적은 한계).
+const WS_BUFFER_BYTES := 2 * 1024 * 1024
+## 테스트가 기본값(작은 버퍼)에서 어떻게 되는지 보려고 바꿀 수 있게 변수로 둔다
+static var ws_buffer_bytes := WS_BUFFER_BYTES
+
 ## 등록된 외부 전송: 이름 -> {"server": Callable(port: int) -> MultiplayerPeer, "client": Callable(host: String, port: int) -> MultiplayerPeer}
 static var _custom: Dictionary = {}
 
@@ -44,6 +51,8 @@ static func create_server(kind: String, port: int, tls: TLSOptions = null) -> Mu
 		peer = p
 	elif kind == WEBSOCKET:
 		var p := WebSocketMultiplayerPeer.new()
+		p.inbound_buffer_size = ws_buffer_bytes
+		p.outbound_buffer_size = ws_buffer_bytes
 		err = p.create_server(port, "*", tls)
 		peer = p
 	else:
@@ -68,6 +77,8 @@ static func create_client(kind: String, host: String, port: int, tls: TLSOptions
 		peer = p
 	elif kind == WEBSOCKET:
 		var p := WebSocketMultiplayerPeer.new()
+		p.inbound_buffer_size = ws_buffer_bytes
+		p.outbound_buffer_size = ws_buffer_bytes
 		err = p.create_client("%s://%s:%d" % ["wss" if tls != null else "ws", host, port], tls)
 		peer = p
 	else:
@@ -76,6 +87,16 @@ static func create_client(kind: String, host: String, port: int, tls: TLSOptions
 		Log.error(Log.Category.NETWORK, "접속 시작 실패 (%s, %s:%d): %s" % [kind, host, port, error_string(err)])
 		return null
 	return peer
+
+
+## 이 메시지가 송신 버퍼에 안 들어가는가 (WebSocket만). 엔진 4.6.3의 WebSocketMultiplayerPeer.put_packet은 버퍼가 모자라도 OK를 돌려주고
+## 오류 로그만 남기며 메시지를 버리므로(측정: tests/test_net_big_keyframe.gd), 반환값 대신 보내기 전에 남은 공간을 직접 본다.
+## peer_id는 서버 쪽에서는 연결 번호, 클라이언트 쪽에서는 1(서버)이다.
+static func would_overflow(peer: MultiplayerPeer, peer_id: int, size: int) -> bool:
+	if not peer is WebSocketMultiplayerPeer:
+		return false  # ENet은 큰 신뢰 메시지를 알아서 쪼개 보낸다
+	var ws: WebSocketPeer = peer.get_peer(peer_id)
+	return ws != null and ws.get_current_outbound_buffered_amount() + size > peer.outbound_buffer_size
 
 
 ## 연결 하나를 끊는다 (force=false: ENet은 보낼 것을 보낸 뒤 끊는다)

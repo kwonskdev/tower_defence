@@ -41,6 +41,14 @@ static func load_tls(cert_path: String, key_path: String) -> TLSOptions:
 	return TLSOptions.server(key, cert)
 
 
+## --port= 값을 포트 번호로 바꾼다. 1~65535의 정수 글자가 아니면 -1 ("abc", "0", "70000", "12a", " 80", "-5").
+static func parse_port(text: String) -> int:
+	if not text.is_valid_int():
+		return -1
+	var port := text.to_int()
+	return port if port >= 1 and port <= 65535 and str(port) == text else -1
+
+
 ## "--name=값" 인자의 값 (없으면 fallback)
 static func arg_value(name: String, fallback: String = "") -> String:
 	var prefix := "--%s=" % name
@@ -51,6 +59,13 @@ static func arg_value(name: String, fallback: String = "") -> String:
 
 
 func _ready() -> void:
+	if arg_value("port") != "" and parse_port(arg_value("port")) < 0:
+		# 틀린 포트를 0으로 읽어 조용히 네트워크 없는 서버로 도는 것을 막는다
+		Log.error(Log.Category.NETWORK, "--port 값이 1~65535의 정수가 아님: '%s'" % arg_value("port"))
+		result = {"victory": false, "boss_level": 0, "reason": "bad_port"}
+		if requested():
+			get_tree().quit(2)
+		return
 	if arg_value("players") != "":  # 인자가 없으면 세션에 이미 들어 있는 참여자를 그대로 쓴다 (기본은 혼자)
 		session.participants.clear()
 		for i in range(clampi(int(arg_value("players")), 1, Balance.MAX_PLAYERS)):
@@ -68,7 +83,7 @@ func _ready() -> void:
 	add_child(field)
 	field.boss_ready.connect(_on_boss_ready, CONNECT_ONE_SHOT)
 	if arg_value("port") != "":
-		net_port = int(arg_value("port"))
+		net_port = parse_port(arg_value("port"))
 	net_transport = arg_value("transport", net_transport)
 	if arg_value("tls-cert") != "":
 		net_tls = load_tls(arg_value("tls-cert"), arg_value("tls-key"))
