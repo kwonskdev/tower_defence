@@ -7,8 +7,9 @@ import os
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-# 스크린샷과 피처 그래픽은 스토어 등록용이라 git 밖(build/store_assets)에 둔다
-STORE = os.path.join(HERE, "..", "build", "store_assets")
+# assets/: 게임(런처)이 쓰는 아이콘, store/: 스토어 등록용 이미지
+ASSETS = os.path.join(HERE, "..", "assets")
+STORE = os.path.join(HERE, "..", "store")
 FONT_BOLD = "C:/Windows/Fonts/malgunbd.ttf"
 FONT_REG = "C:/Windows/Fonts/malgun.ttf"
 
@@ -85,7 +86,7 @@ def make_feature():
 
 
 if __name__ == "__main__":
-    make_icon(512).save(os.path.join(HERE, "icon_512.png"), "PNG")
-    make_icon(1024).save(os.path.join(HERE, "icon_1024.png"), "PNG")
+    make_icon(512).save(os.path.join(ASSETS, "icon_512.png"), "PNG")
+    make_icon(1024).save(os.path.join(STORE, "icon_1024.png"), "PNG")
     make_feature().save(os.path.join(STORE, "feature_graphic.png"), "PNG")
     print("OK: icon_512.png, icon_1024.png, feature_graphic.png")
