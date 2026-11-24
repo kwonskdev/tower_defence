@@ -10,6 +10,9 @@ class_name ServerMain
 ##   --time-scale=N      게임 속도 배율 (기본 1). 테스트로 빨리 끝낼 때
 ##   --bot               자동 플레이어를 붙인다 (참여자 모두). 사람 없이 한 판을 끝까지 돌릴 때
 ##   --bot-rich          --bot에 더해 서버 쪽에서 골드를 채워 준다 (스모크 테스트 전용. 보스 Lv.1~10을 끝까지 도는지 볼 때)
+##   --port=N            네트워크로 클라이언트를 받는다 (#20). 주면 자동 시작/봇 없이 접속과 시작 명령을 기다린다
+##   --transport=enet|ws 전송 계층 (기본 enet = UDP, ws = WebSocket/TCP)
+##   --start-when-full   참여자 자리가 다 차면 자동으로 시작한다 (로비 전의 임시 규칙, #22에서 대체)
 ## 한 판이 끝나면 결과를 로그에 한 줄 남기고 종료한다 (승리 0, 패배 1).
 
 signal finished(victory: bool, info: Dictionary)
@@ -17,6 +20,9 @@ signal finished(victory: bool, info: Dictionary)
 var session := Session.new()
 var field: GameField
 var result := {}   # 끝난 뒤의 요약. {victory, boss_level, reason}
+var net: NetServer = null            # 클라이언트를 받는 네트워크 (포트를 주었을 때만)
+var net_port := 0                    # 0이 아니면 이 포트로 연다 (--port= 인자가 있으면 그 값이 우선)
+var net_transport := NetTransport.DEFAULT
 
 
 ## 이 프로세스를 서버로 시작해야 하는가
@@ -50,11 +56,26 @@ func _ready() -> void:
 	field.play_effects = false  # 서버는 화면이 없다: 연출 이벤트는 그리지 않는다
 	add_child(field)
 	field.boss_ready.connect(_on_boss_ready, CONNECT_ONE_SHOT)
+	if arg_value("port") != "":
+		net_port = int(arg_value("port"))
+	net_transport = arg_value("transport", net_transport)
+	if net_port > 0:
+		net = NetServer.new()
+		net.start_when_full = "--start-when-full" in OS.get_cmdline_args() or "--start-when-full" in OS.get_cmdline_user_args()
+		add_child(net)
+		var err := net.start(field, net_transport, net_port)
+		if err != OK:
+			Log.error(Log.Category.NETWORK, "네트워크를 열지 못해 서버를 끝냄 (포트 %d, %s)" % [net_port, net_transport])
+			result = {"victory": false, "boss_level": 0, "reason": "net_open_failed"}
+			if requested():
+				get_tree().quit.call_deferred(2)
 
 
 func _on_boss_ready(boss: BossController) -> void:
 	boss.boss_defeated.connect(func(): _finish(true, boss, ""))
 	boss.boss_failed.connect(func(reason: String): _finish(false, boss, reason))
+	if net != null:
+		return  # 네트워크 판: 시작은 접속한 클라이언트의 START_GAME 명령으로 한다 (봇/자동 시작 없음)
 	if "--bot" in OS.get_cmdline_args() or "--bot" in OS.get_cmdline_user_args() or "--bot-rich" in OS.get_cmdline_args() or "--bot-rich" in OS.get_cmdline_user_args():
 		for pid in session.participants:
 			var bot := AutoPlayer.new()
@@ -73,5 +94,7 @@ func _finish(victory: bool, boss: BossController, reason: String) -> void:
 	result = {"victory": victory, "boss_level": boss.level, "reason": reason}
 	Log.info(Log.Category.GAME, "서버 한 판 끝: %s (보스 Lv.%d)%s" % ["승리" if victory else "패배", boss.level, "" if reason == "" else " - " + reason])
 	finished.emit(victory, result)
+	if net != null:  # 끝난 사실(game_over 이벤트)이 클라이언트에게 가도록 한 틱 이상 기다린다
+		await get_tree().create_timer(0.5).timeout
 	if requested():  # 테스트가 이 노드를 직접 만든 경우에는 프로세스를 끝내지 않는다
 		get_tree().quit(0 if victory else 1)
