@@ -10,6 +10,10 @@ class_name ServerMain
 ##   --time-scale=N      게임 속도 배율 (기본 1). 테스트로 빨리 끝낼 때
 ##   --bot               자동 플레이어를 붙인다 (참여자 모두). 사람 없이 한 판을 끝까지 돌릴 때
 ##   --bot-rich          --bot에 더해 서버 쪽에서 골드를 채워 준다 (스모크 테스트 전용. 보스 Lv.1~10을 끝까지 도는지 볼 때)
+##   --port=N            네트워크로 클라이언트를 받는다 (#20). 주면 자동 시작/봇 없이 접속과 시작 명령을 기다린다
+##   --transport=ws|enet 전송 계층 (기본 ws = WebSocket/TCP, enet = UDP. 개발/LAN용)
+##   --tls-cert=경로 --tls-key=경로  주면 서버가 직접 wss로 연다 (ws 전용). 운영에서는 보통 리버스 프록시가 TLS를 맡아서 필요 없다
+##   --start-when-full   참여자 자리가 다 차면 자동으로 시작한다 (로비 전의 임시 규칙, #22에서 대체)
 ## 한 판이 끝나면 결과를 로그에 한 줄 남기고 종료한다 (승리 0, 패배 1).
 
 signal finished(victory: bool, info: Dictionary)
@@ -17,11 +21,32 @@ signal finished(victory: bool, info: Dictionary)
 var session := Session.new()
 var field: GameField
 var result := {}   # 끝난 뒤의 요약. {victory, boss_level, reason}
+var net: NetServer = null            # 클라이언트를 받는 네트워크 (포트를 주었을 때만)
+var net_port := 0                    # 0이 아니면 이 포트로 연다 (--port= 인자가 있으면 그 값이 우선)
+var net_transport := NetTransport.DEFAULT
+var net_tls: TLSOptions = null       # 주면 wss (--tls-cert/--tls-key 인자가 있으면 그 파일로 만든다)
 
 
 ## 이 프로세스를 서버로 시작해야 하는가
 static func requested() -> bool:
 	return "--server" in OS.get_cmdline_args() or "--server" in OS.get_cmdline_user_args()
+
+
+## 인증서(.crt)와 개인 키(.key) 파일로 서버용 TLS 설정을 만든다. 못 읽으면 null.
+static func load_tls(cert_path: String, key_path: String) -> TLSOptions:
+	var cert := X509Certificate.new()
+	var key := CryptoKey.new()
+	if cert.load(cert_path) != OK or key.load(key_path) != OK:
+		return null
+	return TLSOptions.server(key, cert)
+
+
+## --port= 값을 포트 번호로 바꾼다. 1~65535의 정수 글자가 아니면 -1 ("abc", "0", "70000", "12a", " 80", "-5").
+static func parse_port(text: String) -> int:
+	if not text.is_valid_int():
+		return -1
+	var port := text.to_int()
+	return port if port >= 1 and port <= 65535 and str(port) == text else -1
 
 
 ## "--name=값" 인자의 값 (없으면 fallback)
@@ -34,6 +59,13 @@ static func arg_value(name: String, fallback: String = "") -> String:
 
 
 func _ready() -> void:
+	if arg_value("port") != "" and parse_port(arg_value("port")) < 0:
+		# 틀린 포트를 0으로 읽어 조용히 네트워크 없는 서버로 도는 것을 막는다
+		Log.error(Log.Category.NETWORK, "--port 값이 1~65535의 정수가 아님: '%s'" % arg_value("port"))
+		result = {"victory": false, "boss_level": 0, "reason": "bad_port"}
+		if requested():
+			get_tree().quit(2)
+		return
 	if arg_value("players") != "":  # 인자가 없으면 세션에 이미 들어 있는 참여자를 그대로 쓴다 (기본은 혼자)
 		session.participants.clear()
 		for i in range(clampi(int(arg_value("players")), 1, Balance.MAX_PLAYERS)):
@@ -50,11 +82,33 @@ func _ready() -> void:
 	field.play_effects = false  # 서버는 화면이 없다: 연출 이벤트는 그리지 않는다
 	add_child(field)
 	field.boss_ready.connect(_on_boss_ready, CONNECT_ONE_SHOT)
+	if arg_value("port") != "":
+		net_port = parse_port(arg_value("port"))
+	net_transport = arg_value("transport", net_transport)
+	if arg_value("tls-cert") != "":
+		net_tls = load_tls(arg_value("tls-cert"), arg_value("tls-key"))
+		if net_tls == null:
+			net_port = 0
+			Log.error(Log.Category.NETWORK, "TLS 인증서/키를 읽지 못해 네트워크를 열지 않음")
+			if requested():
+				get_tree().quit.call_deferred(2)
+	if net_port > 0:
+		net = NetServer.new()
+		net.start_when_full = "--start-when-full" in OS.get_cmdline_args() or "--start-when-full" in OS.get_cmdline_user_args()
+		add_child(net)
+		var err := net.start(field, net_transport, net_port, net_tls)
+		if err != OK:
+			Log.error(Log.Category.NETWORK, "네트워크를 열지 못해 서버를 끝냄 (포트 %d, %s)" % [net_port, net_transport])
+			result = {"victory": false, "boss_level": 0, "reason": "net_open_failed"}
+			if requested():
+				get_tree().quit.call_deferred(2)
 
 
 func _on_boss_ready(boss: BossController) -> void:
 	boss.boss_defeated.connect(func(): _finish(true, boss, ""))
 	boss.boss_failed.connect(func(reason: String): _finish(false, boss, reason))
+	if net != null:
+		return  # 네트워크 판: 시작은 접속한 클라이언트의 START_GAME 명령으로 한다 (봇/자동 시작 없음)
 	if "--bot" in OS.get_cmdline_args() or "--bot" in OS.get_cmdline_user_args() or "--bot-rich" in OS.get_cmdline_args() or "--bot-rich" in OS.get_cmdline_user_args():
 		for pid in session.participants:
 			var bot := AutoPlayer.new()
@@ -73,5 +127,7 @@ func _finish(victory: bool, boss: BossController, reason: String) -> void:
 	result = {"victory": victory, "boss_level": boss.level, "reason": reason}
 	Log.info(Log.Category.GAME, "서버 한 판 끝: %s (보스 Lv.%d)%s" % ["승리" if victory else "패배", boss.level, "" if reason == "" else " - " + reason])
 	finished.emit(victory, result)
+	if net != null:  # 끝난 사실(game_over 이벤트)이 클라이언트에게 가도록 한 틱 이상 기다린다
+		await get_tree().create_timer(0.5).timeout
 	if requested():  # 테스트가 이 노드를 직접 만든 경우에는 프로세스를 끝내지 않는다
 		get_tree().quit(0 if victory else 1)
