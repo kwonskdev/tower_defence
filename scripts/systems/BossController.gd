@@ -896,11 +896,33 @@ func _chill_of(monster: Monster) -> float:
 
 
 func _on_lane_failed(player_id: int) -> void:
+	# 무너진 레인의 주인은 탈락한다 (이후 관전만). 그 사람이 보스 레인에 보낸 몬스터도 바로 철수한다 (#22 결정).
+	# 이미 낸 기여도(damage_by_player)는 그대로 남고, 난이도 인원(_lanes.size())은 시작 인원 그대로다.
+	withdraw_monsters_of(player_id)
 	# 모든 참여 플레이어가 패배하면 전체 패배
 	for lane in _lanes.values():
 		if lane.active:
 			return
 	_finish(State.DEFEAT, "모든 플레이어 레인 붕괴 (마지막: P%d)" % (player_id + 1))
+
+
+## 이 플레이어가 보스 레인에 보낸 몬스터를 모두 치운다 (탈락). 치운 마리 수를 돌려준다.
+func withdraw_monsters_of(player_id: int) -> int:
+	var count := 0
+	for m in _sent_monsters.duplicate():
+		if not is_instance_valid(m) or m.owner_id != player_id:
+			continue
+		_attackers.erase(m)
+		_sent_monsters.erase(m)
+		if m.slot_key != "":
+			_slots_taken.erase(m.slot_key)
+		events.ring(GameField.BOSS_LANE_ID, m.cell_pos, 0.6, m.body_color)
+		m.queue_free()
+		count += 1
+	if count > 0:
+		_recalc_dps()
+		Log.info(Log.Category.GAME, "[P%d] 탈락: 보스 레인 몬스터 %d마리 철수 (공격 중 %d마리 남음)" % [player_id + 1, count, _attackers.size()])
+	return count
 
 
 func _finish(result: State, reason: String) -> void:

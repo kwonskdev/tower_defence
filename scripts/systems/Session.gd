@@ -15,3 +15,13 @@ func is_participant(player_id: int) -> bool:
 ## 혼자 하는 판인가 (일시정지처럼 싱글에서만 허용하는 행동의 기준)
 func is_solo() -> bool:
 	return participants.size() <= 1
+
+
+## 플레이어 번호 -> 닉네임 (로비에서 정해진다). 1인 플레이는 비어 있고 이름을 안 보여 준다.
+var names: Dictionary = {}
+
+
+## 화면에 보일 이름. 정해진 게 없으면 "Player1"처럼 번호로.
+func name_of(player_id: int) -> String:
+	return str(names.get(player_id, "Player%d" % (player_id + 1)))
+
