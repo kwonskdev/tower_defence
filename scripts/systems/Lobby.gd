@@ -73,6 +73,13 @@ func host_start(peer: int) -> bool:
 	return true
 
 
+## 시작하려던 판을 만들지 못했다: 대기방을 다시 연다 (입장/준비/시작이 다시 된다)
+func reopen() -> void:
+	if phase == Phase.STARTING:
+		phase = Phase.OPEN
+		_changed()
+
+
 func mark_started() -> void:
 	phase = Phase.STARTED
 	_changed()

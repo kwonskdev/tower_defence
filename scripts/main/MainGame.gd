@@ -81,6 +81,7 @@ const OVERLAY_MARGIN := 6.0              # 맵 왼쪽 위 상태 표시와 맵 �
 var game_over_screen: GameOverScreen     # 승리/패배 화면
 var _play_time := 0.0                    # 실제로 플레이한 시간(초). 일시정지 중에는 흐르지 않는다 (통계용)
 var _play_running := false               # 시작 버튼을 눌렀는지
+var auto_start_attempts := 0             # 자동 start_game을 시도한 횟수. 한 번 실패하면 다시 시도하지 않는다(매 프레임 실패 로그가 쌓이지 않게)
 var auto_start_left := -1.0              # 여럿이 하는 판: 게임 화면에 들어온 뒤 자동 start_game까지 남은 초 (-1 = 아직 안 셈). 혼자 하는 판은 시작 버튼 (#22)
 
 # 일시정지: get_tree().paused로 게임 전체를 멈추고, 항상 동작하는 PauseOverlay를 위에 띄운다
@@ -1396,8 +1397,11 @@ func _update_auto_start(delta: float) -> void:
 	if auto_start_left < 0.0:
 		auto_start_left = Balance.GAME_AUTO_START_SEC
 	auto_start_left = maxf(0.0, auto_start_left - delta)
-	if auto_start_left <= 0.0:
+	if auto_start_left <= 0.0 and auto_start_attempts == 0:
+		auto_start_attempts += 1  # 실패해도 한 번만 시도한다: 이미 시작됐거나 거절된 판에서 매 프레임 같은 명령을 보내지 않는다
 		_on_start_pressed()
+		if not _play_running:
+			Log.warn(Log.Category.GAME, "자동 시작 실패: 시작 명령이 거절됐다")
 
 
 func _on_start_pressed():

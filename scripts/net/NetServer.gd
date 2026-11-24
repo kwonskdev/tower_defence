@@ -355,6 +355,11 @@ func _process_lobby(_delta: float) -> void:
 func _process_pregame(delta: float) -> void:
 	if _pregame_left < 0.0 or field == null or field.bus.started:
 		return
+	if _slots.is_empty():
+		# 카운트다운 중에 접속자가 모두 나갔다: 아무도 없는 판을 시작하지 않는다 (재접속은 #23)
+		_pregame_left = -1.0
+		Log.warn(Log.Category.NETWORK, "접속자가 없어 자동 시작을 취소함")
+		return
 	_pregame_left = maxf(0.0, _pregame_left - delta)
 	var secs := int(ceilf(_pregame_left))
 	if secs != _pregame_shown:
@@ -390,7 +395,13 @@ func _begin_game() -> void:
 	Log.info(Log.Category.NETWORK, "판 시작: 참여 %d명 레인 %s" % [lanes.size(), lanes])
 	var f: GameField = field_factory.call()
 	if f == null:
-		Log.error(Log.Category.NETWORK, "판을 만들지 못함")
+		# 판을 못 만들면 시작 중인 채로 멈춰 있지 않게 대기방을 다시 연다 (참여자 확정을 되돌리고, 모두에게 대기방 상태를 다시 보낸다)
+		Log.error(Log.Category.NETWORK, "판을 만들지 못함: 대기방으로 되돌린다")
+		game_started = false
+		session.participants.clear()
+		session.names = {}
+		lobby.reopen()
+		_lobby_dirty = true
 		return
 	await f.boss_ready  # 보스는 한 프레임 뒤에 만들어진다
 	field = f

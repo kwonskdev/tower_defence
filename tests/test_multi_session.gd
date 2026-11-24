@@ -21,6 +21,7 @@ func run() -> void:
 	await _net_lobby()
 	await _net_auto_start()
 	await _net_solo()
+	await _net_failures()
 	await _screens()
 	await _main_game_screens()
 	await _main_game_countdown()
@@ -105,6 +106,13 @@ func _nicknames() -> void:
 	check(Nicknames.sanitize("  아름다운   사과  ") == "아름다운 사과", "앞뒤/연속 공백 정리")
 	check(Nicknames.sanitize("a" + String.chr(10) + "b" + String.chr(9) + "c" + String.chr(1) + "d") == "abcd", "제어문자 제거")
 	check(Nicknames.sanitize("x" + String.chr(0x202E) + "y") == "xy", "글자 방향 뒤집기 문자 제거")
+	var hidden_codes := [0x200B, 0x200C, 0x200D, 0x200E, 0x200F, 0x2028, 0x2029, 0x202A, 0x202B, 0x202C, 0x202D, 0x202E, 0x2066, 0x2067, 0x2068, 0x2069, 0x061C, 0xFEFF]
+	var left_over: Array = []
+	for code in hidden_codes:
+		if Nicknames.sanitize("a" + String.chr(code) + "b") != "ab":
+			left_over.append("U+%04X" % code)
+	check(left_over.is_empty(), "방향 제어/보이지 않는 글자 %d종이 모두 걸러진다 (남은 것: %s)" % [hidden_codes.size(), left_over])
+	check(Nicknames.sanitize("가" + String.chr(0x2066) + "나") == "가나" and Nicknames.sanitize("가나다") == "가나다", "정상 글자는 그대로")
 	check(Nicknames.sanitize("가".repeat(50)).length() == Balance.NICKNAME_MAX_LENGTH, "너무 길면 %d글자로" % Balance.NICKNAME_MAX_LENGTH)
 	check(Nicknames.sanitize("   ") == "", "공백뿐이면 빈 이름")
 	check(Nicknames.unique("민수", ["철수"]) == "민수", "안 겹치면 그대로")
@@ -462,7 +470,9 @@ func _main_game_countdown() -> void:
 	await wait_until(func(): return gf.boss != null and multi.is_inside_tree(), 5000)
 	await frames(5)
 	check(not gf.bus.started and gf.boss.state == BossController.State.WAITING, "다인: 게임 화면에 들어와도 바로 시작하지 않는다")
-	check(not multi.pause_button.visible, "다인: 시작 버튼이 없다")
+	# 버튼 표시는 HUD 갱신 주기(0.1초)에서 바뀌므로 프레임 수가 아니라 조건으로 기다린다
+	var hidden := await wait_until(func(): return not multi.pause_button.visible, 3000)
+	check(hidden, "다인: 시작 버튼이 없다")
 	check(multi.auto_start_left > Balance.GAME_AUTO_START_SEC - 5.0 and multi.auto_start_left <= Balance.GAME_AUTO_START_SEC, "다인: %.0f초 카운트다운이 돈다 (%.1f)" % [Balance.GAME_AUTO_START_SEC, multi.auto_start_left])
 	multi.auto_start_left = 0.3
 	var ok := await wait_until(func(): return gf.bus.started, 3000)
@@ -481,4 +491,56 @@ func _main_game_countdown() -> void:
 	solo._on_start_pressed()
 	check(sgf.bus.started, "1인: 시작 버튼으로 시작")
 	solo.queue_free()
+	await frames(3)
+
+
+## 시작 실패 / 카운트다운 중 전원 이탈 / 자동 시작 실패 (리뷰 반영)
+func _net_failures() -> void:
+	print("[11] 판을 못 만들면 대기방으로 되돌린다 / 접속자가 없으면 자동 시작하지 않는다")
+	var port := PORT_BASE + 5
+	var server := await _server(port, 1.5)
+	var net: NetServer = server.net
+	var a := _client("a", port)
+	await wait_until(func(): return a.is_joined(), 8000)
+	var b := _client("b", port)
+	await wait_until(func(): return b.is_joined(), 8000)
+	b.set_ready(true)
+	await wait_until(func(): return a.lobby.get("can_start", false), 5000)
+	var good_factory := net.field_factory
+	net.field_factory = func(): return null  # 판 만들기가 실패한다
+	var lobby_msgs := {"n": 0}
+	a.lobby_changed.connect(func(_v): lobby_msgs.n += 1)
+	a.request_start()
+	await wait_until(func(): return lobby_msgs.n > 0, 5000)
+	check(lobby_msgs.n > 0 and not net.game_started and net.lobby.phase == Lobby.Phase.OPEN and server.session.participants.is_empty(), "판을 못 만들면 시작 중에 멈추지 않고 대기방이 다시 열린다")
+	check(not a.in_game and server.field == null, "접속자는 게임 화면으로 넘어가지 않았다")
+	net.field_factory = good_factory
+	a.request_start()
+	var ok := await wait_until(func(): return a.in_game and b.in_game, 8000)
+	check(ok, "다시 시작하면 정상으로 시작한다")
+	# 카운트다운 중 모두 나간다
+	a.close()
+	b.close()
+	await wait_until(func(): return net.joined_count() == 0, 5000)
+	await wait_seconds(2.5)
+	check(not server.field.bus.started, "카운트다운 중에 접속자가 모두 나가면 자동 시작하지 않는다")
+	a.queue_free()
+	b.queue_free()
+	server.queue_free()
+	await frames(4)
+
+	print("[12] 자동 시작이 거절돼도 한 번만 시도한다")
+	var multi := (load("res://scenes/main/MainGame.tscn") as PackedScene).instantiate()
+	var gf: GameField = multi.find_children("*", "GameField", true, false)[0]
+	gf.session.participants.clear()
+	for i in range(2):
+		gf.session.participants.append(i)
+	get_tree().root.add_child.call_deferred(multi)
+	await wait_until(func(): return gf.boss != null and multi.is_inside_tree(), 5000)
+	await frames(5)
+	gf.bus.started = true  # 이미 시작된 것으로 만들어 start_game이 거절되게 한다 (보스는 아직 대기 상태)
+	multi.auto_start_left = 0.1
+	await wait_seconds(0.8)
+	check(multi.auto_start_attempts == 1, "거절돼도 매 프레임 다시 시도하지 않는다 (시도 %d번)" % multi.auto_start_attempts)
+	multi.queue_free()
 	await frames(3)
