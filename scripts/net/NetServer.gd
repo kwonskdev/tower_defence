@@ -343,6 +343,8 @@ func _on_cmd(id: int, c: Dictionary, msg: Dictionary) -> void:
 		result = CommandBus.fail("not_started")  # 로비 중: 아직 판이 없다
 	elif cmd.is_empty():
 		result = CommandBus.fail("bad_command")
+	elif cmd["type"] == Command.SET_PAUSE and lobby != null:
+		result = CommandBus.fail("pause_not_allowed")  # 온라인 방의 시뮬레이션은 한 사람이 멈출 수 없다 (서버는 여러 방을 같이 돌린다)
 	elif cmd["player_id"] != c.player_id:
 		# 다른 플레이어를 사칭한 명령: 실행하지 않는다 (번호는 서버가 정해 준 것만 인정)
 		Log.warn(Log.Category.NETWORK, "사칭 명령 거절: 연결 %d는 P%d인데 P%d로 보냄 (%s)" % [id, c.player_id + 1, cmd["player_id"] + 1, cmd["type"]])
@@ -564,7 +566,7 @@ static func lane_summary(lane: Dictionary) -> Dictionary:
 	var towers: Array = []
 	for t in lane.towers:
 		towers.append(t.cell)
-	return {"towers": towers, "monsters": _dots(lane.monsters)}
+	return {"towers": towers, "monsters": _dots(lane.monsters), "lives": lane.lives, "active": lane.active}
 
 
 static func _dots(monsters: Array) -> Array:

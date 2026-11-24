@@ -1,6 +1,9 @@
 extends Control
 class_name MainGame
 
+## 온라인 판에서 나간다 (결과 화면의 [메뉴로], [나가기] 확인). Boot가 받아서 연결을 닫고 메인 메뉴로 돌아간다 (#26)
+signal exit_requested()
+
 @onready var game_field: GameField = $VBoxContainer/GameField
 @onready var left_panel: Control = $VBoxContainer/TopUI/HBoxContainer/LeftColumn/LeftPanel  # 상단 왼쪽 칸: 여기서 화면(타워/몬스터/업그레이드)이 바뀐다. 그 위의 탭 줄은 늘 고정
 @onready var monster_view: GridContainer = $VBoxContainer/TopUI/HBoxContainer/LeftColumn/LeftPanel/MonsterView
@@ -80,6 +83,9 @@ const OVERLAY_MARGIN := 6.0              # 맵 왼쪽 위 상태 표시와 맵 �
 
 var game_over_screen: GameOverScreen     # 승리/패배 화면
 var _play_time := 0.0                    # 실제로 플레이한 시간(초). 일시정지 중에는 흐르지 않는다 (통계용)
+var online := false                      # 온라인 모드 (#26): 판은 서버가 돌리고 이 화면은 서버 스냅샷만 그린다. 시작/일시정지 버튼 없음, 나가기 버튼. create_online이 켠다
+var leave_button: Button                 # 온라인: 맵 오른쪽 위 [나가기]
+var leave_dialog: ConfirmationDialog
 var _play_running := false               # 시작 버튼을 눌렀는지
 
 # 일시정지: get_tree().paused로 게임 전체를 멈추고, 항상 동작하는 PauseOverlay를 위에 띄운다
@@ -185,6 +191,8 @@ func setup_ui():
 	_create_pause_ui()
 	_create_alerts()
 	_show_view("tower")  # 시작 화면은 타워 (탭 강조도 여기서 맞춘다)
+	if online:
+		_setup_online_ui()
 
 ## 미니맵 바로 왼쪽 우하단에 놓는 실행 버튼 ([생성] / [업그레이드]). 고르기만 해서는 아무 일도 일어나지 않고 이 버튼을 눌러야 실행된다.
 func _make_action_button() -> Button:
@@ -1386,6 +1394,8 @@ class StatusIcon extends Control:
 
 
 func _on_start_pressed():
+	if online:
+		return  # 온라인 판은 방장이 대기방에서 시작했다 (서버가 이미 start_game을 했다)
 	if game_field.do_command(Command.START_GAME)["ok"]:
 		_play_running = true
 		_refresh_start_button()
@@ -1420,6 +1430,8 @@ func _toggle_pause() -> void:
 
 
 func _set_paused(on: bool) -> void:
+	if online:
+		return  # 온라인 판은 멈출 수 없다 (서버는 계속 돈다)
 	if on == get_tree().paused:
 		return
 	# 끝난 게임, 길 막힘/판매 확인창이 떠 있을 때는 멈추지 않는다 (확인창은 멈춘 화면에서 눌리지 않아 갇힌다)
@@ -1437,7 +1449,9 @@ func _set_paused(on: bool) -> void:
 func _refresh_start_button() -> void:
 	# 여럿이 하는 판에는 일시정지가 없어서(서버는 계속 돈다) 시작한 뒤에는 버튼을 숨긴다
 	# 여럿이 하는 판은 시작 전에도 버튼이 없다 (온라인 방은 방장이 대기방에서 [시작]을 누르면 서버가 시작한다)
-	pause_button.visible = not game_over_screen.visible and game_field.session.is_solo()
+	pause_button.visible = not game_over_screen.visible and game_field.session.is_solo() and not online
+	if leave_button != null:
+		leave_button.visible = not game_over_screen.visible
 	if pause_icon.playing == _play_running:  # 아이콘이 상태와 다르면 갱신
 		pause_icon.playing = not _play_running
 		pause_icon.queue_redraw()
@@ -1804,6 +1818,8 @@ func _process(delta):
 	if pause_button != null:  # 맵 오른쪽 위 모서리
 		var rect := game_field.get_global_rect()
 		pause_button.global_position = Vector2(rect.end.x - PAUSE_SIZE - OVERLAY_MARGIN, rect.position.y + OVERLAY_MARGIN)
+		if leave_button != null:
+			leave_button.global_position = Vector2(rect.end.x - leave_button.size.x - OVERLAY_MARGIN, rect.position.y + OVERLAY_MARGIN)
 	_update_skill_banner(delta)
 	_hud_timer -= delta
 	if _hud_timer > 0.0:
@@ -2032,7 +2048,7 @@ func _notification(what: int) -> void:
 			detail_action.free()
 		return
 	if what == NOTIFICATION_APPLICATION_PAUSED or what == NOTIFICATION_WM_WINDOW_FOCUS_OUT:
-		if _play_running and pause_overlay != null and game_field.session.is_solo():  # 여럿이 하는 판은 멈출 수 없다
+		if _play_running and pause_overlay != null and game_field.session.is_solo() and not online:  # 여럿이 하는 판은 멈출 수 없다
 			_set_paused(true)
 		return
 	if what != NOTIFICATION_WM_GO_BACK_REQUEST or get_tree().paused:
@@ -2057,6 +2073,8 @@ func _notification(what: int) -> void:
 		game_field.set_current_tool(GameField.PlacementTool.NONE)
 	elif not game_field.get_selected_tower().is_empty():
 		game_field.clear_selection()
+	elif online:
+		_ask_leave()  # 온라인 판은 멈추지 않고 나갈지 묻는다
 	elif _play_running:
 		_set_paused(true)
 	else:
@@ -2203,9 +2221,63 @@ func _collect_game_stats(is_victory: bool) -> Dictionary:
 
 ## 재도전 버튼
 func _on_game_over_restart() -> void:
+	if online:
+		exit_requested.emit()  # (온라인에서는 재도전 버튼을 숨기지만 같은 뜻으로 처리한다)
+		return
 	reset_game()
 
 
 ## 종료 버튼
 func _on_game_over_quit() -> void:
+	if online:
+		exit_requested.emit()  # 결과 화면의 [메뉴로]
+		return
 	get_tree().quit()
+
+
+# ---- 온라인 모드 (#26) -------------------------------------------------------
+
+## 서버에 접속해 있는 client로 온라인 화면을 만든다 (add_child 전에 부른다). 참여자/내 레인/닉네임은 서버가 정한 값이다.
+## 판은 서버가 돌린다: 이 화면은 서버 스냅샷을 그리고, 명령은 서버로 보낸다. 로컬 [혼자 하기]는 이 함수를 쓰지 않는다.
+static func create_online(client: NetClient) -> MainGame:
+	var main := (load("res://scenes/main/MainGame.tscn") as PackedScene).instantiate() as MainGame
+	var field: GameField = main.find_children("*", "GameField", true, false)[0]
+	field.remote = client
+	field.session.local_player_id = client.player_id
+	field.session.participants.clear()
+	for p in client.players:
+		field.session.participants.append(int(p))
+	field.session.names.clear()
+	for key in client.names:
+		field.session.names[int(key)] = str(client.names[key])
+	main.online = true
+	return main
+
+
+func _setup_online_ui() -> void:
+	_play_running = true  # 서버가 이미 시작했다
+	leave_button = Button.new()
+	leave_button.text = "나가기"
+	leave_button.z_index = 85
+	leave_button.focus_mode = Control.FOCUS_NONE
+	leave_button.custom_minimum_size = Vector2(88, PAUSE_SIZE)
+	leave_button.size = Vector2(88, PAUSE_SIZE)
+	leave_button.pressed.connect(_ask_leave)
+	add_child(leave_button)
+	game_field.ui_blockers.append(leave_button)
+	leave_dialog = _make_confirm_dialog("나가기", "게임에서 나가 메뉴로 돌아갑니다.\n나가면 이 판에 다시 들어올 수 없습니다.", "나갈래요")
+	leave_dialog.confirmed.connect(func(): exit_requested.emit())
+	# 결과 화면: 온라인에서는 재도전이 없고, 메뉴로 돌아간다
+	game_over_screen.restart_button.visible = false
+	game_over_screen.quit_button.text = "메뉴로"
+	_refresh_start_button()
+
+
+func _ask_leave() -> void:
+	if online and leave_dialog != null and not game_over_screen.visible:
+		leave_dialog.popup_centered()
+
+
+## 결과 화면이 떠 있는가 (연결이 끊겨도 결과를 보고 있는 사람은 메뉴로 보내지 않는다)
+func is_game_over() -> bool:
+	return game_over_screen != null and game_over_screen.visible

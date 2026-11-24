@@ -7,10 +7,10 @@ class_name MainMenu
 ##  - [방 입장]: 방 코드를 쳐서 들어간다(mode=join). 없는 코드/가득 참/이미 시작/너무 많이 시도는 이유를 보여 준다.
 ## 닉네임과 서버 주소는 이 화면에서 정하고 기기에 저장한다 (닉네임은 서버가 정리/중복 제거해서 돌려준다).
 ## 서버 주소 기본값은 로컬 개발 서버다. 운영 서버 주소는 호스팅(#24)이 정해지면 default_server에 넣는다.
-## 방장이 시작한 뒤의 게임 화면(서버 스냅샷을 그리는 MainGame)은 이 이슈 범위 밖이다: started 신호까지만 낸다.
+## 방장이 시작하면 online_started를 낸다: Boot가 이 메뉴에서 접속(take_client)을 넘겨 받아 서버 스냅샷을 그리는 온라인 게임 화면으로 간다.
 
 signal solo_chosen()
-signal online_started()    # 서버가 판을 시작했다 (온라인 게임 화면으로 넘어갈 때)
+signal online_started()    # 서버가 판을 시작했다. Boot가 take_client()로 접속을 넘겨 받아 온라인 게임 화면(MainGame.create_online)으로 간다
 
 const DEFAULT_PORT := 47300
 const CONNECT_TIMEOUT_SEC := 8.0
@@ -249,7 +249,7 @@ func _on_joined(_player_id: int) -> void:
 	lobby_screen.setup(client)
 	lobby_screen.leave_requested.connect(func(): _reset_online(""))
 	lobby_screen.started.connect(func():
-		_status("방장이 시작했습니다. (온라인 게임 화면은 아직 연결되지 않았습니다)")
+		_status("게임을 불러오는 중...")
 		online_started.emit())
 
 
@@ -281,6 +281,26 @@ func _reset_online(message: String) -> void:
 	_form.visible = true
 	_set_busy(false)
 	_status(message)
+
+
+## 접속(NetClient)을 넘겨 준다: 메뉴는 접속을 닫지 않고 손을 뗀다 (online_started 뒤 Boot가 이어받는다)
+func take_client() -> NetClient:
+	var c := client
+	if c == null:
+		return null
+	c.joined.disconnect(_on_joined)
+	c.rejected.disconnect(_on_rejected)
+	c.disconnected.disconnect(_on_disconnected)
+	c.keep_open = true  # 트리에서 빠져도 접속은 닫지 않는다 (받는 쪽이 다시 붙이고 keep_open을 끈다)
+	remove_child(c)
+	client = null
+	_connecting_left = -1.0
+	return c
+
+
+## 안내 문구를 보여 준다 (온라인 판에서 돌아왔을 때의 사유 등)
+func show_message(text: String) -> void:
+	_status(text)
 
 
 ## 방 코드를 클립보드에 복사한다. 복사한 글자를 돌려준다 (헤드리스에서는 클립보드가 없어 빈 글자).

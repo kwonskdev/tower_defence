@@ -81,6 +81,10 @@ func setup_game_field():
 		if w > 0.0 and int(w / GridRenderer.GRID_WIDTH) != grid_renderer.CELL_SIZE:
 			grid_renderer.set_container_width(w))
 
+	if remote != null:
+		_setup_remote()
+		return
+
 	# 참여자의 레인만 만든다 (나머지 레인은 비어 있음)
 	for player_id in session.participants:
 		start_lane(player_id)
@@ -103,6 +107,8 @@ func set_side_inset(value: float) -> void:
 ## 명령을 실행하고 결과({ok, reason, events})를 돌려준다. UI는 상태를 바꾸는 모든 행동을 여기로 보낸다.
 ## 연출 이벤트는 여기(클라이언트)에서만 재생한다. 서버는 CommandBus를 직접 쓰고 이벤트를 무시한다.
 func execute(cmd: Dictionary) -> Dictionary:
+	if remote != null:
+		return _execute_remote(cmd)
 	var result := bus.execute(cmd)
 	_snapshot_frame = -1  # 명령이 상태를 바꿨으니 캐시된 스냅샷은 낡았다
 	_play_events(result["events"])
@@ -114,6 +120,8 @@ var _snapshot: Dictionary = {}
 var _snapshot_frame := -1
 
 func snapshot(fresh := false) -> Dictionary:
+	if remote != null:
+		return _remote_snapshot()
 	var frame := Engine.get_process_frames()
 	if fresh or frame != _snapshot_frame:
 		_snapshot = Snapshot.build(session, lanes, boss)
@@ -123,6 +131,12 @@ func snapshot(fresh := false) -> Dictionary:
 
 ## 연출을 그릴지 (= 화면이 있는 클라이언트인지). 서버(ServerMain)는 화면이 없으니 끈다: 시뮬레이션은 이벤트를 내보내기만 하고 그리지 않는다.
 var play_effects := true
+
+## 온라인 모드 (#26): 주면 이 화면은 시뮬레이션을 만들지 않고 서버에 접속한 NetClient의 스냅샷/이벤트를 그린다.
+## 명령은 서버로 보내고(결과는 command_result로 늦게 온다), 보는 레인을 바꾸면 서버에 알린다. add_child 전에 정한다.
+var remote: NetClient = null
+var _remote_pending: Dictionary = {}   # seq -> 보낸 명령 (결과가 오면 사유 안내/길 막힘 확인에 쓴다)
+var _grid_mirror: Dictionary = {}      # 레인 -> {Vector2i: CellState}: 서버 스냅샷의 타워 칸을 이쪽 격자에도 칠한다 (칸 색)
 var _warnings: Array = []  # 떠 있는 슬라임 예고 표식
 var map_view: MapView = null  # 스냅샷으로 타워/몬스터를 그리는 껍데기들 (서버에는 없다)
 var boss_view: BossController.BossView = null  # 보스 몸통 (스냅샷으로 그린다)
@@ -130,7 +144,9 @@ var boss_bar: BossController.BossBar = null    # 보스 체력바/기여도 (스
 
 
 func _process(_delta: float) -> void:
-	if map_view == null or boss == null:
+	if remote != null:
+		_mirror_grid(remote.snapshot)
+	if map_view == null or (boss == null and remote == null):
 		return
 	var sel_key := ""
 	if selected_lane >= 0:
@@ -239,19 +255,112 @@ func start_boss():
 	boss.set_lane_visible(current_player_id == BOSS_LANE_ID)
 	_snapshot_frame = -1
 	if play_effects:  # 화면이 있는 클라이언트: 보스 몸통과 체력바는 스냅샷으로 그린다
-		boss_view = BossController.BossView.new()
-		boss_view.renderer = grid_renderer
-		boss_view.z_index = 0
-		grid_renderer.add_child(boss_view)
-		boss_bar = BossController.BossBar.new()
-		boss_bar.renderer = grid_renderer
-		boss_bar.z_index = 5
-		grid_renderer.add_child(boss_bar)
+		_make_boss_views()
 	boss_ready.emit(boss)
 
 	# 각 레인에 boss 참조 설정 (남색 색깔 보너스용)
 	for lane in lanes.values():
 		lane._boss_controller = boss
+
+func _make_boss_views() -> void:
+	boss_view = BossController.BossView.new()
+	boss_view.renderer = grid_renderer
+	boss_view.z_index = 0
+	grid_renderer.add_child(boss_view)
+	boss_bar = BossController.BossBar.new()
+	boss_bar.renderer = grid_renderer
+	boss_bar.z_index = 5
+	grid_renderer.add_child(boss_bar)
+
+
+# ---- 온라인 모드 (#26) -------------------------------------------------------
+
+## 시뮬레이션 없이 서버 스냅샷으로 그릴 준비. 보스 레인의 몸통 칸은 서버와 같게 막힌 칸으로 칠한다.
+func _setup_remote() -> void:
+	var boss_grid := grid_systems[BOSS_LANE_ID]
+	var radius := Balance.BOSS_RADIUS + 0.25
+	for y in range(GridSystem.GRID_HEIGHT):
+		for x in range(GridSystem.GRID_WIDTH):
+			if (Vector2(x, y) + Vector2(0.5, 0.5)).distance_to(Balance.BOSS_CENTER) <= radius:
+				boss_grid.set_cell_state(Vector2i(x, y), GridSystem.CellState.OBSTACLE)
+	_make_boss_views()
+	remote.events_received.connect(_on_remote_events)
+	remote.command_result.connect(_on_remote_result)
+	boss_ready.emit(null)  # 보스 객체는 서버에만 있다. MainGame은 이 신호로 이벤트 연결을 시작한다
+
+
+## 서버가 보내 준 스냅샷 (아직 못 받았으면 빈 모양). 화면은 이것만 읽는다.
+func _remote_snapshot() -> Dictionary:
+	if remote.snapshot.is_empty():
+		return {"v": Snapshot.VERSION, "boss_lane": BOSS_LANE_ID, "players": session.participants, "names": {}, "lanes": {}, "boss": {}}
+	return remote.snapshot
+
+
+## 미니맵용 요약 (자기/보고 있는 레인을 뺀 나머지 레인. 1Hz). 온라인이 아니거나 없으면 빈 Dictionary
+func summary_of(lane_id: int) -> Dictionary:
+	if remote == null:
+		return {}
+	return remote.summary.get(str(lane_id), {})
+
+
+## 명령을 서버로 보낸다. 결과는 늦게 오므로 일단 보냈다는 뜻으로 성공을 돌려주고, 거절은 command_result가 알린다 (_on_remote_result).
+func _execute_remote(cmd: Dictionary) -> Dictionary:
+	var seq := remote.send_command(cmd)
+	if seq < 0:
+		return {"ok": false, "reason": "not_connected", "events": []}
+	_remote_pending[seq] = cmd
+	return {"ok": true, "reason": "", "events": []}
+
+
+func _on_remote_result(seq: int, ok: bool, reason: String, events: Array) -> void:
+	var cmd: Dictionary = _remote_pending.get(seq, {})
+	_remote_pending.erase(seq)
+	if cmd.is_empty():
+		return
+	if ok:
+		var evs: Array = []
+		for ev in events:
+			var e: Dictionary = ev.duplicate()
+			if e.has("cell") and e["cell"] is Array and e["cell"].size() == 2:
+				e["cell"] = Vector2i(int(e["cell"][0]), int(e["cell"][1]))  # 선로에서는 [x, y]로 왔다
+			evs.append(e)
+		_play_events(evs)
+		return
+	Log.debug(Log.Category.UI, "명령 거절(서버): %s -> %s" % [cmd["type"], reason])
+	command_failed.emit(cmd["type"], reason)
+	if reason == "path_blocked" and cmd["type"] == Command.BUILD_TOWER:  # 길이 막힌다: 확인받은 뒤 confirmed=true로 다시 보낸다
+		awaiting_confirm = true
+		path_block_confirm.emit(cmd["cell"])
+
+
+## 서버가 보낸 연출 이벤트를 시뮬레이션이 내보낸 것과 똑같이 흘려 보낸다 (JSON이라 정수가 실수로 온 것은 바로잡는다)
+func _on_remote_events(list: Array) -> void:
+	for ev in list:
+		var e: Dictionary = ev.duplicate()
+		for key in ["lane", "target"]:
+			if e.has(key) and (e[key] is float or e[key] is int):
+				e[key] = int(e[key])
+		session.events.emitted.emit(e)
+
+
+## 스냅샷의 타워 칸을 이쪽 격자에도 칠한다 (시뮬레이션이 없어서 타워가 격자 상태를 바꾸지 않는다)
+func _mirror_grid(snap: Dictionary) -> void:
+	for lane_key in snap.get("lanes", {}):
+		var lane_id := int(lane_key)
+		if lane_id < 0 or lane_id >= grid_systems.size():
+			continue
+		var now := {}
+		for t in snap.lanes[lane_key].towers:
+			now[Vector2i(int(t.cell[0]), int(t.cell[1]))] = GridSystem.CellState.TOWER if Balance.tower_kind(t.kind).blocks else GridSystem.CellState.TRAP_TOWER
+		var before: Dictionary = _grid_mirror.get(lane_id, {})
+		for cell in before:
+			if not now.has(cell):
+				grid_systems[lane_id].set_cell_state(cell, GridSystem.CellState.EMPTY)
+		for cell in now:
+			if before.get(cell, -1) != now[cell]:
+				grid_systems[lane_id].set_cell_state(cell, now[cell])
+		_grid_mirror[lane_id] = now
+
 
 func setup_scroll_container():
 	# 가로 스크롤 비활성화 (세로 드래그 스크롤만 사용)
@@ -455,6 +564,8 @@ func switch_player(player_id: int):
 
 	# 새 플레이어의 렌더러 연결
 	get_current_grid_system().connect_renderer(grid_renderer)
+	if remote != null:
+		remote.set_view(player_id)  # 서버는 보고 있는 레인을 자세히 보내 준다
 
 	# 보고 있는 레인의 몬스터만 표시
 	for id in lanes:

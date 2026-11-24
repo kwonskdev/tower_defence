@@ -69,7 +69,13 @@ func close() -> void:
 		state = State.CLOSED
 
 
+## 트리에서 다른 부모로 옮기는 동안(메뉴 -> Boot)은 접속을 닫지 않는다. 옮기기 전에 켜고, 다시 붙인 뒤 끈다.
+var keep_open := false
+
+
 func _exit_tree() -> void:
+	if keep_open:
+		return
 	close()
 
 
