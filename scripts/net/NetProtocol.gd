@@ -22,9 +22,7 @@ class_name NetProtocol
 ##   events  {list: [...]}                   연출 이벤트 (SimEvents 모양 그대로)
 ##   pong    {n}
 ##   lobby   {members: [{lane, name, ready, host}], host, max, can_start, room, mode, public}   로비 상태 (바뀔 때마다) (#22)
-##   started {players, names: {"<레인>": 닉네임}, auto_start}   방장이 시작해서 게임 화면으로 넘어간다. 이 뒤로 snap이 온다. 이때 참여자(레인)가 확정된다.
-##                                           auto_start = 몬스터 출몰(start_game)까지 남은 초. 2명 이상이면 서버가 센다(-1이 아님), 1명이면 -1 (시작 버튼)
-##   countdown {left}                        게임 화면의 자동 시작 카운트다운 (정수초가 바뀔 때마다). 0이 되면 서버가 start_game을 실행한다 (#22)
+##   started {players, names: {"<레인>": 닉네임}}   방장이 시작해서 게임이 시작됐다 (서버가 바로 start_game을 한다. 첫 몬스터는 30초 뒤). 이 뒤로 snap이 온다. 이때 참여자(레인)가 확정된다.
 
 ## 선로 형식(메시지 모양)이 바뀌면 올린다. 클라이언트와 서버가 같은 값이어야만 접속된다 (큰 호환 규칙: 다르면 거부).
 const PROTOCOL_VERSION := 3  # 2: 로비(lobby/started), 닉네임 (#22) / 3: 방 코드(hello mode/code, welcome/lobby room) (#26)
@@ -44,7 +42,6 @@ const MSG_LOBBY := "lobby"
 const MSG_STARTED := "started"
 const MSG_READY := "ready"
 const MSG_START := "start"
-const MSG_COUNTDOWN := "countdown"
 
 ## 접속 거부 사유
 const REJECT_PROTOCOL := "protocol_mismatch"   # 프로토콜/스냅샷 버전이 다르다

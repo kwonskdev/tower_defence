@@ -1,11 +1,11 @@
 extends "res://tests/case_base.gd"
 ## 이슈 #26: 방 코드로 모이기 (코드 발급/반납, 거부 사유, 무차별 대입 제한, 방 여러 개).
-##  [1] RoomCodes 규칙: 문자셋(0/O/1/I/L 없음) / 길이 / 겹치지 않음 / 반납 뒤 재발급 / 모양 검사 / 만료 / 시도 제한(주소별, 서버 전체, 시간 지나면 풀림)
+##  [1] RoomCodes 규칙: 문자셋(0/O/1/I/L 없음) / 길이 / 겹치지 않음 / 반납 뒤 재발급 / 모양 검사 / 시도 제한(주소별, 서버 전체, 시간 지나면 풀림)
 ##  [2] 방 코드 서버(RoomHub): 만들기 -> 코드 -> 다른 클라이언트가 코드로 입장 / 방이 서로 독립 / 게임 모드 필드
 ##  [3] 거부 사유: 없는 코드 / 모양이 틀린 코드 / 가득 참 / 이미 시작 / mode 없는 hello
 ##  [4] 무차별 대입: 잘못된 코드를 반복하면 too_many_attempts, 그 뒤엔 맞는 코드도 막힌다, 시간이 지나면 풀린다
 ##  [6] 빠른 시작: 자리 있는 공개 방에 들어가고 없으면 새 공개 방 (비공개/가득/시작한 방에는 안 들어간다)
-##  [5] 코드 반납: 방이 비면 / 시작 못 한 채 만료되면 / 판이 끝나면
+##  [5] 코드 반납: 방이 비면 / 판이 끝나면. 대기 시간 제한은 없다(사람이 있는 동안 몇 시간이든 만료 없음)
 ## (폰 실기기/실제 지연은 보지 않는다. 메인 메뉴는 tests/test_main_menu.gd)
 
 const PORT_BASE := 47280
@@ -50,10 +50,6 @@ func _codes() -> void:
 	check(not codes.has(one) and codes.count() == 499, "반납하면 더는 유효한 코드가 아니다")
 	check(RoomCodes.is_valid_format("ABC234") and not RoomCodes.is_valid_format("ABC23") and not RoomCodes.is_valid_format("ABC2345") and not RoomCodes.is_valid_format("ABCO34") and not RoomCodes.is_valid_format("abc234"), "모양 검사: 길이와 글자")
 	check(RoomCodes.normalize(" abc-23 4 ") == "ABC234", "입력은 공백/하이픈을 빼고 대문자로 바꾼다")
-	# 만료
-	var c2 := RoomCodes.new()
-	var made := c2.issue(1000, rng)
-	check(c2.expired(1000 + int(RoomCodes.EXPIRE_SEC * 1000.0) - 1).is_empty() and c2.expired(1000 + int(RoomCodes.EXPIRE_SEC * 1000.0)) == [made], "만든 지 %d초가 지나야 만료" % int(RoomCodes.EXPIRE_SEC))
 	# 시도 제한
 	var lim := RoomCodes.new()
 	var blocked_at := -1
@@ -72,12 +68,11 @@ func _codes() -> void:
 
 # ---- 서버/클라이언트 도우미 ---------------------------------------------------
 
-func _server(port: int, max_players: int = 8, auto_sec: float = 3.0) -> ServerMain:
+func _server(port: int, max_players: int = 8) -> ServerMain:
 	var server := ServerMain.new()
 	server.use_rooms = true
 	server.net_port = port
 	server.lobby_max_players = max_players
-	server.game_auto_start_sec = auto_sec
 	get_tree().root.add_child.call_deferred(server)
 	await frames(6)
 	server.hub.clock = func(): return _fake_ms
@@ -215,7 +210,7 @@ func _brute_force() -> void:
 # ---- [5] 코드 반납 -----------------------------------------------------------
 
 func _release() -> void:
-	print("[5] 방이 비거나 끝나거나 만료되면 코드를 돌려받는다")
+	print("[5] 방이 비거나 끝나면 코드를 돌려받고, 사람이 있는 동안은 만료가 없다")
 	var port := PORT_BASE + 3
 	var server := await _server(port)
 	var hub: RoomHub = server.hub
@@ -237,13 +232,18 @@ func _release() -> void:
 	check(hub.codes.has(h.room_code) and hub.room_count() == 1, "한 명이 나가도 남은 사람이 있으면 방과 코드가 유지된다")
 	await wait_until(func(): return h.lobby.get("members", []).size() == 1, 5000)
 	check(h.lobby.get("members", []).size() == 1, "나간 사람은 대기방 목록에서 빠진다")
-	# 만료
+	# 대기 시간 제한 없음: 사람이 있으면 몇 시간이 지나도 방과 코드가 그대로다
 	var hcode := h.room_code
 	var dropped := {"v": false}
 	h.disconnected.connect(func(): dropped["v"] = true)
-	_fake_ms += int(RoomCodes.EXPIRE_SEC * 1000.0) + 1000
-	check(await wait_until(func(): return not hub.codes.has(hcode) and hub.room_count() == 0, 5000), "시작 못 한 채 만료 시간이 지나면 방이 닫히고 코드가 반납된다")
-	check(await wait_until(func(): return dropped.v, 5000), "만료된 방의 접속자는 연결이 끊긴다 (그 소켓만)")
+	_fake_ms += 6 * 3600 * 1000  # 6시간
+	await frames(30)
+	check(hub.codes.has(hcode) and hub.room_count() == 1 and h.is_joined() and not dropped.v, "대기방에 사람이 있으면 6시간이 지나도 방과 코드가 유지되고 연결도 그대로다")
+	var late_friend := _client("늦은친구", port, NetProtocol.MODE_JOIN, hcode)
+	check(await _settle(late_friend) == "" and late_friend.is_joined(), "6시간 뒤에도 그 코드로 입장할 수 있다")
+	late_friend.close()
+	h.close()
+	check(await wait_until(func(): return not hub.codes.has(hcode) and hub.room_count() == 0, 5000), "마지막 사람이 나가면 그제서야 코드가 반납되고 방이 닫힌다")
 	# 판이 끝나면 반납
 	var g := _client("방장", port, NetProtocol.MODE_CREATE)
 	await _settle(g)
@@ -257,7 +257,7 @@ func _release() -> void:
 	check(await _settle(late) == NetProtocol.REJECT_NO_ROOM, "끝난 방의 코드로는 들어갈 수 없다")
 	_fake_ms += int(RoomHub.FINISHED_KEEP_SEC * 1000.0) + 1000
 	check(await wait_until(func(): return hub.room_count() == 0, 5000), "끝난 뒤 정리 시간이 지나면 방이 닫힌다")
-	for cl in [a, back, h, f, g, late]:
+	for cl in [a, back, h, f, g, late, late_friend]:
 		cl.queue_free()
 	server.queue_free()
 	await frames(4)

@@ -3,19 +3,18 @@ class_name RoomCodes
 ##
 ## 규칙
 ##  - 코드는 LENGTH자, ALPHABET의 글자만 쓴다. 혼동되는 글자(0/O, 1/I/L)는 뺐다.
-##  - 방이 끝나거나 비면 release()로 코드를 돌려받는다. 시작을 못 한 채 EXPIRE_SEC가 지난 방은 expired()가 알려 준다.
+##  - 방이 끝나거나 비면 release()로 코드를 돌려받는다. 대기 시간 제한이 없어서(몇 시간이든 기다린다) 접속자가 있는 방은 만료되지 않는다.
 ##  - 잘못된 코드를 시도한 횟수를 접속 주소마다(1분 창, MAX_BAD_PER_KEY) 세고, 서버 전체로도 분당(MAX_BAD_PER_MINUTE) 센다.
 ##    연결마다 세면 끊고 다시 접속해서 우회하므로 주소로 센다. 리버스 프록시 뒤에서는 주소가 모두 같으니 전체 한도가 막아 준다.
 ##    넘으면 입장 시도를 거부한다 (맞는 코드여도: 맞은 코드로 한계를 시험하지 못하게). 시간은 호출하는 쪽이 now_ms로 준다 (테스트가 시계를 조작한다).
 
 const ALPHABET := "23456789ABCDEFGHJKMNPQRSTUVWXYZ"
 const LENGTH := 6
-const EXPIRE_SEC := 1800.0            # 만든 뒤 시작을 못 하면 30분 뒤 만료 (#26 결정)
 const MAX_BAD_PER_KEY := 5            # 한 접속 주소가 1분 안에 잘못된 코드를 이만큼 시도하면 막는다 (연결을 끊을 뿐이다. 계정 로그아웃이 아니다)
 const MAX_BAD_PER_MINUTE := 60        # 서버 전체 잘못된 시도 한도 (분당)
 const WINDOW_MS := 60000
 
-var _rooms: Dictionary = {}           # 코드 -> 만든 시각(ms)
+var _rooms: Dictionary = {}           # 코드 -> 만든 시각(ms) (기록용)
 var _bad_by_key: Dictionary = {}      # 접속 주소 -> 잘못된 시도 시각들(ms)
 var _bad_times: Array = []            # 전체 잘못된 시도 시각(ms)
 
@@ -45,15 +44,6 @@ func has(code: String) -> bool:
 
 func count() -> int:
 	return _rooms.size()
-
-
-## 만료된(시작을 못 한 채 EXPIRE_SEC가 지난) 코드들. 부르는 쪽이 방을 닫고 release한다.
-func expired(now_ms: int) -> Array:
-	var out: Array = []
-	for code in _rooms:
-		if now_ms - int(_rooms[code]) >= int(EXPIRE_SEC * 1000.0):
-			out.append(code)
-	return out
 
 
 ## 사람이 친 글자를 코드 모양으로: 공백/하이픈 제거, 대문자. 헷갈리는 글자는 그대로 둔다 (없는 코드로 거부된다).

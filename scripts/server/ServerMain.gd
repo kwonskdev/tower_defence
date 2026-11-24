@@ -19,7 +19,7 @@ class_name ServerMain
 ##   접속한 사람이 [방 만들기]로 코드를 받고, 친구가 그 코드로 입장한다. 방마다 아래 로비 방식이 따로 돈다.
 ## --port=가 있고 --start-when-full이 없으면 로비 방식이다 (#22): 접속한 사람이 먼저 로비에 모이고(방장 = 첫 입장자),
 ##   모두 [준비]하면 방장이 [시작]해서 그 접속자들로 게임 화면에 들어간다 (참여자/레인이 그때 확정). 이때 --players=N은 최대 인원(기본 8)이다.
-##   게임 화면에서 2명 이상이면 30초 카운트다운 뒤 서버가 start_game을 하고, 혼자면 시작 버튼(START_GAME 명령)을 기다린다.
+##   대기 시간 제한은 없고 자동 시작도 없다: 방장이 [시작]을 누르면 서버가 바로 start_game을 한다 (첫 몬스터는 그 30초 뒤).
 ## 한 판이 끝나면 결과를 로그에 한 줄 남기고 종료한다 (승리 0, 패배 1).
 
 signal finished(victory: bool, info: Dictionary)
@@ -35,7 +35,6 @@ var use_rooms := false               # 방 코드 서버 (RoomHub). --port가 �
 var hub: RoomHub = null
 var use_lobby := false               # 로비 방식 (위 설명). --port가 있고 --start-when-full이 없으면 _ready가 켠다. 테스트는 직접 켠다
 var lobby_max_players := Balance.MAX_PLAYERS
-var game_auto_start_sec := Balance.GAME_AUTO_START_SEC
 
 
 ## 이 프로세스를 서버로 시작해야 하는가
@@ -113,7 +112,6 @@ func _ready() -> void:
 	if net_port > 0 and use_rooms:
 		hub = RoomHub.new()
 		hub.room_max_players = lobby_max_players
-		hub.game_auto_start_sec = game_auto_start_sec
 		add_child(hub)
 		var herr := hub.start(net_transport, net_port, net_tls)
 		if herr != OK:
@@ -127,7 +125,6 @@ func _ready() -> void:
 		if use_lobby:
 			net.lobby = Lobby.new()
 			net.lobby.max_players = lobby_max_players
-			net.game_auto_start_sec = game_auto_start_sec
 			net.session = session
 			net.field_factory = _make_field
 		net.start_when_full = "--start-when-full" in OS.get_cmdline_args() or "--start-when-full" in OS.get_cmdline_user_args()

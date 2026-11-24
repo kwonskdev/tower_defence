@@ -2,11 +2,11 @@ class_name RoomHub
 extends Node
 ## 방 코드 서버 (#26). 소켓 하나를 쥐고, 접속한 사람을 방 코드로 방(NetServer 방 모드)에 나눠 준다.
 ##   - 빠른 시작(mode "quick")은 코드 없이 자리 있는 공개 방에 넣고(사람이 가장 많은 방부터 채운다), 없으면 새 공개 방을 만든다.
-##     대기/시작은 일반 방과 같은 #22 규칙이다 (모두 준비하면 방장이 시작, 2명 이상이면 게임 화면에서 30초 뒤 자동 시작).
+##     대기/시작은 일반 방과 같은 규칙이다 (대기 시간 제한 없음, 모두 준비하면 방장이 [시작]).
 ##   - 첫 메시지 hello의 mode가 "create"면 새 방과 코드를 만들어 그 방 첫 사람(방장)으로 넣고,
 ##     "join"이면 code의 방에 넣는다 (없는 코드 / 너무 많이 시도 / 방 수 상한은 이유와 함께 거부).
 ##   - 방에 들어간 연결의 메시지는 그 방(NetServer.receive)으로 넘기고, 끊김도 알린다. 방 안의 일(로비, 판, 스냅샷)은 모두 NetServer가 한다.
-##   - 방이 비거나(모두 나감) 시작 못 한 채 만료되거나 끝난 뒤 정리 시간이 지나면 방을 닫고 코드를 돌려받는다.
+##   - 방이 비거나(모두 나감) 끝난 뒤 정리 시간이 지나면 방을 닫고 코드를 돌려받는다. 접속자가 있는 대기방은 만료가 없다.
 ## 방마다 판(GameField)이 따로 있어서 한 프로세스에서 여러 방이 동시에 돈다. 방이 서로 상태를 공유하지 않는다.
 ## 무차별 대입은 RoomCodes가 막는다: 잘못된 코드를 접속 주소마다 1분에 5번, 서버 전체로 분당 60번 넘으면 거부하고 그 연결을 끊는다.
 ## 연결을 끊는 것은 그 소켓만 닫는 것이고 계정과는 상관없다 (계정은 #25).
@@ -28,7 +28,6 @@ var max_connections := MAX_CONNECTIONS
 var max_pending := MAX_PENDING
 var hello_timeout := NetProtocol.HELLO_TIMEOUT
 var room_max_players := Balance.MAX_PLAYERS
-var game_auto_start_sec := Balance.GAME_AUTO_START_SEC
 var clock := Callable()              # () -> 지금(ms). 테스트가 만료/시도 제한 시계를 조작한다. 비면 엔진 시계
 
 var _rooms: Dictionary = {}          # 코드 -> NetServer (방 모드)
@@ -218,7 +217,6 @@ func _create_room(public := false) -> NetServer:
 	room.session.participants.clear()  # 참여자는 방장이 시작할 때 접속자로 정해진다
 	room.lobby = Lobby.new()
 	room.lobby.max_players = room_max_players
-	room.game_auto_start_sec = game_auto_start_sec
 	room.game_mode = room.session.game_mode
 	room.field_factory = func() -> GameField: return _make_field(room)
 	add_child(room)
@@ -252,7 +250,7 @@ func _on_room_finished(code: String) -> void:
 	Log.info(Log.Category.NETWORK, "방 판 끝: %s (코드 반납)" % code)
 
 
-## 비었거나(모두 나감), 시작 못 한 채 만료되었거나, 끝난 지 오래된 방을 닫는다.
+## 빈 방(모두 나감)과 끝난 지 오래된 방을 닫는다. 사람이 있는 동안은 대기 시간 제한이 없다 (몇 시간이든 기다릴 수 있다).
 func _housekeeping() -> void:
 	var now := now_ms()
 	for code in _rooms.keys():
@@ -264,9 +262,6 @@ func _housekeeping() -> void:
 			_close_room(code, "비었음")
 		elif _finished_at.has(code) and now - int(_finished_at[code]) >= int(FINISHED_KEEP_SEC * 1000.0):
 			_close_room(code, "끝난 뒤 시간이 지남")
-	for code in codes.expired(now):
-		if _rooms.has(code) and not _rooms[code].game_started:
-			_close_room(code, "시작 못 한 채 만료")
 
 
 func _close_room(code: String, why: String) -> void:

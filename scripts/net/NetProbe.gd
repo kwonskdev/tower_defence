@@ -4,7 +4,7 @@ class_name NetProbe
 ## 서버와 다른 프로세스로 돌려서 "헤드리스 서버 1개 + 클라이언트 2개"를 손으로 확인할 때 쓴다 (자동 테스트는 tests/test_net_prototype.gd).
 ##
 ##   Godot --headless --path . -- --server --port=47300 --players=2 --start-when-full   (고정 인원)
-##   Godot --headless --path . -- --server --port=47300                                   (대기방: 방장 = 첫 입장자, 모두 준비 -> 방장 시작 -> 게임 화면에서 30초 뒤 자동 시작 #22)
+##   Godot --headless --path . -- --server --port=47300                                   (대기방: 방장 = 첫 입장자, 모두 준비 -> 방장 시작 -> 바로 시작, 첫 몬스터는 30초 뒤. 자동 시작 없음)
 ##   (대기방 서버에는 방장 쪽 프로브를 --expect=2로 먼저 띄운다: 나머지는 자동으로 준비하고, 방장은 2명이 모여 모두 준비하면 시작한다)
 ##   Godot --headless --path . -- --connect=127.0.0.1:47300 --cell=5,10 --name=A
 ##   Godot --headless --path . -- --connect=127.0.0.1:47300 --cell=7,12 --name=B

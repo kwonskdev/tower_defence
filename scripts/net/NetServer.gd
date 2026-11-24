@@ -31,9 +31,6 @@ var lobby: Lobby = null
 var session: Session = null           # 로비 방식에서 판이 시작될 때 참여자/이름을 채우는 세션 (field_factory가 만드는 GameField가 같은 것을 쓴다)
 var field_factory := Callable()       # () -> GameField. 참여자가 확정된 뒤에 부른다. 만든 필드는 이미 트리에 붙어 있어야 한다
 var game_started := false             # 로비 방식에서 판이 실제로 시작됐는가
-var game_auto_start_sec := Balance.GAME_AUTO_START_SEC  # 2명 이상 판이 게임 화면에 들어간 뒤 자동 start_game까지 (테스트가 줄인다)
-var _pregame_left := -1.0             # 자동 start_game까지 남은 시간(초). -1 = 세지 않는 중 (혼자라서 시작 버튼 / 이미 시작 / 로비)
-var _pregame_shown := -1
 var _lobby_dirty := false
 ## 방 모드 (#26). RoomHub가 소켓을 쥐고 연결을 방마다 나눠 준다: 이 NetServer는 방 하나이고 소켓을 열지 않는다(start_hosted).
 ## 연결/끊김/메시지는 hub가 admit/receive/peer_gone으로 넘겨 준다.
@@ -142,7 +139,6 @@ func _process(delta: float) -> void:
 			_drop(id)
 	if lobby != null and field == null:
 		_process_lobby(delta)
-	_process_pregame(delta)
 	_snap_timer += delta
 	_summary_timer += delta
 	if _snap_timer >= 1.0 / snap_hz:
@@ -351,8 +347,6 @@ func _on_cmd(id: int, c: Dictionary, msg: Dictionary) -> void:
 		# 다른 플레이어를 사칭한 명령: 실행하지 않는다 (번호는 서버가 정해 준 것만 인정)
 		Log.warn(Log.Category.NETWORK, "사칭 명령 거절: 연결 %d는 P%d인데 P%d로 보냄 (%s)" % [id, c.player_id + 1, cmd["player_id"] + 1, cmd["type"]])
 		result = CommandBus.fail("not_your_player")
-	elif lobby != null and cmd["type"] == Command.START_GAME and field.session.participants.size() > 1:
-		result = CommandBus.fail("auto_start")  # 2명 이상은 서버가 카운트다운 뒤에 알아서 시작한다 (시작 버튼 없음)
 	else:
 		result = field.bus.execute(cmd)
 	_send(id, {"t": NetProtocol.MSG_RESULT, "seq": seq, "ok": result["ok"], "reason": result["reason"], "events": _wire_events(result["events"])}, true)
@@ -391,28 +385,6 @@ func _process_lobby(_delta: float) -> void:
 	if _lobby_dirty and lobby.phase == Lobby.Phase.OPEN:
 		_lobby_dirty = false
 		_send_lobby()
-
-
-## 게임 화면에 들어간 뒤 자동 시작 카운트다운 (2명 이상). 0이 되면 start_game을 실행한다.
-func _process_pregame(delta: float) -> void:
-	if _pregame_left < 0.0 or field == null or field.bus.started:
-		return
-	if _slots.is_empty():
-		# 카운트다운 중에 접속자가 모두 나갔다: 아무도 없는 판을 시작하지 않는다 (재접속은 #23)
-		_pregame_left = -1.0
-		Log.warn(Log.Category.NETWORK, "접속자가 없어 자동 시작을 취소함")
-		return
-	_pregame_left = maxf(0.0, _pregame_left - delta)
-	var secs := int(ceilf(_pregame_left))
-	if secs != _pregame_shown:
-		_pregame_shown = secs
-		for id in _clients:
-			if _clients[id].player_id >= 0:
-				_send(id, {"t": NetProtocol.MSG_COUNTDOWN, "left": secs}, true)
-	if _pregame_left <= 0.0:
-		_pregame_left = -1.0
-		var started := field.bus.execute(Command.make(Command.START_GAME, field.session.participants[0], {}))
-		Log.info(Log.Category.NETWORK, "자동 시작: 레인 %d개 동시 시작 (%s)" % [field.lanes.size(), "ok" if started["ok"] else started["reason"]])
 
 
 func _send_lobby() -> void:
@@ -458,12 +430,13 @@ func _begin_game() -> void:
 	var names := {}
 	for lane in lanes:
 		names[str(lane)] = session.name_of(lane)
-	# 2명 이상이면 서버가 카운트다운 뒤에 start_game을 한다. 혼자면 시작 버튼(클라이언트의 START_GAME 명령)을 기다린다.
-	_pregame_left = game_auto_start_sec if lanes.size() > 1 else -1.0
-	_pregame_shown = int(ceilf(_pregame_left))
 	for id in _clients:
 		if _clients[id].player_id >= 0:
-			_send(id, {"t": NetProtocol.MSG_STARTED, "players": lanes, "names": names, "auto_start": _pregame_left}, true)
+			_send(id, {"t": NetProtocol.MSG_STARTED, "players": lanes, "names": names}, true)
+	# 방장이 [시작]을 누르면 바로 시작한다 (입장 후 자동 시작 대기는 없다). 첫 몬스터는 웨이브 주기(Balance.INCOME_INTERVAL, 30초) 뒤에 나온다.
+	var started := field.bus.execute(Command.make(Command.START_GAME, field.session.participants[0], {}))
+	if not started["ok"]:
+		Log.error(Log.Category.NETWORK, "시작 실패: %s" % started["reason"])
 
 
 func _on_sim_event(ev: Dictionary) -> void:

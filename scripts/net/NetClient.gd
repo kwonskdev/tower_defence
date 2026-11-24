@@ -13,7 +13,6 @@ signal snapshot_received(snap: Dictionary)
 signal events_received(list: Array)
 signal command_result(seq: int, ok: bool, reason: String, events: Array)
 signal lobby_changed(lobby: Dictionary)        # 로비 상태가 왔다 (#22). {members: [{lane, name, ready, host}], host, max, can_start}
-signal countdown_changed(left: int)             # 게임 화면의 자동 시작 카운트다운 (#22)
 signal game_started(players: Array, names: Dictionary)   # 판이 시작됐다: 참여자(레인)와 닉네임이 확정됐다 (#22)
 
 enum State { IDLE, CONNECTING, HELLO_SENT, JOINED, REJECTED, CLOSED }
@@ -24,7 +23,6 @@ var player_id := -1
 var players: Array = []
 var names: Dictionary = {}          # 레인 번호(글자) -> 닉네임. 판이 시작되면 채워진다
 var lobby: Dictionary = {}          # 가장 최근에 받은 로비 상태
-var auto_start_left := -1           # 게임 화면에서 자동 start_game까지 남은 초 (-1 = 자동 시작 없음: 혼자라서 시작 버튼)
 var in_game := false                # started를 받았는가
 var player_name := "player"       # 내가 입력한 닉네임 (서버가 정리/중복 제거해서 돌려준다: my_name)
 var room_code := ""                # 서버가 알려 준 방 코드 (방 코드 서버에서만, welcome/lobby)
@@ -163,11 +161,7 @@ func _on_message(msg: Dictionary) -> void:
 			players = _as_ints(msg.get("players", []))
 			names = msg.get("names", {})
 			in_game = true
-			auto_start_left = int(ceilf(float(msg.get("auto_start", -1.0))))
 			game_started.emit(players, names)
-		NetProtocol.MSG_COUNTDOWN:
-			auto_start_left = int(msg.get("left", 0))
-			countdown_changed.emit(auto_start_left)
 		NetProtocol.MSG_RESULT:
 			command_result.emit(int(msg.get("seq", 0)), bool(msg.get("ok", false)), str(msg.get("reason", "")), msg.get("events", []))
 		NetProtocol.MSG_PONG:

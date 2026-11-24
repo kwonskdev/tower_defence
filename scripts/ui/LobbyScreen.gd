@@ -1,7 +1,7 @@
 extends PanelContainer
 class_name LobbyScreen
 ## 시작 전 대기방 화면 (#22). NetClient가 받은 로비 상태(lobby)로 참여자 목록과 준비 상태를 보여 주고, [준비] / [시작] / [나가기]를 서버로 보낸다.
-## [준비]는 방장이 아닌 사람에게, [시작]은 방장에게만 보이고 모두 준비해야 눌린다. 시작하면 게임 화면으로 넘어가고 거기서 30초 카운트다운이 돈다.
+## [준비]는 방장이 아닌 사람에게, [시작]은 방장에게만 보이고 모두 준비해야 눌린다. 시작하면 바로 게임이 시작되고 첫 몬스터는 30초 뒤에 나온다 (대기 시간 제한과 자동 시작은 없다).
 ## 접속(방 만들기/입장)과 메인 메뉴는 #26이 만든다. 그 메뉴가 접속을 마친 뒤 이 화면을 띄우고 setup(client)를 부른다.
 ## 닉네임은 접속(hello) 때 서버에 알려 주므로 메뉴에서 정한다 (Nicknames.load_saved() / Nicknames.save()).
 
@@ -103,12 +103,11 @@ static func row_text(member: Dictionary, is_me: bool) -> String:
 	return text
 
 
-## 안내 문구: 방장은 모두 준비할 때까지 기다리고, 나머지는 준비를 누른다. 시작하면 게임 화면에서 30초 뒤 자동 시작한다고 알린다.
+## 안내 문구: 방장은 모두 준비할 때까지 기다렸다가 [시작]을 누르고, 나머지는 [준비]를 누른다. 대기 시간은 제한이 없고 자동 시작도 없다.
+## 시작하면 몬스터는 첫 웨이브 주기(Balance.INCOME_INTERVAL = 30초) 뒤에 나온다.
 static func hint_text(can_start: bool, i_am_host: bool, member_count: int) -> String:
 	if i_am_host:
 		if not can_start:
-			return "모두 준비하면 시작할 수 있습니다"
-		if member_count > 1:
-			return "[시작]을 누르면 게임 화면에서 %d초 뒤 자동으로 시작합니다" % int(Balance.GAME_AUTO_START_SEC)
-		return "[시작]을 누르면 게임 화면으로 넘어갑니다"
+			return "모두 준비하면 시작할 수 있습니다" if member_count > 1 else "[시작]을 눌러 게임을 시작하세요"
+		return "[시작]을 누르면 바로 시작하고, %d초 뒤 첫 몬스터가 나옵니다" % int(Balance.INCOME_INTERVAL)
 	return "[준비]를 누르고 방장이 시작하기를 기다리세요"

@@ -81,8 +81,6 @@ const OVERLAY_MARGIN := 6.0              # 맵 왼쪽 위 상태 표시와 맵 �
 var game_over_screen: GameOverScreen     # 승리/패배 화면
 var _play_time := 0.0                    # 실제로 플레이한 시간(초). 일시정지 중에는 흐르지 않는다 (통계용)
 var _play_running := false               # 시작 버튼을 눌렀는지
-var auto_start_attempts := 0             # 자동 start_game을 시도한 횟수. 한 번 실패하면 다시 시도하지 않는다(매 프레임 실패 로그가 쌓이지 않게)
-var auto_start_left := -1.0              # 여럿이 하는 판: 게임 화면에 들어온 뒤 자동 start_game까지 남은 초 (-1 = 아직 안 셈). 혼자 하는 판은 시작 버튼 (#22)
 
 # 일시정지: get_tree().paused로 게임 전체를 멈추고, 항상 동작하는 PauseOverlay를 위에 띄운다
 var pause_overlay: PauseOverlay
@@ -1387,23 +1385,6 @@ class StatusIcon extends Control:
 				draw_arc(c, r * 0.8, 0.0, TAU, 12, Color(0, 0, 0, 0.5), 1.0)
 
 
-## 여럿이 하는 판은 시작 버튼이 없다: 게임 화면에 들어오면 30초 카운트다운을 세고, 0이 되면 모든 레인과 보스가 한꺼번에 시작한다 (#22).
-## 서버에 접속한 클라이언트는 서버가 세는 값을 auto_start_left에 넣어 주면 된다 (이 함수는 로컬 시뮬레이션에서만 센다).
-func _update_auto_start(delta: float) -> void:
-	if _play_running or game_field == null or game_field.session.is_solo() or game_field.boss == null:
-		return
-	if game_field.boss.state != BossController.State.WAITING:
-		return
-	if auto_start_left < 0.0:
-		auto_start_left = Balance.GAME_AUTO_START_SEC
-	auto_start_left = maxf(0.0, auto_start_left - delta)
-	if auto_start_left <= 0.0 and auto_start_attempts == 0:
-		auto_start_attempts += 1  # 실패해도 한 번만 시도한다: 이미 시작됐거나 거절된 판에서 매 프레임 같은 명령을 보내지 않는다
-		_on_start_pressed()
-		if not _play_running:
-			Log.warn(Log.Category.GAME, "자동 시작 실패: 시작 명령이 거절됐다")
-
-
 func _on_start_pressed():
 	if game_field.do_command(Command.START_GAME)["ok"]:
 		_play_running = true
@@ -1455,7 +1436,7 @@ func _set_paused(on: bool) -> void:
 ## 맵 오른쪽 위 버튼: 시작 전에는 재생(▶) 아이콘으로 [시작], 시작한 뒤에는 막대(⏸) 아이콘으로 [일시정지]. 게임이 끝나면 숨긴다
 func _refresh_start_button() -> void:
 	# 여럿이 하는 판에는 일시정지가 없어서(서버는 계속 돈다) 시작한 뒤에는 버튼을 숨긴다
-	# 여럿이 하는 판은 시작 전에도 버튼이 없다 (카운트다운 뒤 자동 시작)
+	# 여럿이 하는 판은 시작 전에도 버튼이 없다 (온라인 방은 방장이 대기방에서 [시작]을 누르면 서버가 시작한다)
 	pause_button.visible = not game_over_screen.visible and game_field.session.is_solo()
 	if pause_icon.playing == _play_running:  # 아이콘이 상태와 다르면 갱신
 		pause_icon.playing = not _play_running
@@ -1816,7 +1797,6 @@ func _on_command_failed(_type: String, reason: String) -> void:
 
 func _process(delta):
 	_notice_time = maxf(0.0, _notice_time - delta)
-	_update_auto_start(delta)
 	if _play_running and not game_over_screen.visible:
 		_play_time += delta
 	if map_overlay != null:  # 맵 왼쪽 위 모서리를 따라간다 (맵 크기/위치가 바뀌어도)
@@ -1862,10 +1842,7 @@ func _update_hud():
 	var lines: Array[String] = []
 	match sb.state:
 		BossController.State.WAITING:
-			if game_field.session.is_solo():
-				lines.append("[시작 대기]")
-			else:
-				lines.append("[%d초 뒤 자동 시작]" % int(ceilf(auto_start_left if auto_start_left >= 0.0 else Balance.GAME_AUTO_START_SEC)))
+			lines.append("[시작 대기]")  # 온라인 방은 방장이 대기방에서 [시작]을 누르면 서버가 바로 시작한다 (자동 시작 없음)
 		BossController.State.VICTORY: lines.append("[전체 승리!]")
 		BossController.State.DEFEAT: lines.append("[패배]")
 	if sb.ghost_running:
