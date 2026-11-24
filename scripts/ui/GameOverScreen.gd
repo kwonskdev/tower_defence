@@ -165,8 +165,9 @@ func _update_ui() -> void:
 	if stats.has("contributions") and stats.contributions.size() > 1:
 		var contrib_lines: Array[String] = ["", "플레이어 기여도:"]
 		for entry in stats.contributions:
-			contrib_lines.append("  P%d: %.1f%% (%s)" % [
-				entry.player_id + 1, entry.percent, _format_number(entry.damage)])
+			contrib_lines.append("  %s%s: %.1f%% (%s)%s" % [
+				"▶ " if entry.get("me", false) else "", entry.get("name", "P%d" % (entry.player_id + 1)),
+				entry.percent, _format_number(entry.damage), " - 탈락" if entry.get("eliminated", false) else ""])
 		contribution_label.text = "\n".join(contrib_lines)
 		contribution_label.visible = true
 	else:

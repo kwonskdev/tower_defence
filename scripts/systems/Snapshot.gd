@@ -4,7 +4,7 @@ class_name Snapshot
 ## 연출(파괴 폭발, 스킬 배너, 데미지 숫자)은 상태가 아니라 이벤트라서 여기 없다 (CommandBus 결과의 events와 BossController 신호).
 ##
 ## 모양:
-##   {"v", "boss_lane": int, "players": [id...],
+##   {"v", "boss_lane": int, "players": [id...], "names": {"<id>": 닉네임},
 ##    "lanes": {"<id>": 레인}, "boss": 보스}
 ##   레인: gold, lives, income, income_left, active, started, ghost_damage, stat_levels, color_levels, towers[], monsters[]
 ##   타워: lane, cell[x,y], kind, color, evo, b, invested, durability, kills, damage, ghost_damage + Tower.view_state()(aim, recoil, sealed, warn, charge, charge_max, haste, range, damage_now, attack_rate_now, crit, cluster)
@@ -15,7 +15,7 @@ class_name Snapshot
 ##   색은 "RRGGBB" 글자(Color.to_html), 되돌릴 때는 Color.html()
 ## 위치는 셀 단위 [x, y] (셀 중심 = +0.5). 키는 JSON을 거쳐도 같도록 문자열로 쓴다.
 
-const VERSION := 1
+const VERSION := 2  # 2: names (닉네임) 추가 (#22)
 
 
 static func build(session: Session, lanes: Dictionary, boss: BossController) -> Dictionary:
@@ -26,9 +26,17 @@ static func build(session: Session, lanes: Dictionary, boss: BossController) -> 
 		"v": VERSION,
 		"boss_lane": GameField.BOSS_LANE_ID,
 		"players": session.participants.duplicate(),
+		"names": _names(session),
 		"lanes": out_lanes,
 		"boss": _boss(boss) if boss != null else {},
 	}
+
+
+static func _names(session: Session) -> Dictionary:
+	var out := {}
+	for pid in session.participants:
+		out[str(pid)] = session.name_of(pid)
+	return out
 
 
 static func _vec(v: Vector2) -> Array:

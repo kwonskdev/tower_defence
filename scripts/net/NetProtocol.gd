@@ -18,9 +18,11 @@ class_name NetProtocol
 ##   result  {seq, ok, reason}               내 명령의 결과
 ##   events  {list: [...]}                   연출 이벤트 (SimEvents 모양 그대로)
 ##   pong    {n}
+##   lobby   {members: [{lane, name}], max, countdown}   로비 상태 (바뀔 때 + 자동 시작 카운트다운이 1초 줄 때). 시작은 시간이 되면 서버가 알아서 한다 (#22)
+##   started {players, names: {"<레인>": 닉네임}}   판이 시작됐다. 이 뒤로 snap이 온다. 이때 참여자(레인)가 확정된다 (#22)
 
 ## 선로 형식(메시지 모양)이 바뀌면 올린다. 클라이언트와 서버가 같은 값이어야만 접속된다 (큰 호환 규칙: 다르면 거부).
-const PROTOCOL_VERSION := 1
+const PROTOCOL_VERSION := 2  # 2: 로비(lobby/started), 닉네임 (#22)
 
 const MSG_HELLO := "hello"
 const MSG_CMD := "cmd"
@@ -33,6 +35,8 @@ const MSG_SUMMARY := "summary"
 const MSG_RESULT := "result"
 const MSG_EVENTS := "events"
 const MSG_PONG := "pong"
+const MSG_LOBBY := "lobby"
+const MSG_STARTED := "started"
 
 ## 접속 거부 사유
 const REJECT_PROTOCOL := "protocol_mismatch"   # 프로토콜/스냅샷 버전이 다르다

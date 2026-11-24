@@ -3,7 +3,8 @@ class_name NetProbe
 ## 서버에 접속해서 타워 하나를 짓고, 다른 참여자의 타워가 스냅샷에 보이면 끝나는 화면 없는 클라이언트 (#20 프로토타입 확인용).
 ## 서버와 다른 프로세스로 돌려서 "헤드리스 서버 1개 + 클라이언트 2개"를 손으로 확인할 때 쓴다 (자동 테스트는 tests/test_net_prototype.gd).
 ##
-##   Godot --headless --path . -- --server --port=47300 --players=2 --start-when-full
+##   Godot --headless --path . -- --server --port=47300 --players=2 --start-when-full   (고정 인원)
+##   Godot --headless --path . -- --server --port=47300                                   (로비: 첫 입장 뒤 30초에 시작 #22)
 ##   Godot --headless --path . -- --connect=127.0.0.1:47300 --cell=5,10 --name=A
 ##   Godot --headless --path . -- --connect=127.0.0.1:47300 --cell=7,12 --name=B
 ##
@@ -33,6 +34,7 @@ func _ready() -> void:
 	client.player_name = ServerMain.arg_value("name", "probe")
 	add_child(client)
 	client.joined.connect(_on_joined)
+	client.game_started.connect(func(_players, _names): _build())  # 로비 방식 서버: 판이 시작된 뒤에 짓는다 (#22)
 	client.rejected.connect(func(reason, info):
 		print("PROBE 거부됨: %s (서버 프로토콜 %d, 스냅샷 %d / 내 프로토콜 %d, 스냅샷 %d)" % [reason, info.proto, info.snapshot, NetProtocol.PROTOCOL_VERSION, Snapshot.VERSION])
 		get_tree().quit(2))
@@ -49,7 +51,12 @@ func _ready() -> void:
 
 
 func _on_joined(player_id: int) -> void:
-	print("PROBE %s: 입장 P%d (참여자 %s)" % [client.player_name, player_id + 1, client.players])
+	print("PROBE %s: 입장 P%d (%s)" % [client.player_name, player_id + 1, "참여자 %s" % [client.players] if not client.players.is_empty() else "로비에서 시작을 기다림"])
+	if not client.players.is_empty():  # 고정 인원 서버: 참여자가 이미 정해져 있으니 바로 짓는다
+		_build()
+
+
+func _build() -> void:
 	client.send(Command.BUILD_TOWER, {"cell": _cell, "kind_id": "long", "confirmed": false})
 	_built = true
 

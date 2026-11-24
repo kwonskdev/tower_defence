@@ -2176,17 +2176,22 @@ func _collect_game_stats(is_victory: bool) -> Dictionary:
 		for dmg in boss.damage_by_player.values():
 			total_dmg += dmg
 
-		if total_dmg > 0.0:
-			var contributions: Array = []
-			for player_id in boss.damage_by_player:
-				var dmg: float = boss.damage_by_player[player_id]
-				contributions.append({
-					"player_id": int(player_id),
-					"damage": dmg,
-					"percent": dmg / total_dmg * 100.0
-				})
-			contributions.sort_custom(func(a, b): return a.damage > b.damage)
-			stats.contributions = contributions
+		# 모든 참여자를 담는다 (한 번도 못 친 사람, 탈락한 사람도). 닉네임은 스냅샷의 names에서 온다 (#22)
+		var contributions: Array = []
+		var names: Dictionary = snap.get("names", {})
+		for player_id in snap.players:
+			var dmg: float = boss.damage_by_player.get(str(player_id), 0.0)
+			var their_lane: Dictionary = snap.lanes.get(str(player_id), {})
+			contributions.append({
+				"player_id": int(player_id),
+				"name": str(names.get(str(player_id), "Player%d" % (int(player_id) + 1))),
+				"damage": dmg,
+				"percent": dmg / total_dmg * 100.0 if total_dmg > 0.0 else 0.0,
+				"eliminated": not their_lane.get("active", true),
+				"me": str(player_id) == me,
+			})
+		contributions.sort_custom(func(a, b): return a.damage > b.damage)
+		stats.contributions = contributions
 
 		# 유령 구간 점수: 보스를 일찍 잡은 구간마다 쌓인 값이 게임이 끝날 때까지 누적된 것 (마지막 보스의 구간 포함)
 		stats.ghost = boss.ghost_summary

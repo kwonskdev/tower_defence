@@ -25,6 +25,14 @@ var peer: MultiplayerPeer
 var transport := NetTransport.DEFAULT
 var snap_hz := SNAP_HZ
 var summary_hz := SUMMARY_HZ
+## 로비 (#22). 주면 로비 방식이다: field 없이 start()를 부르고, 사람이 모이면 field_factory로 판을 만든다.
+## 로비 방식에서는 참여자(레인)가 시작 순간 접속자로 확정된다 (session.participants/names를 이 서버가 채운다).
+var lobby: Lobby = null
+var session: Session = null           # 로비 방식에서 판이 시작될 때 참여자/이름을 채우는 세션 (field_factory가 만드는 GameField가 같은 것을 쓴다)
+var field_factory := Callable()       # () -> GameField. 참여자가 확정된 뒤에 부른다. 만든 필드는 이미 트리에 붙어 있어야 한다
+var game_started := false             # 로비 방식에서 판이 실제로 시작됐는가
+var _lobby_shown := -2                # 마지막으로 보낸 카운트다운 정수초 (1초 단위로만 다시 보낸다)
+var _lobby_dirty := false
 var start_when_full := false  # 참여자 자리가 다 차면 서버가 시작 명령을 실행한다 (로비가 생기기 전의 임시 규칙. 로비는 #22)
 var max_connections := NetProtocol.MAX_CONNECTIONS  # 테스트가 줄인다
 var max_pending := NetProtocol.MAX_PENDING
@@ -54,13 +62,18 @@ func start(p_field: GameField, kind: String, port: int, tls: TLSOptions = null) 
 	if not NetTransport.is_known(kind):
 		return ERR_INVALID_PARAMETER
 	field = p_field
+	if field == null and (lobby == null or session == null or not field_factory.is_valid()):
+		return ERR_UNCONFIGURED  # field도 없고 로비 설정도 없다
 	transport = kind
 	peer = NetTransport.create_server(kind, port, tls)
 	if peer == null:
 		return ERR_CANT_CREATE
 	peer.peer_connected.connect(_on_peer_connected)
 	peer.peer_disconnected.connect(_on_peer_disconnected)
-	field.session.events.emitted.connect(_on_sim_event)
+	if field != null:
+		field.session.events.emitted.connect(_on_sim_event)
+	if lobby != null:
+		lobby.changed.connect(func(): _lobby_dirty = true)
 	Log.info(Log.Category.NETWORK, "서버 열림: %s 포트 %d (프로토콜 %d, 스냅샷 %.0fHz + 요약 %.1fHz)" % [kind, port, NetProtocol.PROTOCOL_VERSION, snap_hz, summary_hz])
 	return OK
 
@@ -106,6 +119,8 @@ func _process(delta: float) -> void:
 		elif c.player_id < 0 and c.age > hello_timeout:  # hello를 안 보내는 연결
 			Log.warn(Log.Category.NETWORK, "hello가 안 와서 끊음: 연결 %d" % id)
 			_drop(id)
+	if lobby != null and field == null:
+		_process_lobby(delta)
 	_snap_timer += delta
 	_summary_timer += delta
 	if _snap_timer >= 1.0 / snap_hz:
@@ -146,6 +161,7 @@ func _on_peer_disconnected(id: int) -> void:
 	if c.player_id >= 0:
 		_slots.erase(c.player_id)
 		Log.info(Log.Category.NETWORK, "P%d 연결 끊김 (연결 %d)" % [c.player_id + 1, id])
+		_leave_lobby(id)
 		client_left.emit(id, c.player_id)
 
 
@@ -159,6 +175,7 @@ func _drop(id: int) -> void:
 	if not c.is_empty() and c.player_id >= 0:
 		_slots.erase(c.player_id)
 		Log.info(Log.Category.NETWORK, "P%d를 서버가 끊음 (연결 %d)" % [c.player_id + 1, id])
+		_leave_lobby(id)
 		client_left.emit(id, c.player_id)
 
 
@@ -193,7 +210,7 @@ func _on_message(id: int, msg: Dictionary) -> void:
 			_on_cmd(id, c, msg)
 		NetProtocol.MSG_VIEW:
 			var lane = msg.get("lane")
-			if typeof(lane) in [TYPE_INT, TYPE_FLOAT] and _is_lane(int(lane)) and int(lane) != c.view:
+			if field != null and typeof(lane) in [TYPE_INT, TYPE_FLOAT] and _is_lane(int(lane)) and int(lane) != c.view:
 				c.view = int(lane)
 				c.need_key = true  # 새로 보는 레인은 전체를 한 번 받아야 한다
 		NetProtocol.MSG_PING:
@@ -220,15 +237,24 @@ func _take_token(id: int, c: Dictionary, is_view: bool) -> bool:
 
 
 func _is_lane(lane: int) -> bool:
+	if field == null:
+		return false
 	return lane == GameField.BOSS_LANE_ID or field.session.is_participant(lane)
 
 
 func _on_hello(id: int, c: Dictionary, msg: Dictionary) -> void:
 	var bad := NetProtocol.check_hello(msg)
-	if bad == "" and field.bus.started:
+	if bad == "" and (game_started or (field != null and field.bus.started)):
 		bad = NetProtocol.REJECT_STARTED
 	var slot := -1
-	if bad == "":
+	var nick := Nicknames.unique(str(msg.get("name", "")), _taken_names())
+	if bad == "" and lobby != null:
+		var joined := lobby.join(id, nick)
+		if joined.ok:
+			slot = joined.lane
+		else:
+			bad = joined.reason
+	elif bad == "":
 		for pid in field.session.participants:
 			if not _slots.has(pid):
 				slot = pid
@@ -244,12 +270,18 @@ func _on_hello(id: int, c: Dictionary, msg: Dictionary) -> void:
 		return
 	c.player_id = slot
 	c.view = slot
-	c.name = str(msg.get("name", "")).left(24)
+	c.name = nick
 	_slots[slot] = id
-	_send(id, {"t": NetProtocol.MSG_WELCOME, "proto": NetProtocol.PROTOCOL_VERSION, "player_id": slot,
-		"players": field.session.participants.duplicate(), "snap_hz": snap_hz, "summary_hz": summary_hz}, true)
+	var roster: Array = [] if field == null else field.session.participants.duplicate()
+	if field != null:
+		field.session.names[slot] = nick
+	_send(id, {"t": NetProtocol.MSG_WELCOME, "proto": NetProtocol.PROTOCOL_VERSION, "player_id": slot, "name": nick,
+		"players": roster, "snap_hz": snap_hz, "summary_hz": summary_hz}, true)
 	Log.info(Log.Category.NETWORK, "P%d 입장: 연결 %d '%s' (앱 '%s')" % [slot + 1, id, c.name, str(msg.get("game", "")).left(20)])
 	client_joined.emit(id, slot)
+	if lobby != null:
+		_lobby_dirty = true
+		return
 	if start_when_full and not field.bus.started and _slots.size() == field.session.participants.size():
 		Log.info(Log.Category.NETWORK, "자리가 다 차서 시작")
 		field.bus.execute(Command.make(Command.START_GAME, field.session.participants[0], {}))
@@ -259,7 +291,9 @@ func _on_cmd(id: int, c: Dictionary, msg: Dictionary) -> void:
 	var seq = msg.get("seq", 0)
 	var cmd := Command.from_wire(str(msg.get("cmd", "")))
 	var result: Dictionary
-	if cmd.is_empty():
+	if field == null:
+		result = CommandBus.fail("not_started")  # 로비 중: 아직 판이 없다
+	elif cmd.is_empty():
 		result = CommandBus.fail("bad_command")
 	elif cmd["player_id"] != c.player_id:
 		# 다른 플레이어를 사칭한 명령: 실행하지 않는다 (번호는 서버가 정해 준 것만 인정)
@@ -282,6 +316,75 @@ static func _wire_events(events: Array) -> Array:
 
 
 # ---- 보내기 ----------------------------------------------------------------
+
+## 지금 쓰는 닉네임들 (중복을 피하려고)
+func _taken_names() -> Array:
+	var out: Array = []
+	for c in _clients.values():
+		if c.player_id >= 0:
+			out.append(c.name)
+	return out
+
+
+# ---- 로비 (#22) ------------------------------------------------------------
+
+func _leave_lobby(id: int) -> void:
+	if lobby != null and field == null:
+		lobby.leave(id)
+
+
+func _process_lobby(delta: float) -> void:
+	if lobby.phase == Lobby.Phase.OPEN and lobby.tick(delta):
+		Log.info(Log.Category.NETWORK, "로비 자동 시작 (%d명)" % lobby.size())
+		_begin_game()
+	var secs := int(ceilf(lobby.countdown_left)) if lobby.countdown_left >= 0.0 else -1
+	if _lobby_dirty or (secs != _lobby_shown and lobby.phase == Lobby.Phase.OPEN):
+		_lobby_dirty = false
+		_lobby_shown = secs
+		_send_lobby()
+
+
+func _send_lobby() -> void:
+	var msg := lobby.view()
+	msg["t"] = NetProtocol.MSG_LOBBY
+	for id in _clients:
+		if _clients[id].player_id >= 0:
+			_send(id, msg, true)
+
+
+## 참여자를 확정하고 판(GameField)을 만들어 시작한다. 판이 준비되려면 프레임이 몇 개 걸려서 코루틴이다.
+## 그동안 lobby.phase는 STARTING이라 새 입장은 거부된다.
+func _begin_game() -> void:
+	if game_started:
+		return
+	game_started = true
+	var lanes := lobby.lanes()
+	session.participants.clear()
+	for lane in lanes:
+		session.participants.append(lane)
+	session.names = lobby.names_by_lane()
+	Log.info(Log.Category.NETWORK, "판 시작: 참여 %d명 레인 %s" % [lanes.size(), lanes])
+	var f: GameField = field_factory.call()
+	if f == null:
+		Log.error(Log.Category.NETWORK, "판을 만들지 못함")
+		return
+	await f.boss_ready  # 보스는 한 프레임 뒤에 만들어진다
+	field = f
+	field.session.events.emitted.connect(_on_sim_event)
+	_prev_q = {}
+	for c in _clients.values():
+		c.need_key = true
+	lobby.mark_started()
+	var names := {}
+	for lane in lanes:
+		names[str(lane)] = session.name_of(lane)
+	for id in _clients:
+		if _clients[id].player_id >= 0:
+			_send(id, {"t": NetProtocol.MSG_STARTED, "players": lanes, "names": names}, true)
+	var started := field.bus.execute(Command.make(Command.START_GAME, lanes[0], {}))
+	if not started["ok"]:
+		Log.error(Log.Category.NETWORK, "시작 명령 실패: %s" % started["reason"])
+
 
 func _on_sim_event(ev: Dictionary) -> void:
 	if not _clients.is_empty():
@@ -316,6 +419,8 @@ func _send(id: int, msg: Dictionary, general := true) -> bool:
 
 
 func _broadcast(with_summary: bool) -> void:
+	if field == null:
+		return  # 로비 중: 보낼 판이 없다
 	_tick += 1
 	var q := SnapshotDelta.quantize(field.snapshot(true))
 	var delta := SnapshotDelta.diff(_prev_q, q) if not _prev_q.is_empty() else {}
@@ -361,7 +466,7 @@ static func slice_for(snap: Dictionary, own: int, view: int) -> Dictionary:
 	if not boss.is_empty() and view != GameField.BOSS_LANE_ID:
 		boss = boss.duplicate()
 		boss["monsters"] = []
-	return {"v": snap.v, "boss_lane": snap.boss_lane, "players": snap.players, "lanes": lanes, "boss": boss}
+	return {"v": snap.v, "boss_lane": snap.boss_lane, "players": snap.players, "names": snap.get("names", {}), "lanes": lanes, "boss": boss}
 
 
 ## 틱 사이의 변경분(SnapshotDelta.diff 결과 전체)에서 한 클라이언트가 받을 부분만 자른다. slice_for와 같은 범위여야 한다.

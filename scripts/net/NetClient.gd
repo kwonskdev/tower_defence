@@ -12,6 +12,8 @@ signal disconnected()
 signal snapshot_received(snap: Dictionary)
 signal events_received(list: Array)
 signal command_result(seq: int, ok: bool, reason: String, events: Array)
+signal lobby_changed(lobby: Dictionary)        # 로비 상태가 왔다 (#22). {members: [{lane, name}], max, countdown}
+signal game_started(players: Array, names: Dictionary)   # 판이 시작됐다: 참여자(레인)와 닉네임이 확정됐다 (#22)
 
 enum State { IDLE, CONNECTING, HELLO_SENT, JOINED, REJECTED, CLOSED }
 
@@ -19,7 +21,11 @@ var peer: MultiplayerPeer
 var state := State.IDLE
 var player_id := -1
 var players: Array = []
-var player_name := "player"
+var names: Dictionary = {}          # 레인 번호(글자) -> 닉네임. 판이 시작되면 채워진다
+var lobby: Dictionary = {}          # 가장 최근에 받은 로비 상태
+var in_game := false                # started를 받았는가
+var player_name := "player"       # 내가 입력한 닉네임 (서버가 정리/중복 제거해서 돌려준다: my_name)
+var my_name := ""                   # 서버가 정해 준 내 닉네임
 var hello_disabled := false   # 테스트용: hello를 보내지 않는다 (말 없는 연결 시험)
 var proto_override := -1   # 테스트용: 이 값이 -1이 아니면 hello의 proto를 이 값으로 속인다 (버전 불일치 시험)
 var snapshot: Dictionary = {}       # 키프레임에 변경분을 적용해 맞춘 스냅샷 (자기 레인 + 보고 있는 레인 + 보스 HUD)
@@ -112,7 +118,8 @@ func _on_message(msg: Dictionary) -> void:
 	match msg.get("t", ""):
 		NetProtocol.MSG_WELCOME:
 			player_id = int(msg.get("player_id", -1))
-			players = msg.get("players", [])
+			players = _as_ints(msg.get("players", []))
+			my_name = str(msg.get("name", player_name))
 			state = State.JOINED
 			joined.emit(player_id)
 		NetProtocol.MSG_REJECT:
@@ -141,6 +148,14 @@ func _on_message(msg: Dictionary) -> void:
 				summary = msg["summary"]
 		NetProtocol.MSG_EVENTS:
 			events_received.emit(msg.get("list", []))
+		NetProtocol.MSG_LOBBY:
+			lobby = msg
+			lobby_changed.emit(lobby)
+		NetProtocol.MSG_STARTED:
+			players = _as_ints(msg.get("players", []))
+			names = msg.get("names", {})
+			in_game = true
+			game_started.emit(players, names)
 		NetProtocol.MSG_RESULT:
 			command_result.emit(int(msg.get("seq", 0)), bool(msg.get("ok", false)), str(msg.get("reason", "")), msg.get("events", []))
 		NetProtocol.MSG_PONG:
@@ -149,6 +164,15 @@ func _on_message(msg: Dictionary) -> void:
 			if _ping_sent_at.has(n):
 				rtt_ms = float(Time.get_ticks_msec() - _ping_sent_at[n])
 				_ping_sent_at.erase(n)
+
+
+## JSON은 정수도 실수(0.0)로 돌려준다: 레인 번호 목록은 정수로 되돌린다
+static func _as_ints(list) -> Array:
+	var out: Array = []
+	if list is Array:
+		for v in list:
+			out.append(int(v))
+	return out
 
 
 ## 보내기가 실패하면(버퍼가 가득 참 등) 경고를 남기고 false

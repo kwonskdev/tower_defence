@@ -13,7 +13,10 @@ class_name ServerMain
 ##   --port=N            네트워크로 클라이언트를 받는다 (#20). 주면 자동 시작/봇 없이 접속과 시작 명령을 기다린다
 ##   --transport=ws|enet 전송 계층 (기본 ws = WebSocket/TCP, enet = UDP. 개발/LAN용)
 ##   --tls-cert=경로 --tls-key=경로  주면 서버가 직접 wss로 연다 (ws 전용). 운영에서는 보통 리버스 프록시가 TLS를 맡아서 필요 없다
-##   --start-when-full   참여자 자리가 다 차면 자동으로 시작한다 (로비 전의 임시 규칙, #22에서 대체)
+##   --start-when-full   (고정 인원 모드) --players=N 자리가 다 차면 자동으로 시작한다. 주면 로비를 쓰지 않는다 (개발/부하 측정용)
+## --port=가 있고 --start-when-full이 없으면 로비 방식이다 (#22): 접속한 사람이 먼저 로비에 모이고,
+##   첫 입장 뒤 30초가 지나면 그 접속자들로 판이 시작된다 (참여자/레인이 그때 확정). 이때 --players=N은 최대 인원(기본 8)이다.
+##   자동 시작은 2명 이상일 때만이다 (혼자 하는 1인 플레이는 로비 없이 지금처럼 시작 버튼). 시작 버튼/방장/준비는 없다.
 ## 한 판이 끝나면 결과를 로그에 한 줄 남기고 종료한다 (승리 0, 패배 1).
 
 signal finished(victory: bool, info: Dictionary)
@@ -25,6 +28,9 @@ var net: NetServer = null            # 클라이언트를 받는 네트워크 (�
 var net_port := 0                    # 0이 아니면 이 포트로 연다 (--port= 인자가 있으면 그 값이 우선)
 var net_transport := NetTransport.DEFAULT
 var net_tls: TLSOptions = null       # 주면 wss (--tls-cert/--tls-key 인자가 있으면 그 파일로 만든다)
+var use_lobby := false               # 로비 방식 (위 설명). --port가 있고 --start-when-full이 없으면 _ready가 켠다. 테스트는 직접 켠다
+var lobby_max_players := Balance.MAX_PLAYERS
+var lobby_auto_start_sec := Balance.LOBBY_AUTO_START_SEC
 
 
 ## 이 프로세스를 서버로 시작해야 하는가
@@ -66,7 +72,14 @@ func _ready() -> void:
 		if requested():
 			get_tree().quit(2)
 		return
-	if arg_value("players") != "":  # 인자가 없으면 세션에 이미 들어 있는 참여자를 그대로 쓴다 (기본은 혼자)
+	var fixed_roster := "--start-when-full" in OS.get_cmdline_args() or "--start-when-full" in OS.get_cmdline_user_args()
+	if arg_value("port") != "" and not fixed_roster:
+		use_lobby = true
+	if use_lobby:  # 로비 방식: --players는 최대 인원이고, 참여자는 시작할 때 접속자로 정해진다
+		if arg_value("players") != "":
+			lobby_max_players = clampi(int(arg_value("players")), 2, Balance.MAX_PLAYERS)  # 자동 시작이 2명 이상이라 1은 의미가 없다
+		session.participants.clear()
+	elif arg_value("players") != "":  # 인자가 없으면 세션에 이미 들어 있는 참여자를 그대로 쓴다 (기본은 혼자)
 		session.participants.clear()
 		for i in range(clampi(int(arg_value("players")), 1, Balance.MAX_PLAYERS)):
 			session.participants.append(i)
@@ -77,11 +90,8 @@ func _ready() -> void:
 	Engine.time_scale = maxf(0.1, float(arg_value("time-scale", "1")))
 	Log.info(Log.Category.GAME, "서버 시작: 참여 %d명, 시드 %s, 배속 x%s" % [players, seed_text if seed_text != "" else "(무작위)", Engine.time_scale])
 
-	field = (load("res://scenes/ui/GameField.tscn") as PackedScene).instantiate() as GameField
-	field.session = session
-	field.play_effects = false  # 서버는 화면이 없다: 연출 이벤트는 그리지 않는다
-	add_child(field)
-	field.boss_ready.connect(_on_boss_ready, CONNECT_ONE_SHOT)
+	if not use_lobby:
+		_make_field()
 	if arg_value("port") != "":
 		net_port = parse_port(arg_value("port"))
 	net_transport = arg_value("transport", net_transport)
@@ -94,6 +104,12 @@ func _ready() -> void:
 				get_tree().quit.call_deferred(2)
 	if net_port > 0:
 		net = NetServer.new()
+		if use_lobby:
+			net.lobby = Lobby.new()
+			net.lobby.max_players = lobby_max_players
+			net.lobby.auto_start_sec = lobby_auto_start_sec
+			net.session = session
+			net.field_factory = _make_field
 		net.start_when_full = "--start-when-full" in OS.get_cmdline_args() or "--start-when-full" in OS.get_cmdline_user_args()
 		add_child(net)
 		var err := net.start(field, net_transport, net_port, net_tls)
@@ -102,6 +118,16 @@ func _ready() -> void:
 			result = {"victory": false, "boss_level": 0, "reason": "net_open_failed"}
 			if requested():
 				get_tree().quit.call_deferred(2)
+
+
+## 시뮬레이션 필드(레인 + 보스)를 만든다. 고정 인원 모드는 시작할 때, 로비 방식은 참여자가 확정된 뒤에 부른다.
+func _make_field() -> GameField:
+	field = (load("res://scenes/ui/GameField.tscn") as PackedScene).instantiate() as GameField
+	field.session = session
+	field.play_effects = false  # 서버는 화면이 없다: 연출 이벤트는 그리지 않는다
+	add_child(field)
+	field.boss_ready.connect(_on_boss_ready, CONNECT_ONE_SHOT)
+	return field
 
 
 func _on_boss_ready(boss: BossController) -> void:

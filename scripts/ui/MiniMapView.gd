@@ -61,10 +61,25 @@ func _draw() -> void:
 			for m in lane.monsters:
 				_dot(area, Vector2(m.pos[0], m.pos[1]), sx, sy, MONSTER_COLOR)
 
+	# 탈락한 레인은 어둡게 (관전만 된다)
+	var eliminated: bool = participating and not is_boss_lane and not lane.get("active", true)
+	if eliminated:
+		draw_rect(area, Color(0.0, 0.0, 0.0, 0.55))
+
 	# 레인 번호
 	var label := "B" if is_boss_lane else str(lane_index + 1)
 	draw_string(ThemeDB.fallback_font, Vector2(4, 15), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 14,
 		Color(1, 1, 1, 0.9 if participating else 0.35))
+
+	# 여럿이 하는 판: 닉네임과 생명 (탈락이면 "탈락"). 혼자 하는 판은 이름이 없으니 그리지 않는다 (#22)
+	if participating and not is_boss_lane and snap.players.size() > 1:
+		var nick := str(snap.get("names", {}).get(str(lane_index), ""))
+		var status := "탈락" if eliminated else "♥%d" % int(floorf(lane.lives))
+		var font_size := 10
+		var tag := "%s %s" % [nick, status]
+		draw_rect(Rect2(Vector2(2, size.y - 15), Vector2(size.x - 4, 13)), Color(0, 0, 0, 0.6))
+		draw_string(ThemeDB.fallback_font, Vector2(4, size.y - 5), tag, HORIZONTAL_ALIGNMENT_LEFT, size.x - 6, font_size,
+			Color(1.0, 0.5, 0.45) if eliminated else Color(1, 1, 1, 0.95))
 
 	# 지금 보고 있는 레인 표시
 	if game_field.current_player_id == lane_index:
