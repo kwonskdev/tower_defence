@@ -14,6 +14,9 @@ signal online_started()    # 서버가 판을 시작했다 (온라인 게임 화
 
 const DEFAULT_PORT := 47300
 const CONNECT_TIMEOUT_SEC := 8.0
+## 대기방에 있는 동안 이 간격(초)마다 서버에 ping을 보낸다. 서버는 대기방에 몇 시간 동안 아무 메시지도 없으면 앱이 죽은 방으로 보고 닫는데(RoomHub.IDLE_CLOSE_SEC),
+## 살아 있는 클라이언트는 이 ping으로 "기다리는 중"임을 알린다 (사람이 얼마나 오래 기다려도 방이 닫히지 않게).
+const PING_SEC := 60.0
 const SERVER_KEY := "server"
 
 var default_server := "127.0.0.1:%d" % DEFAULT_PORT
@@ -35,6 +38,7 @@ var copy_button: Button
 var _form: VBoxContainer
 var _lobby_box: VBoxContainer
 var _connecting_left := -1.0
+var _ping_left := PING_SEC
 
 
 func _ready() -> void:
@@ -135,18 +139,28 @@ func _save_profile(nick: String, server: String) -> void:
 	cfg.save(profile_path)
 
 
-## "호스트:포트" -> {host, port}. 포트가 없으면 기본 포트. 틀린 모양이면 빈 Dictionary.
+## 서버 주소 -> {host, port, tls}. "wss://호스트[:포트]"면 TLS(기기의 인증서 목록으로 서버 확인)로, "ws://호스트[:포트]"나 접두사가 없으면 평문으로 접속한다.
+## 포트가 없으면 wss는 443, 그 밖에는 기본 포트(DEFAULT_PORT). 틀린 모양이면 빈 Dictionary.
 static func parse_server(text: String) -> Dictionary:
 	var t := text.strip_edges()
-	if t == "":
+	var tls := false
+	var lower := t.to_lower()
+	if lower.begins_with("wss://"):
+		tls = true
+		t = t.substr(6)
+	elif lower.begins_with("ws://"):
+		t = t.substr(5)
+	if t.ends_with("/"):
+		t = t.left(t.length() - 1)
+	if t == "" or t.contains("/") or t.contains(" "):
 		return {}
 	var parts := t.rsplit(":", true, 1)
 	if parts.size() == 1:
-		return {"host": parts[0], "port": DEFAULT_PORT}
+		return {"host": parts[0], "port": 443 if tls else DEFAULT_PORT, "tls": tls}
 	var port := ServerMain.parse_port(parts[1])
 	if parts[0] == "" or port < 0:
 		return {}
-	return {"host": parts[0], "port": port}
+	return {"host": parts[0], "port": port, "tls": tls}
 
 
 ## 서버가 거부한 이유를 사람이 읽는 말로
@@ -174,7 +188,7 @@ func start_online(mode: String) -> void:
 		return  # 접속 중
 	var target := parse_server(server_edit.text)
 	if target.is_empty():
-		_status("서버 주소를 '호스트:포트' 모양으로 쓰세요.")
+		_status("서버 주소를 '호스트:포트' (또는 wss://호스트) 모양으로 쓰세요.")
 		return
 	var code := RoomCodes.normalize(code_edit.text)
 	if mode == NetProtocol.MODE_JOIN and not RoomCodes.is_valid_format(code):
@@ -193,7 +207,7 @@ func start_online(mode: String) -> void:
 	client.joined.connect(_on_joined)
 	client.rejected.connect(_on_rejected)
 	client.disconnected.connect(_on_disconnected)
-	if not client.connect_to(NetTransport.DEFAULT, str(target.host), int(target.port)):
+	if not client.connect_to(NetTransport.DEFAULT, str(target.host), int(target.port), TLSOptions.client() if target.tls else null):
 		_reset_online("서버에 연결하지 못했습니다.")
 		return
 	_set_busy(true)
@@ -202,6 +216,11 @@ func start_online(mode: String) -> void:
 
 
 func _process(delta: float) -> void:
+	if client != null and client.is_joined():
+		_ping_left -= delta
+		if _ping_left <= 0.0:
+			_ping_left = PING_SEC
+			client.ping()
 	if _connecting_left < 0.0:
 		return
 	_connecting_left -= delta

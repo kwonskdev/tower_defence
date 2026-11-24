@@ -13,6 +13,8 @@ class_name ServerMain
 ##   --port=N            네트워크로 클라이언트를 받는다 (#20). 주면 자동 시작/봇 없이 접속과 시작 명령을 기다린다
 ##   --transport=ws|enet 전송 계층 (기본 ws = WebSocket/TCP, enet = UDP. 개발/LAN용)
 ##   --tls-cert=경로 --tls-key=경로  주면 서버가 직접 wss로 연다 (ws 전용). 운영에서는 보통 리버스 프록시가 TLS를 맡아서 필요 없다
+##   --max-rooms=N       (방 코드 서버) 동시에 열 수 있는 방 수 (기본 64)
+##   --max-rooms-per-addr=N  (방 코드 서버) 한 접속 주소가 동시에 방장으로 쥘 수 있는 방 수 (기본 3). 리버스 프록시 뒤에서는 모든 접속이 프록시 주소로 보이니 크게 올려야 한다 (#24)
 ##   --single-room       (대기방 방식) 방 코드 없이 프로세스 하나가 방 하나만 연다 (#22 방식. 개발/부하 측정용)
 ##   --start-when-full   (고정 인원 모드) --players=N 자리가 다 차면 자동으로 시작한다. 주면 로비를 쓰지 않는다 (개발/부하 측정용)
 ## --port=가 있고 --start-when-full/--single-room이 없으면 방 코드 서버다 (#26): 한 프로세스가 방 코드로 여러 방을 연다 (RoomHub).
@@ -112,6 +114,8 @@ func _ready() -> void:
 	if net_port > 0 and use_rooms:
 		hub = RoomHub.new()
 		hub.room_max_players = lobby_max_players
+		hub.max_rooms = maxi(1, int(arg_value("max-rooms", str(hub.max_rooms))))
+		hub.max_rooms_per_addr = maxi(1, int(arg_value("max-rooms-per-addr", str(hub.max_rooms_per_addr))))
 		add_child(hub)
 		var herr := hub.start(net_transport, net_port, net_tls)
 		if herr != OK:

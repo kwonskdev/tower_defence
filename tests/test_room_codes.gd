@@ -5,7 +5,8 @@ extends "res://tests/case_base.gd"
 ##  [3] 거부 사유: 없는 코드 / 모양이 틀린 코드 / 가득 참 / 이미 시작 / mode 없는 hello
 ##  [4] 무차별 대입: 잘못된 코드를 반복하면 too_many_attempts, 그 뒤엔 맞는 코드도 막힌다, 시간이 지나면 풀린다
 ##  [6] 빠른 시작: 자리 있는 공개 방에 들어가고 없으면 새 공개 방 (비공개/가득/시작한 방에는 안 들어간다)
-##  [5] 코드 반납: 방이 비면 / 판이 끝나면. 대기 시간 제한은 없다(사람이 있는 동안 몇 시간이든 만료 없음)
+##  [5] 코드 반납: 방이 비면 / 판이 끝난 방은 입장 거부, 코드는 방을 닫을 때 반납. 대기 시간 제한은 없다(살아 있는 사람이 있는 동안 몇 시간이든)
+##  [7] 방 상한 점유 방지: 전체 방 수 상한(server_busy), 주소별 방 한도와 해제, 오래 아무 메시지도 없는 대기방 정리
 ## (폰 실기기/실제 지연은 보지 않는다. 메인 메뉴는 tests/test_main_menu.gd)
 
 const PORT_BASE := 47280
@@ -20,6 +21,7 @@ func run() -> void:
 	await _brute_force()
 	await _release()
 	await _quick_start()
+	await _room_limits()
 	Engine.time_scale = 1.0
 
 
@@ -232,15 +234,18 @@ func _release() -> void:
 	check(hub.codes.has(h.room_code) and hub.room_count() == 1, "한 명이 나가도 남은 사람이 있으면 방과 코드가 유지된다")
 	await wait_until(func(): return h.lobby.get("members", []).size() == 1, 5000)
 	check(h.lobby.get("members", []).size() == 1, "나간 사람은 대기방 목록에서 빠진다")
-	# 대기 시간 제한 없음: 사람이 있으면 몇 시간이 지나도 방과 코드가 그대로다
+	# 대기 시간 제한 없음: 살아 있는(주기적으로 ping을 보내는) 사람이 있으면 몇 시간이 지나도 방과 코드가 그대로다
 	var hcode := h.room_code
 	var dropped := {"v": false}
 	h.disconnected.connect(func(): dropped["v"] = true)
-	_fake_ms += 6 * 3600 * 1000  # 6시간
-	await frames(30)
-	check(hub.codes.has(hcode) and hub.room_count() == 1 and h.is_joined() and not dropped.v, "대기방에 사람이 있으면 6시간이 지나도 방과 코드가 유지되고 연결도 그대로다")
+	for hour_block in range(4):  # 20시간 동안 5시간마다 ping
+		_fake_ms += 5 * 3600 * 1000
+		var before := h.pongs
+		h.ping()
+		await wait_until(func(): return h.pongs > before, 5000)
+	check(hub.codes.has(hcode) and hub.room_count() == 1 and h.is_joined() and not dropped.v, "ping이 계속 오는 대기방은 20시간이 지나도 방과 코드와 연결이 유지된다")
 	var late_friend := _client("늦은친구", port, NetProtocol.MODE_JOIN, hcode)
-	check(await _settle(late_friend) == "" and late_friend.is_joined(), "6시간 뒤에도 그 코드로 입장할 수 있다")
+	check(await _settle(late_friend) == "" and late_friend.is_joined(), "20시간 뒤에도 그 코드로 입장할 수 있다")
 	late_friend.close()
 	h.close()
 	check(await wait_until(func(): return not hub.codes.has(hcode) and hub.room_count() == 0, 5000), "마지막 사람이 나가면 그제서야 코드가 반납되고 방이 닫힌다")
@@ -252,11 +257,18 @@ func _release() -> void:
 	await wait_until(func(): return hub.room_for(gcode).field != null, 8000)
 	check(hub.codes.has(gcode), "판 중에는 코드가 유지된다")
 	hub._on_room_finished(gcode)
-	check(not hub.codes.has(gcode) and hub.room_for(gcode) != null, "판이 끝나면 코드는 바로 반납되고 (결과 화면을 위해) 방은 잠시 남는다")
+	check(hub.codes.has(gcode) and hub.room_for(gcode) != null, "판이 끝나도 코드는 방을 닫을 때까지 쥐고 있다 (새 방이 같은 코드를 받아 덮어쓰지 못하게)")
+	var other_codes := []
+	for i in range(200):
+		other_codes.append(hub.codes.issue(_fake_ms))
+	check(not other_codes.has(gcode), "그 사이 새로 발급되는 코드는 끝난 방의 코드와 겹치지 않는다")
+	for oc in other_codes:
+		hub.codes.release(oc)
 	var late := _client("늦은", port, NetProtocol.MODE_JOIN, gcode)
-	check(await _settle(late) == NetProtocol.REJECT_NO_ROOM, "끝난 방의 코드로는 들어갈 수 없다")
+	check(await _settle(late) == NetProtocol.REJECT_NO_ROOM, "끝난 방의 코드로는 들어갈 수 없다 (room_not_found)")
 	_fake_ms += int(RoomHub.FINISHED_KEEP_SEC * 1000.0) + 1000
 	check(await wait_until(func(): return hub.room_count() == 0, 5000), "끝난 뒤 정리 시간이 지나면 방이 닫힌다")
+	check(not hub.codes.has(gcode), "방을 닫을 때 코드가 반납된다")
 	for cl in [a, back, h, f, g, late, late_friend]:
 		cl.queue_free()
 	server.queue_free()
@@ -294,6 +306,82 @@ func _quick_start() -> void:
 	var q5 := _client("다섯", port, NetProtocol.MODE_QUICK)
 	check(await _settle(q5) == "" and q5.room_code == q3.room_code, "이미 시작한 공개 방은 건너뛰고 대기 중인 공개 방에 들어간다")
 	for cl in [priv, q1, q2, q3, q4, q5]:
+		cl.queue_free()
+	server.queue_free()
+	await frames(4)
+
+
+# ---- [7] 방 상한 점유 방지 ---------------------------------------------------
+
+func _room_limits() -> void:
+	print("[7] 방 상한: 전체 방 수, 주소별 방 한도(방장 연결이 끊기면 해제), 오래 조용한 대기방 정리")
+	# 전체 방 수 상한
+	var port := PORT_BASE + 5
+	var server := await _server(port)
+	var hub: RoomHub = server.hub
+	hub.max_rooms = 2
+	var r1 := _client("1", port, NetProtocol.MODE_CREATE)
+	var r2 := _client("2", port, NetProtocol.MODE_CREATE)
+	await _settle(r1)
+	await _settle(r2)
+	var r3 := _client("3", port, NetProtocol.MODE_CREATE)
+	check(await _settle(r3) == NetProtocol.REJECT_BUSY and hub.room_count() == 2, "방 수 상한(2)을 넘는 방 만들기는 server_busy")
+	var rq := _client("빠른", port, NetProtocol.MODE_QUICK)  # 공개 방이 없고 새로 만들 수도 없다
+	check(await _settle(rq) == NetProtocol.REJECT_BUSY, "빠른 시작도 새 방을 못 만들면 server_busy")
+	var rj := _client("입장", port, NetProtocol.MODE_JOIN, r1.room_code)
+	check(await _settle(rj) == "" and rj.is_joined(), "방이 가득해도 있는 방에 들어가는 것은 된다")
+	for cl in [r1, r2, r3, rq, rj]:
+		cl.queue_free()
+	server.queue_free()
+	await frames(4)
+
+	# 주소별 방 한도 (이 테스트의 연결은 모두 같은 주소다)
+	port = PORT_BASE + 6
+	server = await _server(port)
+	hub = server.hub
+	hub.max_rooms_per_addr = 2
+	var a1 := _client("a1", port, NetProtocol.MODE_CREATE)
+	var a2 := _client("a2", port, NetProtocol.MODE_CREATE)
+	await _settle(a1)
+	await _settle(a2)
+	var friend := _client("친구", port, NetProtocol.MODE_JOIN, a2.room_code)
+	await _settle(friend)
+	var a3 := _client("a3", port, NetProtocol.MODE_CREATE)
+	check(await _settle(a3) == NetProtocol.REJECT_BUSY and hub.room_count() == 2, "한 주소가 방장으로 쥘 수 있는 방은 2개까지 (3번째는 server_busy)")
+	var aq := _client("aq", port, NetProtocol.MODE_QUICK)  # 비공개 방뿐이라 새 공개 방을 만들어야 하는데 한도에 걸린다
+	check(await _settle(aq) == NetProtocol.REJECT_BUSY, "빠른 시작으로 새 방을 만드는 것도 같은 한도에 걸린다")
+	a2.close()  # 방장 연결이 끊긴다. 친구가 남아 방은 계속된다
+	await wait_until(func(): return friend.lobby.get("members", []).size() == 1, 5000)
+	check(hub.room_count() == 2 and hub.codes.has(friend.room_code), "방장이 나가도 남은 사람이 있으면 방은 계속된다")
+	var a4 := _client("a4", port, NetProtocol.MODE_CREATE)
+	check(await _settle(a4) == "" and a4.is_joined(), "방장 연결이 끊기면 그 한도가 풀려 새 방을 만들 수 있다")
+	for cl in [a1, a2, a3, aq, friend, a4]:
+		cl.queue_free()
+	server.queue_free()
+	await frames(4)
+
+	# 오래 아무 메시지도 없는 대기방 정리
+	port = PORT_BASE + 7
+	server = await _server(port)
+	hub = server.hub
+	var quiet := _client("조용", port, NetProtocol.MODE_CREATE)
+	await _settle(quiet)
+	var alive := _client("활발", port, NetProtocol.MODE_CREATE)
+	await _settle(alive)
+	var qcode := quiet.room_code
+	var dropped := {"v": false}
+	quiet.disconnected.connect(func(): dropped["v"] = true)
+	_fake_ms += int(RoomHub.IDLE_CLOSE_SEC * 1000.0) - 60000  # 아직 정리 시간 전
+	var before := alive.pongs
+	alive.ping()
+	await wait_until(func(): return alive.pongs > before, 5000)
+	await frames(20)
+	check(hub.codes.has(qcode) and hub.room_count() == 2, "정리 시간 직전까지는 아무 메시지가 없어도 방이 유지된다")
+	_fake_ms += 120000  # 정리 시간을 넘긴다
+	check(await wait_until(func(): return not hub.codes.has(qcode) and hub.room_count() == 1, 5000), "아주 오래 아무 메시지도 없는 대기방은 닫히고 코드가 반납된다")
+	check(await wait_until(func(): return dropped.v, 5000), "그 방의 연결은 끊긴다 (그 소켓만)")
+	check(hub.codes.has(alive.room_code) and alive.is_joined(), "ping을 보낸 방은 닫히지 않는다")
+	for cl in [quiet, alive]:
 		cl.queue_free()
 	server.queue_free()
 	await frames(4)

@@ -18,6 +18,10 @@ func run() -> void:
 	Engine.time_scale = 1.0
 
 
+func wait_seconds(sec: float) -> void:
+	await get_tree().create_timer(sec).timeout
+
+
 func _menu() -> MainMenu:
 	var m := MainMenu.new()
 	m.profile_path = PROFILE
@@ -56,8 +60,12 @@ func _boot_solo() -> void:
 
 func _inputs() -> void:
 	print("[2] 입력 검사와 거부 문구")
-	check(MainMenu.parse_server("127.0.0.1:47300") == {"host": "127.0.0.1", "port": 47300}, "서버 주소 호스트:포트")
-	check(MainMenu.parse_server(" game.example.com ") == {"host": "game.example.com", "port": MainMenu.DEFAULT_PORT}, "포트가 없으면 기본 포트")
+	check(MainMenu.parse_server("127.0.0.1:47300") == {"host": "127.0.0.1", "port": 47300, "tls": false}, "서버 주소 호스트:포트 (평문)")
+	check(MainMenu.parse_server(" game.example.com ") == {"host": "game.example.com", "port": MainMenu.DEFAULT_PORT, "tls": false}, "포트가 없으면 기본 포트")
+	check(MainMenu.parse_server("ws://game.example.com:1234") == {"host": "game.example.com", "port": 1234, "tls": false}, "ws:// 접두사는 평문")
+	check(MainMenu.parse_server("wss://game.example.com:8443") == {"host": "game.example.com", "port": 8443, "tls": true}, "wss:// 접두사는 TLS")
+	check(MainMenu.parse_server("WSS://game.example.com/") == {"host": "game.example.com", "port": 443, "tls": true}, "wss는 대소문자 무관, 뒤 /는 무시, 포트가 없으면 443")
+	check(MainMenu.parse_server("wss://").is_empty() and MainMenu.parse_server("wss://h/path").is_empty() and MainMenu.parse_server("http://h:80").is_empty(), "접두사만 있거나 경로가 있거나 다른 접두사는 거절")
 	check(MainMenu.parse_server("").is_empty() and MainMenu.parse_server("host:abc").is_empty() and MainMenu.parse_server(":80").is_empty() and MainMenu.parse_server("h:70000").is_empty(), "틀린 주소는 거절")
 	var all_text := true
 	for reason in [NetProtocol.REJECT_NO_ROOM, NetProtocol.REJECT_FULL, NetProtocol.REJECT_STARTED, NetProtocol.REJECT_TOO_MANY, NetProtocol.REJECT_BUSY, NetProtocol.REJECT_PROTOCOL]:
@@ -86,11 +94,19 @@ func _online() -> void:
 	a.server_edit.text = "127.0.0.1:abc"
 	a.create_button.pressed.emit()
 	check(a.client == null and a.status_label.text.contains("호스트:포트"), "틀린 서버 주소는 접속하지 않고 안내한다")
+	a.server_edit.text = "wss://127.0.0.1:%d" % PORT  # 평문 서버에 TLS로 접속하면 연결이 안 된다 (TLS 경로를 탄다는 것을 본다)
+	a.create_button.pressed.emit()
+	check(a.client != null and a.client.state != NetClient.State.JOINED, "wss:// 주소는 TLS로 접속을 시도한다 (평문 서버라 입장되지 않는다)")
+	await wait_seconds(1.0)
+	a._reset_online("")
 	a.server_edit.text = "127.0.0.1:%d" % PORT
 	a.create_button.pressed.emit()
 	check(await wait_until(func(): return a.lobby_screen != null, 8000), "[방 만들기]로 대기방에 들어왔다")
 	var code: String = a.client.room_code
 	check(RoomCodes.is_valid_format(code) and a.code_label.text.contains(code) and a.code_label.is_visible_in_tree(), "방 코드가 화면에 보인다: %s" % code)
+	a._ping_left = 0.0  # 대기방에 있는 동안 주기적으로 ping을 보낸다 (서버의 유휴 정리에 걸리지 않게)
+	var pongs0: int = a.client.pongs
+	check(await wait_until(func(): return a.client.pongs > pongs0, 5000), "대기방에서는 주기적으로 ping을 보낸다")
 	var copied := a.copy_code()
 	check(copied == code or (copied == "" and a.status_label.text.contains(code)), "코드 복사: 클립보드가 있으면 복사하고, 없으면 코드를 직접 알려 준다 (%s)" % a.status_label.text)
 	check(not a.solo_button.is_visible_in_tree() and a.copy_button.is_visible_in_tree(), "대기방에서는 만들기/입장 입력이 숨고 [코드 복사]가 보인다")
