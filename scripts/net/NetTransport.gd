@@ -1,34 +1,53 @@
 class_name NetTransport
-## 전송 계층을 고르는 곳 (#20). ENet(UDP)과 WebSocket(TCP)은 둘 다 MultiplayerPeer라서 위쪽 코드(NetServer/NetClient)는 어느 쪽인지 모른다.
-## 둘을 바꿔 끼울 수 있게 해 둔 이유: 전송 계층은 호스팅(#24)에 따라 바뀔 수 있는 결정이다 (UDP가 안 열리는 호스팅이면 WebSocket).
+## 전송 계층을 고르는 곳 (#20). WebSocket(TCP)과 ENet(UDP)은 둘 다 MultiplayerPeer라서 위쪽 코드(NetServer/NetClient)는 어느 쪽인지 모른다.
+##
+## 결정: 기본은 WebSocket (wss). 통신사/회사 Wi-Fi 방화벽에서 막힐 위험이 적고, TLS가 표준이라 계정 토큰(#25)을 실을 수 있고, 클라우드 호스팅(#24)이 쉽다.
+## ENet(UDP)은 개발/LAN용 옵션으로 남긴다 (--transport=enet).
+##
+## 새 전송 계층(예: Steam 중계)을 붙이려면 MultiplayerPeer를 돌려주는 함수 두 개를 register()로 등록하면 된다. NetServer/NetClient는 고치지 않는다.
+## 위쪽 코드가 기대하는 것: 신뢰 순서 전달(채널은 없어도 된다), peer_connected(클라이언트 쪽에서 서버는 1번)/peer_disconnected 신호, 패킷 하나 = 메시지 하나.
 
-const ENET := "enet"
 const WEBSOCKET := "ws"
-const DEFAULT := ENET
+const ENET := "enet"
+const DEFAULT := WEBSOCKET
 
 ## 서버가 받을 수 있는 최대 연결 수 (참여자 8명 + 아직 hello를 안 보낸 연결 여유)
 const MAX_CLIENTS := 16
 
+## 등록된 외부 전송: 이름 -> {"server": Callable(port: int) -> MultiplayerPeer, "client": Callable(host: String, port: int) -> MultiplayerPeer}
+static var _custom: Dictionary = {}
+
+
+static func register(kind: String, server_factory: Callable, client_factory: Callable) -> void:
+	_custom[kind] = {"server": server_factory, "client": client_factory}
+
+
+static func unregister(kind: String) -> void:
+	_custom.erase(kind)
+
 
 static func is_known(kind: String) -> bool:
-	return kind == ENET or kind == WEBSOCKET
+	return kind == ENET or kind == WEBSOCKET or _custom.has(kind)
 
 
-## 서버 쪽 피어를 연다. 실패하면 null. port 0을 주면 엔진이 고르지 못하므로(ENet) 항상 실제 포트를 줘야 한다.
-static func create_server(kind: String, port: int) -> MultiplayerPeer:
-	if not is_known(kind):
-		return null
+## 서버 쪽 피어를 연다. 실패하면 null.
+## tls: WebSocket에서만. 주면 wss로 연다 (TLSOptions.server(키, 인증서)). 운영에서는 보통 리버스 프록시가 TLS를 맡고 서버는 ws로 둔다.
+static func create_server(kind: String, port: int, tls: TLSOptions = null) -> MultiplayerPeer:
 	var err := ERR_INVALID_PARAMETER
 	var peer: MultiplayerPeer = null
-	match kind:
-		ENET:
-			var p := ENetMultiplayerPeer.new()
-			err = p.create_server(port, MAX_CLIENTS, NetProtocol.CHANNEL_COUNT)
-			peer = p
-		WEBSOCKET:
-			var p := WebSocketMultiplayerPeer.new()
-			err = p.create_server(port)
-			peer = p
+	if _custom.has(kind):
+		peer = _custom[kind]["server"].call(port)
+		err = OK if peer != null else ERR_CANT_CREATE
+	elif kind == ENET and tls == null:
+		var p := ENetMultiplayerPeer.new()
+		err = p.create_server(port, MAX_CLIENTS, NetProtocol.CHANNEL_COUNT)
+		peer = p
+	elif kind == WEBSOCKET:
+		var p := WebSocketMultiplayerPeer.new()
+		err = p.create_server(port, "*", tls)
+		peer = p
+	else:
+		return null  # 모르는 전송 계층이거나 ENet에 TLS를 줬다
 	if err != OK:
 		Log.error(Log.Category.NETWORK, "서버 열기 실패 (%s, 포트 %d): %s" % [kind, port, error_string(err)])
 		return null
@@ -36,26 +55,29 @@ static func create_server(kind: String, port: int) -> MultiplayerPeer:
 
 
 ## 클라이언트 쪽 피어를 연다 (접속은 비동기: 이어졌는지는 피어의 peer_connected 신호/연결 상태로 안다). 실패하면 null.
-static func create_client(kind: String, host: String, port: int) -> MultiplayerPeer:
-	if not is_known(kind):
-		return null
+## tls: WebSocket에서만. 주면 wss://로 접속한다 (TLSOptions.client()는 기기의 인증서 목록으로 서버를 확인한다).
+static func create_client(kind: String, host: String, port: int, tls: TLSOptions = null) -> MultiplayerPeer:
 	var err := ERR_INVALID_PARAMETER
 	var peer: MultiplayerPeer = null
-	match kind:
-		ENET:
-			var p := ENetMultiplayerPeer.new()
-			err = p.create_client(host, port, NetProtocol.CHANNEL_COUNT)
-			peer = p
-		WEBSOCKET:
-			var p := WebSocketMultiplayerPeer.new()
-			err = p.create_client("ws://%s:%d" % [host, port])
-			peer = p
+	if _custom.has(kind):
+		peer = _custom[kind]["client"].call(host, port)
+		err = OK if peer != null else ERR_CANT_CREATE
+	elif kind == ENET and tls == null:
+		var p := ENetMultiplayerPeer.new()
+		err = p.create_client(host, port, NetProtocol.CHANNEL_COUNT)
+		peer = p
+	elif kind == WEBSOCKET:
+		var p := WebSocketMultiplayerPeer.new()
+		err = p.create_client("%s://%s:%d" % ["wss" if tls != null else "ws", host, port], tls)
+		peer = p
+	else:
+		return null
 	if err != OK:
 		Log.error(Log.Category.NETWORK, "접속 시작 실패 (%s, %s:%d): %s" % [kind, host, port, error_string(err)])
 		return null
 	return peer
 
 
-## 연결 하나를 끊는다 (force=false: ENet은 보낼 것을 보낸 뒤 끊어서 reject 메시지가 먼저 도착한다)
+## 연결 하나를 끊는다 (force=false: ENet은 보낼 것을 보낸 뒤 끊는다)
 static func disconnect_peer(peer: MultiplayerPeer, peer_id: int) -> void:
 	peer.disconnect_peer(peer_id, false)

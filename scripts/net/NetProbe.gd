@@ -7,7 +7,7 @@ class_name NetProbe
 ##   Godot --headless --path . -- --connect=127.0.0.1:47300 --cell=5,10 --name=A
 ##   Godot --headless --path . -- --connect=127.0.0.1:47300 --cell=7,12 --name=B
 ##
-## 인자: --connect=호스트:포트 (필수)  --transport=enet|ws  --cell=x,y (지을 칸)  --name=이름  --timeout=초 (기본 30)
+## 인자: --connect=호스트:포트 (필수)  --transport=ws|enet (기본 ws)  --tls (wss로 접속, 기기의 인증서 목록으로 서버 확인)  --cell=x,y (지을 칸)  --name=이름  --timeout=초 (기본 30)
 ## 끝나면 한 줄 요약을 찍고 종료한다 (모든 참여자의 타워를 봤으면 0, 아니면 1, 거부당하면 2).
 
 var client := NetClient.new()
@@ -42,7 +42,8 @@ func _ready() -> void:
 			get_tree().quit(1))
 	var host: String = target[0] if target.size() == 2 else "127.0.0.1"
 	var port := int(target[1]) if target.size() == 2 else int(target[0])
-	if not client.connect_to(ServerMain.arg_value("transport", NetTransport.DEFAULT), host, port):
+	var tls: TLSOptions = TLSOptions.client() if "--tls" in OS.get_cmdline_args() + OS.get_cmdline_user_args() else null
+	if not client.connect_to(ServerMain.arg_value("transport", NetTransport.DEFAULT), host, port, tls):
 		print("PROBE 접속을 시작하지 못함")
 		get_tree().quit(1)
 

@@ -22,8 +22,8 @@ var players: Array = []
 var player_name := "player"
 var hello_disabled := false   # 테스트용: hello를 보내지 않는다 (말 없는 연결 시험)
 var proto_override := -1   # 테스트용: 이 값이 -1이 아니면 hello의 proto를 이 값으로 속인다 (버전 불일치 시험)
-var snapshot: Dictionary = {}       # 가장 최근에 받은 스냅샷 (자기 레인 + 보고 있는 레인 + 보스)
-var summary: Dictionary = {}        # 나머지 레인의 요약 (타워 칸/몬스터 점). 요약이 올 때마다 갱신
+var snapshot: Dictionary = {}       # 키프레임에 변경분을 적용해 맞춘 스냅샷 (자기 레인 + 보고 있는 레인 + 보스 HUD)
+var summary: Dictionary = {}        # 나머지 레인의 요약 (타워 칸/몬스터 점). 1Hz로 통째로 바뀐다
 var last_tick := 0
 var snapshot_count := 0
 var reject_reason := ""
@@ -36,11 +36,11 @@ var _next_ping := 1
 var _connect_started_ms := 0
 
 
-## 접속을 시작한다 (비동기). 소켓을 못 열면 false.
-func connect_to(kind: String, host: String, port: int) -> bool:
+## 접속을 시작한다 (비동기). 소켓을 못 열면 false. tls를 주면 wss (WebSocket만).
+func connect_to(kind: String, host: String, port: int, tls: TLSOptions = null) -> bool:
 	if not NetTransport.is_known(kind):
 		return false
-	peer = NetTransport.create_client(kind, host, port)
+	peer = NetTransport.create_client(kind, host, port, tls)
 	if peer == null:
 		state = State.CLOSED
 		return false
@@ -127,11 +127,17 @@ func _on_message(msg: Dictionary) -> void:
 			var snap = msg.get("snap")
 			if typeof(snap) != TYPE_DICTIONARY:
 				return
+			if msg.get("key", false):
+				snapshot = snap  # 키프레임: 통째로 교체
+			elif snapshot.is_empty():
+				return  # 키프레임 전에 온 변경분은 적용할 곳이 없다
+			else:
+				snapshot = SnapshotDelta.apply(snapshot, snap)
 			snapshot_count += 1
-			if snap.has("summary"):
-				summary = snap["summary"]
-			snapshot = snap
-			snapshot_received.emit(snap)
+			snapshot_received.emit(snapshot)
+		NetProtocol.MSG_SUMMARY:
+			if typeof(msg.get("summary")) == TYPE_DICTIONARY:
+				summary = msg["summary"]
 		NetProtocol.MSG_EVENTS:
 			events_received.emit(msg.get("list", []))
 		NetProtocol.MSG_RESULT:
@@ -143,12 +149,12 @@ func _on_message(msg: Dictionary) -> void:
 				_ping_sent_at.erase(n)
 
 
-func _send(msg: Dictionary, reliable := true) -> void:
+func _send(msg: Dictionary) -> void:
 	if peer == null:
 		return
 	peer.set_target_peer(MultiplayerPeer.TARGET_PEER_SERVER)
-	peer.transfer_channel = NetProtocol.CHANNEL_RELIABLE if reliable else NetProtocol.CHANNEL_SNAPSHOT
-	peer.transfer_mode = MultiplayerPeer.TRANSFER_MODE_RELIABLE if reliable else MultiplayerPeer.TRANSFER_MODE_UNRELIABLE_ORDERED
+	peer.transfer_channel = NetProtocol.CHANNEL_RELIABLE
+	peer.transfer_mode = MultiplayerPeer.TRANSFER_MODE_RELIABLE
 	peer.put_packet(NetProtocol.encode(msg))
 
 

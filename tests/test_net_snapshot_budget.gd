@@ -1,7 +1,7 @@
 extends "res://tests/case_base.gd"
 ## 이슈 #20: 스냅샷을 변경분(SnapshotDelta)으로 보내면 대역폭이 얼마가 되는가, 그리고 변경분을 적용하면 원래 스냅샷이 그대로 복원되는가.
 ## 최악에 가까운 판: 8명이 각자 타워 30기, 보스 레인에 몬스터 300마리가 몰려 서 있는 상황 (보스는 안 죽게 한다).
-## 숫자를 출력하고, 넉넉한 상한만 검사한다 (정한 예산은 아래 BUDGET_*). 1000마리일 때의 수치는 이슈 #20 코멘트에 적혀 있다.
+## 숫자를 출력하고, 넉넉한 상한만 검사한다 (예산 값은 #20에서 정한 것: 아래 BUDGET_*). 1000마리일 때의 수치는 이슈 #20 코멘트에 적혀 있다.
 
 const DEFAULT_MONSTERS := 300           # 인자 --monsters=N으로 바꿔 돌릴 수 있다 (더 큰 수치를 잴 때)
 const BUDGET_SETTLED_BASE := 3000        # 몬스터가 서 있는 보스 레인을 보는 클라이언트: 틱당 변경분 바이트 상한 = 이 값 + 몬스터 수 (서 있는 몬스터는 거의 0바이트라 몬스터 수에는 거의 안 늘어난다)
@@ -33,6 +33,7 @@ func run() -> void:
 	# 보는 곳이 다른 두 클라이언트: 보스 레인을 보는 쪽(boss)과 자기 레인을 보는 쪽(own)
 	var views := {"boss": GameField.BOSS_LANE_ID, "own": 0}
 	var prev := {}
+	var prev_q := {}
 	var t_last := 0.0
 	var started_ms := Time.get_ticks_msec()
 	var samples := {"boss": [], "own": []}  # [경과 초, 변경분 바이트, 서 있는 몬스터 수]
@@ -61,14 +62,16 @@ func run() -> void:
 		for m in q.boss.monsters:
 			if m.stopped:
 				stopped += 1
+		# 서버와 같은 경로: 틱당 전체 변경분을 한 번 계산하고, 클라이언트별로 자른다
+		var t2 := Time.get_ticks_usec()
+		var world_delta := SnapshotDelta.diff(prev_q, q) if not prev_q.is_empty() else {}
+		cost_diff_us += Time.get_ticks_usec() - t2
+		prev_q = q
 		for who in views:
-			var cur := NetServer.slice_for(q, 0, views[who], false)
+			var cur := NetServer.slice_for(q, 0, views[who])
 			var cur_json: Dictionary = JSON.parse_string(JSON.stringify(cur))
 			if prev.has(who):
-				var t2 := Time.get_ticks_usec()
-				var d := SnapshotDelta.diff(prev[who], cur)
-				if who == "boss":
-					cost_diff_us += Time.get_ticks_usec() - t2
+				var d := NetServer.slice_delta(world_delta, 0, views[who])
 				var d_text := JSON.stringify(d)
 				var rebuilt := SnapshotDelta.apply(JSON.parse_string(JSON.stringify(prev[who])), JSON.parse_string(d_text))
 				if _norm(rebuilt) != _norm(cur_json):
@@ -78,7 +81,7 @@ func run() -> void:
 				first_full[who] = JSON.stringify(cur).length()
 				first_full[who + "_deflate"] = JSON.stringify(cur).to_utf8_buffer().compress(FileAccess.COMPRESSION_DEFLATE).size()
 			prev[who] = cur
-	print("  서버 비용(틱당 평균): 스냅샷 만들기 %.2fms + 거칠게 하기 %.2fms + 보스 레인 클라이언트 1명의 변경분 %.2fms (몬스터 %d마리)" % [cost_build_us / 1000.0 / cost_n, cost_quant_us / 1000.0 / cost_n, cost_diff_us / 1000.0 / maxi(1, samples.boss.size()), MONSTERS])
+	print("  서버 비용(틱당 평균): 스냅샷 만들기 %.2fms + 거칠게 하기 %.2fms + 전체 변경분 계산 %.2fms (틱당 한 번, 클라이언트 수와 무관) (몬스터 %d마리)" % [cost_build_us / 1000.0 / cost_n, cost_quant_us / 1000.0 / cost_n, cost_diff_us / 1000.0 / maxi(1, cost_n - 1), MONSTERS])
 	check(roundtrip_ok, "변경분을 적용하면 원래 스냅샷이 그대로 복원된다 (%d번 비교)" % (samples.boss.size() + samples.own.size()))
 
 	var settled: Array = samples.boss.filter(func(s): return s[2] == MONSTERS and s[0] > 5.0)

@@ -11,7 +11,8 @@ class_name ServerMain
 ##   --bot               자동 플레이어를 붙인다 (참여자 모두). 사람 없이 한 판을 끝까지 돌릴 때
 ##   --bot-rich          --bot에 더해 서버 쪽에서 골드를 채워 준다 (스모크 테스트 전용. 보스 Lv.1~10을 끝까지 도는지 볼 때)
 ##   --port=N            네트워크로 클라이언트를 받는다 (#20). 주면 자동 시작/봇 없이 접속과 시작 명령을 기다린다
-##   --transport=enet|ws 전송 계층 (기본 enet = UDP, ws = WebSocket/TCP)
+##   --transport=ws|enet 전송 계층 (기본 ws = WebSocket/TCP, enet = UDP. 개발/LAN용)
+##   --tls-cert=경로 --tls-key=경로  주면 서버가 직접 wss로 연다 (ws 전용). 운영에서는 보통 리버스 프록시가 TLS를 맡아서 필요 없다
 ##   --start-when-full   참여자 자리가 다 차면 자동으로 시작한다 (로비 전의 임시 규칙, #22에서 대체)
 ## 한 판이 끝나면 결과를 로그에 한 줄 남기고 종료한다 (승리 0, 패배 1).
 
@@ -23,11 +24,21 @@ var result := {}   # 끝난 뒤의 요약. {victory, boss_level, reason}
 var net: NetServer = null            # 클라이언트를 받는 네트워크 (포트를 주었을 때만)
 var net_port := 0                    # 0이 아니면 이 포트로 연다 (--port= 인자가 있으면 그 값이 우선)
 var net_transport := NetTransport.DEFAULT
+var net_tls: TLSOptions = null       # 주면 wss (--tls-cert/--tls-key 인자가 있으면 그 파일로 만든다)
 
 
 ## 이 프로세스를 서버로 시작해야 하는가
 static func requested() -> bool:
 	return "--server" in OS.get_cmdline_args() or "--server" in OS.get_cmdline_user_args()
+
+
+## 인증서(.crt)와 개인 키(.key) 파일로 서버용 TLS 설정을 만든다. 못 읽으면 null.
+static func load_tls(cert_path: String, key_path: String) -> TLSOptions:
+	var cert := X509Certificate.new()
+	var key := CryptoKey.new()
+	if cert.load(cert_path) != OK or key.load(key_path) != OK:
+		return null
+	return TLSOptions.server(key, cert)
 
 
 ## "--name=값" 인자의 값 (없으면 fallback)
@@ -59,11 +70,18 @@ func _ready() -> void:
 	if arg_value("port") != "":
 		net_port = int(arg_value("port"))
 	net_transport = arg_value("transport", net_transport)
+	if arg_value("tls-cert") != "":
+		net_tls = load_tls(arg_value("tls-cert"), arg_value("tls-key"))
+		if net_tls == null:
+			net_port = 0
+			Log.error(Log.Category.NETWORK, "TLS 인증서/키를 읽지 못해 네트워크를 열지 않음")
+			if requested():
+				get_tree().quit.call_deferred(2)
 	if net_port > 0:
 		net = NetServer.new()
 		net.start_when_full = "--start-when-full" in OS.get_cmdline_args() or "--start-when-full" in OS.get_cmdline_user_args()
 		add_child(net)
-		var err := net.start(field, net_transport, net_port)
+		var err := net.start(field, net_transport, net_port, net_tls)
 		if err != OK:
 			Log.error(Log.Category.NETWORK, "네트워크를 열지 못해 서버를 끝냄 (포트 %d, %s)" % [net_port, net_transport])
 			result = {"victory": false, "boss_level": 0, "reason": "net_open_failed"}

@@ -12,7 +12,9 @@ class_name NetProtocol
 ## 서버 -> 클라이언트
 ##   welcome {proto, player_id, players, snap_hz, summary_hz}   접속 허가. player_id는 서버가 정한다
 ##   reject  {reason, proto, snapshot}       접속 거부 (REJECT_* 중 하나). 이 뒤에 서버가 연결을 끊는다
-##   snap    {tick, snap: {...}}             서버 상태 스냅샷 (내가 받기로 한 범위만, 아래 SNAPSHOT 참고)
+##   snap    {tick, key, snap: {...}}        내가 받기로 한 범위(자기 레인, 보고 있는 레인, 보스 HUD)의 스냅샷. key=true면 전체(키프레임: 그대로 교체),
+##                                           false면 이전 틱 위에 적용할 변경분(SnapshotDelta.apply). 모두 신뢰 순서로 오므로 빠지지 않는다
+##   summary {tick, summary: {"<레인>": {towers, monsters}}}  나머지 레인의 미니맵용 요약 (1Hz). 올 때마다 통째로 바꾼다
 ##   result  {seq, ok, reason}               내 명령의 결과
 ##   events  {list: [...]}                   연출 이벤트 (SimEvents 모양 그대로)
 ##   pong    {n}
@@ -27,6 +29,7 @@ const MSG_PING := "ping"
 const MSG_WELCOME := "welcome"
 const MSG_REJECT := "reject"
 const MSG_SNAP := "snap"
+const MSG_SUMMARY := "summary"
 const MSG_RESULT := "result"
 const MSG_EVENTS := "events"
 const MSG_PONG := "pong"
@@ -42,7 +45,7 @@ const MAX_CLIENT_PACKET := 2048
 ## 접속하고 hello를 안 보내는 연결을 끊기까지(초)
 const HELLO_TIMEOUT := 5.0
 
-## 채널: 0 = 믿을 수 있게(reliable) 보내는 것(접속/명령 결과/이벤트), 1 = 스냅샷(unreliable ordered: 늦은 것은 버려도 된다)
+## 채널(ENet만 의미가 있다): 0 = 접속/명령 결과/이벤트, 1 = 스냅샷/요약. 둘 다 신뢰 순서이고, 나눈 건 서로 기다리게 하지 않으려는 것이다
 const CHANNEL_RELIABLE := 0
 const CHANNEL_SNAPSHOT := 1
 const CHANNEL_COUNT := 2

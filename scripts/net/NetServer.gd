@@ -2,7 +2,12 @@ class_name NetServer
 extends Node
 ## 서버 쪽 네트워크 (#20). 헤드리스 서버(ServerMain)의 시뮬레이션 곁에 붙어서
 ##   - 접속을 받고(hello 버전 확인, 자리 배정), 명령을 받아 CommandBus로 실행하고, 결과를 돌려주고,
-##   - 일정한 주기로 스냅샷을 잘라서 보낸다 (자기 레인 + 보고 있는 레인 + 보스 레인은 자주, 나머지는 드물게).
+##   - 일정한 주기로 스냅샷의 "변경분"을 잘라서 보낸다 (자기 레인 + 보고 있는 레인 + 보스 HUD는 10Hz, 나머지 레인은 1Hz 요약).
+## 스냅샷 전송 규칙 (#20에서 정함):
+##   - 틱마다 전체 스냅샷을 거칠게(SnapshotDelta.quantize) 만들고, 이전 틱과의 차이(SnapshotDelta.diff)를 "한 번만" 계산한다.
+##     클라이언트마다 따로 계산하면 몬스터 1000마리에서 10ms x 클라이언트 수가 되므로, 한 번 계산한 변경분을 클라이언트별로 자르기만 한다.
+##   - 변경분은 신뢰 순서 채널로 보낸다 (받는 쪽이 이전 틱 위에 적용하므로 빠지면 안 된다). 새로 들어왔거나 보는 레인을 바꾼 클라이언트에게는 키프레임(전체)을 한 번 보낸다.
+##   - 미니맵용 요약은 1Hz로 따로 보낸다 (메시지 summary).
 ## 시뮬레이션은 건드리지 않는다: 명령은 CommandBus.execute 하나로만 들어가고, 스냅샷은 Snapshot.build 결과를 읽기만 한다.
 ##
 ## 권위: 플레이어 번호는 서버가 접속 때 정해 준다. 명령 안의 player_id가 그 연결의 번호와 다르면 실행하지 않고 거절한다.
@@ -24,6 +29,7 @@ var hello_timeout := NetProtocol.HELLO_TIMEOUT  # hello를 이 시간(초) 안�
 
 var _clients: Dictionary = {}     # peer_id -> {player_id: int(-1 = 아직 hello 전), view: int, age: float, name: String}
 var _slots: Dictionary = {}       # player_id -> peer_id
+var _prev_q: Dictionary = {}      # 이전 틱의 거칠게 한 전체 스냅샷 (변경분의 기준)
 var _snap_timer := 0.0
 var _summary_timer := 0.0
 var _tick := 0
@@ -34,13 +40,13 @@ var sent_bytes := {}
 var sent_packets := 0
 
 
-## 소켓을 열고 시뮬레이션 곁에 붙는다. 실패하면 오류 코드.
-func start(p_field: GameField, kind: String, port: int) -> Error:
+## 소켓을 열고 시뮬레이션 곁에 붙는다. 실패하면 오류 코드. tls를 주면 wss (WebSocket만).
+func start(p_field: GameField, kind: String, port: int, tls: TLSOptions = null) -> Error:
 	if not NetTransport.is_known(kind):
 		return ERR_INVALID_PARAMETER
 	field = p_field
 	transport = kind
-	peer = NetTransport.create_server(kind, port)
+	peer = NetTransport.create_server(kind, port, tls)
 	if peer == null:
 		return ERR_CANT_CREATE
 	peer.peer_connected.connect(_on_peer_connected)
@@ -99,7 +105,7 @@ func _process(delta: float) -> void:
 
 
 func _on_peer_connected(id: int) -> void:
-	_clients[id] = {"player_id": -1, "view": -1, "age": 0.0, "name": ""}
+	_clients[id] = {"player_id": -1, "view": -1, "age": 0.0, "name": "", "need_key": true}
 	Log.info(Log.Category.NETWORK, "연결 %d 들어옴 (hello 기다림)" % id)
 
 
@@ -146,8 +152,9 @@ func _on_message(id: int, msg: Dictionary) -> void:
 			_on_cmd(id, c, msg)
 		NetProtocol.MSG_VIEW:
 			var lane = msg.get("lane")
-			if typeof(lane) in [TYPE_INT, TYPE_FLOAT] and _is_lane(int(lane)):
+			if typeof(lane) in [TYPE_INT, TYPE_FLOAT] and _is_lane(int(lane)) and int(lane) != c.view:
 				c.view = int(lane)
+				c.need_key = true  # 새로 보는 레인은 전체를 한 번 받아야 한다
 		NetProtocol.MSG_PING:
 			_send(id, {"t": NetProtocol.MSG_PONG, "n": msg.get("n", 0)}, true)
 		_:
@@ -223,14 +230,14 @@ func _on_sim_event(ev: Dictionary) -> void:
 		_pending_events.append(ev)
 
 
-## reliable: true면 채널 0 reliable, false면 스냅샷 채널(unreliable ordered)
-func _send(id: int, msg: Dictionary, reliable: bool) -> void:
+## 모든 메시지를 신뢰 순서로 보낸다. 스냅샷/요약은 별도 채널(ENet에서 다른 메시지와 서로 안 막히게)이고, WebSocket은 채널이 없다.
+func _send(id: int, msg: Dictionary, general := true) -> void:
 	if peer == null:
 		return
 	var bytes := NetProtocol.encode(msg)
 	peer.set_target_peer(id)
-	peer.transfer_channel = NetProtocol.CHANNEL_RELIABLE if reliable else NetProtocol.CHANNEL_SNAPSHOT
-	peer.transfer_mode = MultiplayerPeer.TRANSFER_MODE_RELIABLE if reliable else MultiplayerPeer.TRANSFER_MODE_UNRELIABLE_ORDERED
+	peer.transfer_channel = NetProtocol.CHANNEL_RELIABLE if general else NetProtocol.CHANNEL_SNAPSHOT
+	peer.transfer_mode = MultiplayerPeer.TRANSFER_MODE_RELIABLE
 	peer.put_packet(bytes)
 	sent_packets += 1
 	var kind: String = msg["t"]
@@ -239,17 +246,27 @@ func _send(id: int, msg: Dictionary, reliable: bool) -> void:
 
 func _broadcast(with_summary: bool) -> void:
 	_tick += 1
-	var snap := field.snapshot(true)
+	var q := SnapshotDelta.quantize(field.snapshot(true))
+	var delta := SnapshotDelta.diff(_prev_q, q) if not _prev_q.is_empty() else {}
+	_prev_q = q
 	var events := _pending_events
 	_pending_events = []
 	for id in _clients:
 		var c: Dictionary = _clients[id]
 		if c.player_id < 0:
 			continue
-		_send(id, {"t": NetProtocol.MSG_SNAP, "tick": _tick, "snap": slice_for(snap, c.player_id, c.view, with_summary)}, false)
+		if c.need_key:
+			c.need_key = false
+			_send(id, {"t": NetProtocol.MSG_SNAP, "tick": _tick, "key": true, "snap": slice_for(q, c.player_id, c.view)}, false)
+		else:
+			var part := slice_delta(delta, c.player_id, c.view)
+			if not part.is_empty():
+				_send(id, {"t": NetProtocol.MSG_SNAP, "tick": _tick, "key": false, "snap": part}, false)
+		if with_summary:
+			_send(id, {"t": NetProtocol.MSG_SUMMARY, "tick": _tick, "summary": summary_for(q, c.player_id, c.view)}, false)
 		var mine := events.filter(func(ev): return _event_for(ev, c.player_id, c.view))
 		if not mine.is_empty():
-			_send(id, {"t": NetProtocol.MSG_EVENTS, "list": mine}, true)
+			_send(id, {"t": NetProtocol.MSG_EVENTS, "list": mine})
 
 
 ## 이 이벤트를 이 클라이언트에게 보내는가. 레인이 붙은 연출(fx_*)은 그 레인을 보고 있을 때만, 나머지(배너, 게임 끝)는 모두에게.
@@ -259,31 +276,56 @@ static func _event_for(ev: Dictionary, player_id: int, view: int) -> bool:
 	return true
 
 
-## 전체 스냅샷에서 한 클라이언트가 받을 부분만 자른다.
-##   - 자기 레인(own)과 보고 있는 레인(view)은 전부, 보스 레인은 항상 (HUD가 보스 상태를 쓴다)
+## 전체 스냅샷(키프레임)에서 한 클라이언트가 받을 부분만 자른다.
+##   - 자기 레인(own)과 보고 있는 레인(view)은 전부, 보스 레인(HUD용 보스 상태)은 항상
 ##   - 보스 레인을 보고 있지 않으면 보스의 몬스터 목록은 비운다 (미니맵 점은 요약으로 대신)
-##   - with_summary가 켜진 틱에는 나머지 레인의 요약(타워 칸, 몬스터 점)을 붙인다 (미니맵)
-static func slice_for(snap: Dictionary, own: int, view: int, with_summary: bool) -> Dictionary:
+static func slice_for(snap: Dictionary, own: int, view: int) -> Dictionary:
 	var lanes := {}
-	var summary := {}
 	for key in snap.lanes:
 		var lane_id := int(key)
 		if lane_id == own or lane_id == view:
 			lanes[key] = snap.lanes[key]
-		elif with_summary:
-			summary[key] = lane_summary(snap.lanes[key])
 	var boss: Dictionary = snap.boss
 	if not boss.is_empty() and view != GameField.BOSS_LANE_ID:
-		boss = boss.duplicate()  # 보스 레인을 안 보면 보낸 몬스터 목록은 점(요약)으로만 보낸다
-		if with_summary:
-			var dots: Array = []
-			for m in boss.monsters:
-				dots.append(m.pos)
-			summary[str(GameField.BOSS_LANE_ID)] = {"towers": [], "monsters": dots}
+		boss = boss.duplicate()
 		boss["monsters"] = []
-	var out := {"v": snap.v, "boss_lane": snap.boss_lane, "players": snap.players, "lanes": lanes, "boss": boss}
-	if with_summary:
-		out["summary"] = summary
+	return {"v": snap.v, "boss_lane": snap.boss_lane, "players": snap.players, "lanes": lanes, "boss": boss}
+
+
+## 틱 사이의 변경분(SnapshotDelta.diff 결과 전체)에서 한 클라이언트가 받을 부분만 자른다. slice_for와 같은 범위여야 한다.
+static func slice_delta(delta: Dictionary, own: int, view: int) -> Dictionary:
+	var out := {}
+	for key in delta:
+		match key:
+			"lanes":
+				var lanes := {}
+				for lane_key in delta.lanes:
+					if lane_key != SnapshotDelta.REMOVED and (int(lane_key) == own or int(lane_key) == view):
+						lanes[lane_key] = delta.lanes[lane_key]
+				if not lanes.is_empty():
+					out["lanes"] = lanes
+			"boss":
+				var boss: Dictionary = delta.boss
+				if view != GameField.BOSS_LANE_ID and boss.has("monsters"):
+					boss = boss.duplicate()
+					boss.erase("monsters")  # 보스 레인을 안 보는 클라이언트의 기준 몬스터 목록은 늘 비어 있다
+				if not boss.is_empty():
+					out["boss"] = boss
+			_:
+				out[key] = delta[key]
+	return out
+
+
+## 미니맵이 그리는 값: 자기/보고 있는 레인을 뺀 나머지 레인의 타워 칸과 몬스터 점.
+## 몬스터 점은 칸 하나에 하나만 남긴다 (미니맵 점은 2.5픽셀이라 한 칸 안의 여럿은 구별이 안 된다. 보스 레인에 수백 마리가 서 있을 때 크기를 줄인다).
+static func summary_for(snap: Dictionary, own: int, view: int) -> Dictionary:
+	var out := {}
+	for key in snap.lanes:
+		var lane_id := int(key)
+		if lane_id != own and lane_id != view:
+			out[key] = lane_summary(snap.lanes[key])
+	if not snap.boss.is_empty() and view != GameField.BOSS_LANE_ID:
+		out[str(GameField.BOSS_LANE_ID)] = {"towers": [], "monsters": _dots(snap.boss.monsters)}
 	return out
 
 
@@ -292,7 +334,16 @@ static func lane_summary(lane: Dictionary) -> Dictionary:
 	var towers: Array = []
 	for t in lane.towers:
 		towers.append(t.cell)
-	var monsters: Array = []
-	for m in lane.monsters:
-		monsters.append(m.pos)
-	return {"towers": towers, "monsters": monsters}
+	return {"towers": towers, "monsters": _dots(lane.monsters)}
+
+
+static func _dots(monsters: Array) -> Array:
+	var seen := {}
+	var dots: Array = []
+	for m in monsters:
+		var cell := [floori(m.pos[0]), floori(m.pos[1])]
+		var key: int = cell[0] * 1000 + cell[1]
+		if not seen.has(key):
+			seen[key] = true
+			dots.append([cell[0] + 0.5, cell[1] + 0.5])
+	return dots
