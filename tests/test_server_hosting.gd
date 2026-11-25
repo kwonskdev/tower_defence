@@ -45,6 +45,8 @@ func _files() -> void:
 	var compose := FileAccess.get_file_as_string("res://deploy/docker-compose.yml")
 	var service := FileAccess.get_file_as_string("res://deploy/lanewars.service")
 	check(compose.contains("restart: unless-stopped") and service.contains("Restart=always"), "죽으면 다시 뜬다 (compose 재시작 정책 / systemd Restart=always)")
+	var autostart := FileAccess.get_file_as_string("res://deploy/windows/install-autostart.ps1")
+	check(autostart.contains("-LogonType S4U") and autostart.contains("-RunLevel Limited") and not autostart.contains('-UserId "SYSTEM"') and not autostart.contains("RunLevel Highest"), "자동 시작 작업은 SYSTEM/최고 권한이 아니라 일반 계정(S4U, Limited)으로 등록된다")
 	check(FileAccess.get_file_as_string("res://deploy/Caddyfile").contains("reverse_proxy"), "TLS 리버스 프록시 예시(Caddy)가 서버로 넘긴다")
 
 

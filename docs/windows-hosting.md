@@ -30,7 +30,7 @@
 ```powershell
 powershell -ExecutionPolicy Bypass -File deploy\windows\run-server.ps1      # 직접 실행 (죽으면 RestartDelaySec 뒤 다시 시작)
 # 관리자 PowerShell:
-powershell -ExecutionPolicy Bypass -File deploy\windows\install-autostart.ps1          # 부팅 시 자동 시작 등록(작업 스케줄러 "LaneWarsServer", SYSTEM)
+powershell -ExecutionPolicy Bypass -File deploy\windows\install-autostart.ps1          # 부팅 시 자동 시작 등록(작업 스케줄러 "LaneWarsServer". 서버는 SYSTEM이 아니라 **일반 계정**(기본: 등록한 현재 사용자, `-User 계정`으로 서버 전용 일반 계정도 가능, S4U/Limited)으로 돈다. 관리자 권한은 등록할 때만 필요하다)
 powershell -ExecutionPolicy Bypass -File deploy\windows\install-autostart.ps1 -Remove  # 제거
 ```
 
