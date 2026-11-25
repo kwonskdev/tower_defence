@@ -34,6 +34,8 @@ var idle_close_sec := IDLE_CLOSE_SEC
 var max_connections := MAX_CONNECTIONS
 var max_pending := MAX_PENDING
 var hello_timeout := NetProtocol.HELLO_TIMEOUT
+var reconnect_grace := NetProtocol.RECONNECT_GRACE_SEC       # 방에 넘기는 값 (#23): 끊긴 뒤 돌아올 수 있는 시간
+var heartbeat_timeout := NetProtocol.HEARTBEAT_TIMEOUT_SEC   # 방에 넘기는 값 (#23): 판 중 이만큼 아무것도 못 받으면 끊김
 var room_max_players := Balance.MAX_PLAYERS
 var clock := Callable()              # () -> 지금(ms). 테스트가 만료/시도 제한 시계를 조작한다. 비면 엔진 시계
 
@@ -254,6 +256,8 @@ func _create_room(public := false) -> NetServer:
 	room.lobby = Lobby.new()
 	room.lobby.max_players = room_max_players
 	room.game_mode = room.session.game_mode
+	room.reconnect_grace = reconnect_grace
+	room.heartbeat_timeout = heartbeat_timeout
 	room.field_factory = func() -> GameField: return _make_field(room)
 	add_child(room)
 	if room.start_hosted(self, peer, transport) != OK:
@@ -296,7 +300,7 @@ func _housekeeping() -> void:
 		var starting := room.game_started and room.field == null  # 판을 만드는 중(몇 프레임)에는 닫지 않는다
 		if starting:
 			continue
-		if room.joined_count() == 0:
+		if room.alive_count() == 0:  # 끊겨서 유예 중인 사람도 아직 방에 있는 사람이다 (#23)
 			_close_room(code, "비었음")
 		elif not room.game_started and now - int(_last_msg.get(code, now)) >= int(idle_close_sec * 1000.0):
 			_close_room(code, "대기방에 오래 아무 메시지도 없음")

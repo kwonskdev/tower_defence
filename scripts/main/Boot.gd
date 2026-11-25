@@ -46,6 +46,8 @@ func _enter_online() -> void:
 	add_child(online_client)
 	online_client.keep_open = false
 	online_client.disconnected.connect(_on_online_disconnected)
+	online_client.link_lost.connect(_on_online_link_lost)
+	online_client.reconnect_failed.connect(_on_reconnect_failed)
 	if _has_own_lane():
 		_start_online_game()
 		return
@@ -70,6 +72,20 @@ func _start_online_game() -> void:
 	add_child(online_game)
 
 
+## 판 중 연결이 끊겼다: 결과를 보는 중이면 다시 접속할 필요가 없다. 아니면 NetClient가 자동으로 다시 접속하고 MainGame이 "재접속 중" 화면을 띄운다 (#23)
+func _on_online_link_lost() -> void:
+	if online_game != null and online_game.is_game_over():
+		online_client.stop_reconnect()
+
+
+## 유예 안에 돌아오지 못했다 (유예 끝 / 서버가 거부): 메뉴로 돌아간다
+func _on_reconnect_failed(reason: String) -> void:
+	if online_game != null and online_game.is_game_over():
+		leave_online("")
+		return
+	leave_online(MainMenu.reconnect_fail_text(reason))
+
+
 func _on_online_disconnected() -> void:
 	if online_game != null and online_game.is_game_over():
 		return  # 결과를 보고 있는 중: 서버가 끝난 방을 닫아도 [메뉴로]를 누를 때까지 둔다
@@ -78,9 +94,12 @@ func _on_online_disconnected() -> void:
 
 ## 온라인 판/접속을 정리하고 메인 메뉴로 돌아온다
 func leave_online(message: String) -> void:
+	Identity.clear_resume()  # 나갔으니 이 판으로 돌아올 일이 없다 (앱 재시작 복귀 정보도 지운다)
 	if online_client != null:
 		online_client.disconnected.disconnect(_on_online_disconnected)
-		online_client.close()
+		online_client.link_lost.disconnect(_on_online_link_lost)
+		online_client.reconnect_failed.disconnect(_on_reconnect_failed)
+		online_client.leave()  # 서버에 나간다고 알려 유예 없이 바로 이탈로 처리하게 한다 (연결이 없으면 그냥 닫는다)
 		online_client.queue_free()
 		online_client = null
 	if online_game != null:

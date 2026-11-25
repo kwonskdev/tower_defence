@@ -31,6 +31,7 @@ var solo_button: Button
 var create_button: Button
 var quick_button: Button
 var join_button: Button
+var resume_button: Button      # 앱이 꺼졌다 켜졌을 때 "진행 중인 판으로 돌아가기" (#23). 저장된 방/토큰이 있을 때만 보인다
 var status_label: Label
 var code_label: Label
 var copy_button: Button
@@ -38,6 +39,7 @@ var copy_button: Button
 var _form: VBoxContainer
 var _lobby_box: VBoxContainer
 var _connecting_left := -1.0
+var _resuming := false
 var _ping_left := PING_SEC
 
 
@@ -60,6 +62,8 @@ func _ready() -> void:
 	_form = VBoxContainer.new()
 	_form.add_theme_constant_override("separation", 10)
 	root.add_child(_form)
+	resume_button = _button(_form, "")
+	resume_button.visible = false
 	solo_button = _button(_form, "혼자 하기")
 	_form.add_child(HSeparator.new())
 	_form.add_child(_caption("닉네임"))
@@ -90,6 +94,8 @@ func _ready() -> void:
 	root.add_child(status_label)
 
 	_load_profile()
+	_refresh_resume()
+	resume_button.pressed.connect(resume_online)
 	solo_button.pressed.connect(func(): solo_chosen.emit())
 	quick_button.pressed.connect(func(): start_online(NetProtocol.MODE_QUICK))
 	create_button.pressed.connect(func(): start_online(NetProtocol.MODE_CREATE))
@@ -172,6 +178,8 @@ static func reject_text(reason: String) -> String:
 			return "방이 가득 찼습니다 (최대 %d명)." % Balance.MAX_PLAYERS
 		NetProtocol.REJECT_STARTED:
 			return "이미 시작한 방입니다."
+		NetProtocol.REJECT_LEFT:
+			return "이 판에서 이탈 처리됐습니다 (재접속 시간이 지났거나 직접 나갔습니다)."
 		NetProtocol.REJECT_TOO_MANY:
 			return "잘못된 코드를 너무 많이 입력했습니다. 잠시 뒤에 다시 시도하세요."
 		NetProtocol.REJECT_BUSY:
@@ -182,8 +190,39 @@ static func reject_text(reason: String) -> String:
 			return "접속하지 못했습니다 (%s)." % reason
 
 
+## 재접속하다 실패한 이유를 사람이 읽는 말로 (판 중 연결이 끊겼다가 돌아오지 못했을 때, 또는 앱 재시작 뒤 복귀가 거부됐을 때) (#23)
+static func reconnect_fail_text(reason: String) -> String:
+	match reason:
+		"grace_expired", NetProtocol.REJECT_LEFT:
+			return "재접속 시간이 지나 이 판에서 이탈 처리됐습니다."
+		NetProtocol.REJECT_NO_ROOM, NetProtocol.REJECT_STARTED:
+			return "서버와 연결이 끊겼고, 판이 이미 끝났거나 닫혀서 돌아갈 수 없습니다."
+		_:
+			return reject_text(reason)
+
+
+## 저장된 "진행 중인 판"이 있으면 [돌아가기] 버튼을 보인다
+func _refresh_resume() -> void:
+	var info := Identity.load_resume()
+	resume_button.visible = not info.is_empty()
+	if not info.is_empty():
+		resume_button.text = "진행 중인 판으로 돌아가기 (방 %s)" % info.room
+
+
+## 앱이 꺼졌다 켜진 뒤 같은 방/자리로 돌아간다: 저장해 둔 서버 주소, 방 코드, 토큰으로 입장을 요청한다 (서버가 토큰으로 자리 주인을 확인한다)
+func resume_online() -> void:
+	var info := Identity.load_resume()
+	if info.is_empty() or client != null:
+		return
+	server_edit.text = info.server
+	code_edit.text = info.room
+	name_edit.text = info.name if info.name != "" else name_edit.text
+	start_online(NetProtocol.MODE_JOIN, info.token)
+
+
 ## 방 만들기/입장을 시작한다 (MODE_CREATE/MODE_JOIN). 입력이 틀렸으면 이유를 보여 주고 접속하지 않는다.
-func start_online(mode: String) -> void:
+## token을 주면 그 토큰으로 접속한다 (앱 재시작 뒤 판으로 돌아올 때, #23). 없으면 새 임시 토큰이다.
+func start_online(mode: String, token := "") -> void:
 	if client != null:
 		return  # 접속 중
 	var target := parse_server(server_edit.text)
@@ -203,6 +242,8 @@ func start_online(mode: String) -> void:
 	client.player_name = nick
 	client.join_mode = mode
 	client.join_code = code if mode == NetProtocol.MODE_JOIN else ""
+	client.token = token
+	_resuming = token != ""
 	add_child(client)
 	client.joined.connect(_on_joined)
 	client.rejected.connect(_on_rejected)
@@ -229,7 +270,7 @@ func _process(delta: float) -> void:
 
 
 func _set_busy(busy: bool) -> void:
-	for b in [solo_button, quick_button, create_button, join_button]:
+	for b in [solo_button, quick_button, create_button, join_button, resume_button]:
 		b.disabled = busy
 
 
@@ -239,6 +280,10 @@ func _status(text: String) -> void:
 
 func _on_joined(_player_id: int) -> void:
 	_connecting_left = -1.0
+	if client.resumed:  # 진행 중인 판으로 돌아왔다: 대기방을 거치지 않고 바로 게임 화면 (Boot가 접속을 넘겨 받는다)
+		_status("게임을 불러오는 중...")
+		online_started.emit()
+		return
 	_form.visible = false
 	_lobby_box.visible = true
 	_refresh_code()
@@ -250,6 +295,7 @@ func _on_joined(_player_id: int) -> void:
 	lobby_screen.leave_requested.connect(func(): _reset_online(""))
 	lobby_screen.started.connect(func():
 		_status("게임을 불러오는 중...")
+		Identity.save_resume({"server": server_edit.text.strip_edges(), "room": client.room_code, "token": client.token, "name": client.player_name})  # 앱이 꺼져도 돌아올 수 있게
 		online_started.emit())
 
 
@@ -259,6 +305,11 @@ func _refresh_code() -> void:
 
 
 func _on_rejected(reason: String, _info: Dictionary) -> void:
+	if _resuming:  # 돌아갈 판이 없다 (끝났거나 이탈 처리됨): 저장해 둔 것을 지운다
+		Identity.clear_resume()
+		_refresh_resume()
+		_reset_online(reconnect_fail_text(reason))
+		return
 	_reset_online(reject_text(reason))
 
 
@@ -270,6 +321,7 @@ func _on_disconnected() -> void:
 ## 접속/대기방에서 처음 화면으로 돌아간다 (message가 있으면 보여 준다)
 func _reset_online(message: String) -> void:
 	_connecting_left = -1.0
+	_resuming = false
 	if client != null:
 		client.close()
 		client.queue_free()

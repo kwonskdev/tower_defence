@@ -1,9 +1,18 @@
 # Godot 4+ specific ignores
 .godot/
-/android/
+# Android Gradle 템플릿은 추적하되, 생성물·엔진 바이너리는 제외한다
+# (libs의 godot-lib aar는 각 100MB 초과라 GitHub에 못 올림 -> 템플릿 설치로 복구)
+/android/build/build/
+/android/build/.gradle/
+/android/build/libs/
+/android/build/src/main/assets/
+/android/build/src/debug/
+/android/build/src/release/
+/android/build/res/mipmap*/
+/android/build/res/values*/godot_project_name_string.xml
+/android/build/res/values/themes.xml
 .import/
 export.cfg
-export_presets.cfg
 
 # Logs
 *.log
@@ -40,4 +49,7 @@ error.md
 # Documentation (not needed in git)
 Godot_Multiplayer_Tower_Defense_Game_Development_Specification.md
 step.md
-build/
+/build/
+
+# 소유자 개인 앱스토어 등록 메모 (로컬에만 둔다)
+store-listing.md

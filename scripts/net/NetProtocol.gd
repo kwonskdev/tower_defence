@@ -12,8 +12,10 @@ class_name NetProtocol
 ##   ping    {n}                             왕복 시간 재기용 (서버가 같은 n으로 pong)
 ##   ready   {on}                            로비에서 준비/준비 취소 (방장은 늘 준비됨) (#22)
 ##   start   {}                              로비에서 방장이 시작한다. 모두 준비했을 때만 받아 준다 (#22)
+##   leave   {}                              게임 중 의도적으로 나간다 (#23). 서버는 유예 없이 바로 이탈로 처리한다
+##   (hello의 token: 재접속 식별용 기기 임시 토큰. 판이 시작된 방에 같은 token으로 다시 들어오면 같은 레인으로 복귀한다 (#23))
 ## 서버 -> 클라이언트
-##   welcome {proto, player_id, players, snap_hz, summary_hz, room, mode}   접속 허가. player_id는 서버가 정한다
+##   welcome {proto, player_id, players, snap_hz, summary_hz, room, mode, resumed?, names?}   접속 허가. player_id는 서버가 정한다. resumed=true면 재접속이다 (같은 레인 복귀, 곧 키프레임이 온다) (#23)
 ##   reject  {reason, proto, snapshot}       접속 거부 (REJECT_* 중 하나). 이 뒤에 서버가 연결을 끊는다
 ##   snap    {tick, key, snap: {...}}        내가 받기로 한 범위(자기 레인, 보고 있는 레인, 보스 HUD)의 스냅샷. key=true면 전체(키프레임: 그대로 교체),
 ##                                           false면 이전 틱 위에 적용할 변경분(SnapshotDelta.apply). 모두 신뢰 순서로 오므로 빠지지 않는다
@@ -22,10 +24,11 @@ class_name NetProtocol
 ##   events  {list: [...]}                   연출 이벤트 (SimEvents 모양 그대로)
 ##   pong    {n}
 ##   lobby   {members: [{lane, name, ready, host}], host, max, can_start, room, mode, public}   로비 상태 (바뀔 때마다) (#22)
+##   presence {away: [레인], left: [레인], host: 방장 레인, note?: {kind, lane}}   끊긴/이탈한 사람과 방장 (바뀔 때마다). note.kind는 away(끊김)/back(돌아옴)/left(이탈)/host(방장 바뀜) (#23)
 ##   started {players, names: {"<레인>": 닉네임}}   방장이 시작해서 게임이 시작됐다 (서버가 바로 start_game을 한다. 첫 몬스터는 30초 뒤). 이 뒤로 snap이 온다. 이때 참여자(레인)가 확정된다.
 
 ## 선로 형식(메시지 모양)이 바뀌면 올린다. 클라이언트와 서버가 같은 값이어야만 접속된다 (큰 호환 규칙: 다르면 거부).
-const PROTOCOL_VERSION := 3  # 2: 로비(lobby/started), 닉네임 (#22) / 3: 방 코드(hello mode/code, welcome/lobby room) (#26)
+const PROTOCOL_VERSION := 4  # 2: 로비(lobby/started), 닉네임 (#22) / 3: 방 코드(hello mode/code, welcome/lobby room) (#26) / 4: 재접속(hello token, leave, presence, welcome resumed) (#23)
 
 const MSG_HELLO := "hello"
 const MSG_CMD := "cmd"
@@ -42,12 +45,15 @@ const MSG_LOBBY := "lobby"
 const MSG_STARTED := "started"
 const MSG_READY := "ready"
 const MSG_START := "start"
+const MSG_LEAVE := "leave"
+const MSG_PRESENCE := "presence"
 
 ## 접속 거부 사유
 const REJECT_PROTOCOL := "protocol_mismatch"   # 프로토콜/스냅샷 버전이 다르다
 const REJECT_FULL := "room_full"                # 자리가 없다
 const REJECT_BAD_HELLO := "bad_hello"           # 첫 메시지가 hello가 아니거나 모양이 틀렸다
-const REJECT_STARTED := "already_started"       # 판이 이미 시작했다 (재접속은 #23에서)
+const REJECT_STARTED := "already_started"       # 판이 이미 시작했다 (토큰이 없거나 이 판의 자리 주인이 아니면 재접속도 못 한다)
+const REJECT_LEFT := "seat_released"            # 이 판의 내 자리가 이미 이탈로 처리됐다 (유예가 지났거나 내가 나갔다) (#23)
 const REJECT_NO_ROOM := "room_not_found"        # 없는 방 코드 (모양이 틀린 코드, 반납/만료된 코드 포함) (#26)
 const REJECT_TOO_MANY := "too_many_attempts"    # 잘못된 코드를 너무 많이 시도했다 (그 연결을 끊는다) (#26)
 const REJECT_BUSY := "server_busy"              # 방을 더 만들 수 없다 (방 수 상한) (#26)
@@ -56,6 +62,20 @@ const REJECT_BUSY := "server_busy"              # 방을 더 만들 수 없다 (
 const MODE_CREATE := "create"
 const MODE_JOIN := "join"
 const MODE_QUICK := "quick"      # 빠른 시작: 자리 있는 공개 방에 들어가고, 없으면 새 공개 방을 만든다 (코드 없이)
+
+## 연결 끊김 감지 (#23, 오너 결정). 게임 중 클라이언트가 이 간격(초)마다 ping을 보내고, 서버는 그 연결에서 이 시간(초) 동안
+## 아무것도 못 받으면 끊김으로 본다 (TCP는 망이 바뀌어도 한참 동안 안 끊긴 것처럼 보인다). 클라이언트도 서버에서 이만큼 아무것도 못 받으면 끊긴 것으로 본다.
+const HEARTBEAT_PING_SEC := 3.0
+const HEARTBEAT_TIMEOUT_SEC := 10.0
+## 끊긴 뒤 같은 자리로 돌아올 수 있는 시간(초). 지나면 이탈로 처리한다 (오너 결정: 90초)
+const RECONNECT_GRACE_SEC := 90.0
+## 클라이언트가 자동으로 다시 접속을 시도하는 간격(초): 1, 2, 4, 5, 5 ...
+const RECONNECT_RETRY_MIN_SEC := 1.0
+const RECONNECT_RETRY_MAX_SEC := 5.0
+## 재접속 시도 하나가 이 시간(초) 안에 입장하지 못하면 접고 다음 시도로 넘어간다
+const RECONNECT_ATTEMPT_SEC := 4.0
+## 앱이 돌아왔을 때 서버에서 이 시간(ms) 넘게 아무것도 못 받았으면 죽은 연결로 보고 바로 다시 접속한다 (스냅샷은 초당 10번 온다)
+const RESUME_STALE_MS := 2000
 
 ## 서버가 받아 주는 클라이언트 메시지의 최대 크기(바이트). 명령 하나는 100바이트 안팎이다.
 const MAX_CLIENT_PACKET := 2048
@@ -102,12 +122,14 @@ static func decode(bytes: PackedByteArray) -> Dictionary:
 
 ## 클라이언트가 보낼 hello
 ## mode/code는 방 코드 서버용 (#26): MODE_CREATE면 code 없이, MODE_JOIN이면 방 코드를 준다. 안 주면 필드를 싣지 않는다 (예전 서버와 같은 모양).
-static func make_hello(player_name: String, mode := "", code := "") -> Dictionary:
+static func make_hello(player_name: String, mode := "", code := "", token := "") -> Dictionary:
 	var hello := {"t": MSG_HELLO, "proto": PROTOCOL_VERSION, "snapshot": Snapshot.VERSION, "game": game_version(), "name": player_name}
 	if mode != "":
 		hello["mode"] = mode
 	if code != "":
 		hello["code"] = code
+	if token != "":
+		hello["token"] = token
 	return hello
 
 

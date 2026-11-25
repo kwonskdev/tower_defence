@@ -86,6 +86,7 @@ var _play_time := 0.0                    # 실제로 플레이한 시간(초). �
 var online := false                      # 온라인 모드 (#26): 판은 서버가 돌리고 이 화면은 서버 스냅샷만 그린다. 시작/일시정지 버튼 없음, 나가기 버튼. create_online이 켠다
 var leave_button: Button                 # 온라인: 맵 오른쪽 위 [나가기]
 var leave_dialog: ConfirmationDialog
+var reconnect_overlay: ReconnectOverlay  # 온라인: 연결이 끊겼을 때의 "재접속 중" 안내 (#23)
 var _play_running := false               # 시작 버튼을 눌렀는지
 
 # 일시정지: get_tree().paused로 게임 전체를 멈추고, 항상 동작하는 PauseOverlay를 위에 띄운다
@@ -1330,6 +1331,11 @@ func _show_skill_banner(info: Dictionary) -> void:
 	_banner_info = info
 	_banner_delay = float(info.get("delay", 0.0))
 	_banner_left = SKILL_BANNER_SECONDS + _banner_delay
+	if info.get("plain", false):  # 연결 상태 알림: 보스 스킬이 아니라서 미니맵을 깜빡이지 않는다
+		skill_banner_title.text = str(info.name)
+		skill_banner_text.text = str(info.text)
+		skill_banner.visible = true
+		return
 	skill_banner_title.text = "[%s] %s  -  BOSS %s" % [BossSkills.lane_tag(info.lane), info.name, info.get("boss", "")]
 	_refresh_skill_banner_text()
 	_alert_minimaps(info.lane, _banner_left)
@@ -2047,6 +2053,10 @@ func _notification(what: int) -> void:
 		if detail_action != null and is_instance_valid(detail_action) and detail_action.get_parent() == null:
 			detail_action.free()
 		return
+	if online and (what == NOTIFICATION_APPLICATION_RESUMED or what == NOTIFICATION_WM_WINDOW_FOCUS_IN):
+		if game_field.remote != null:  # 앱이 돌아왔다: 끊겼으면 바로 다시 접속한다 (온라인 판은 백그라운드에서도 서버가 멈추지 않는다)
+			game_field.remote.on_app_resumed()
+		return
 	if what == NOTIFICATION_APPLICATION_PAUSED or what == NOTIFICATION_WM_WINDOW_FOCUS_OUT:
 		if _play_running and pause_overlay != null and game_field.session.is_solo() and not online:  # 여럿이 하는 판은 멈출 수 없다
 			_set_paused(true)
@@ -2267,10 +2277,59 @@ func _setup_online_ui() -> void:
 	game_field.ui_blockers.append(leave_button)
 	leave_dialog = _make_confirm_dialog("나가기", "게임에서 나가 메뉴로 돌아갑니다.\n나가면 이 판에 다시 들어올 수 없습니다.", "나갈래요")
 	leave_dialog.confirmed.connect(func(): exit_requested.emit())
+	_setup_reconnect_ui()
 	# 결과 화면: 온라인에서는 재도전이 없고, 메뉴로 돌아간다
 	game_over_screen.restart_button.visible = false
 	game_over_screen.quit_button.text = "메뉴로"
 	_refresh_start_button()
+
+
+## 끊김/재접속 화면과 안내 (#23): 끊기면 재접속 오버레이, 돌아오면 닫고, 다른 사람의 끊김/돌아옴/이탈/방장 변경은 배너로 알린다
+func _setup_reconnect_ui() -> void:
+	var client := game_field.remote
+	if client == null:
+		return
+	reconnect_overlay = ReconnectOverlay.new()
+	reconnect_overlay.client = client
+	reconnect_overlay.leave_requested.connect(func(): exit_requested.emit())
+	add_child(reconnect_overlay)
+	game_field.ui_blockers.append(reconnect_overlay)
+	client.link_lost.connect(_on_link_lost)
+	client.reconnected.connect(_on_reconnected)
+	client.presence_changed.connect(_on_presence_note)
+
+
+func _on_link_lost() -> void:
+	if not game_over_screen.visible:
+		reconnect_overlay.show_overlay()
+
+
+func _on_reconnected() -> void:
+	reconnect_overlay.hide_overlay()
+	game_field.set_view_remote()  # 보던 레인을 서버에 다시 알린다 (서버는 내 레인부터 보내 준다)
+	_show_notice_banner("다시 연결됐습니다", "서버의 최신 상태로 이어서 합니다.")
+
+
+## 다른 사람(또는 나)의 상태가 바뀌었다는 알림 (서버의 presence.note)
+func _on_presence_note(note: Dictionary) -> void:
+	if note.is_empty():
+		return
+	var lane := int(note.get("lane", -1))
+	var who := game_field.session.name_of(lane)
+	match str(note.get("kind", "")):
+		"away":
+			_show_notice_banner("%s님 연결 끊김" % who, "%d초 안에 돌아오지 않으면 이 판에서 이탈합니다. 그동안 레인은 그대로 싸웁니다." % int(NetProtocol.RECONNECT_GRACE_SEC))
+		"back":
+			_show_notice_banner("%s님 돌아옴" % who, "")
+		"left":
+			_show_notice_banner("%s님 이탈" % who, "이 레인은 탈락했습니다.")
+		"host":
+			_show_notice_banner("방장이 %s님으로 바뀜" % who, "")
+
+
+## 보스 스킬 배너와 같은 자리에 뜨는 일반 알림
+func _show_notice_banner(title: String, text: String) -> void:
+	_banner_queue.append({"plain": true, "name": title, "text": text, "lane": "", "delay": 0.0, "boss": ""})
 
 
 func _ask_leave() -> void:

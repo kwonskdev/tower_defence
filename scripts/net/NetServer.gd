@@ -10,10 +10,17 @@ extends Node
 ##   - 미니맵용 요약은 1Hz로 따로 보낸다 (메시지 summary).
 ## 시뮬레이션은 건드리지 않는다: 명령은 CommandBus.execute 하나로만 들어가고, 스냅샷은 Snapshot.build 결과를 읽기만 한다.
 ##
+## 끊김/재접속/이탈 (#23): 판이 시작되면 접속자마다 "자리"(_seats)를 만든다. 연결이 끊기거나(하트비트 시간 초과 포함) 사라져도 레인은 그대로 싸우고(수입은 쌓이고 몬스터는 온다),
+##   유예(reconnect_grace) 안에 같은 토큰(Identity)으로 hello를 보내면 같은 레인으로 복귀한다(키프레임부터 다시). 유예가 지나거나 [나가기](leave)를 보내면 이탈로 처리해 #22의 탈락과 똑같이 한다.
+##   명령은 받는 즉시 실행하고 쌓아 두지 않으며, 연결이 끊긴 뒤 그 연결에서 온 것은 무시한다. 방장(host_lane)은 표시용이고, 이탈하면 입장 순서상 다음 사람에게 넘어간다.
+##   화면에 보여 줄 끊김/이탈/방장 정보는 presence 메시지로 모두에게 보낸다.
 ## 권위: 플레이어 번호는 서버가 접속 때 정해 준다. 명령 안의 player_id가 그 연결의 번호와 다르면 실행하지 않고 거절한다.
 
 signal client_joined(peer_id: int, player_id: int)
 signal client_left(peer_id: int, player_id: int)
+signal seat_away(player_id: int)        # 끊겼다 (유예 시작) (#23)
+signal seat_back(player_id: int)        # 유예 안에 돌아왔다
+signal seat_left(player_id: int)        # 이탈 처리됐다 (유예 끝 / 나가기)
 
 const SNAP_HZ := 10.0       # 자기 레인/보고 있는 레인/보스 레인 (HUD와 움직임)
 const SUMMARY_HZ := 1.0     # 나머지 레인 (미니맵용 점)
@@ -41,9 +48,14 @@ var game_mode := Session.MODE_COOP   # 방의 게임 모드 (PvP는 범위 밖: 
 var start_when_full := false  # 참여자 자리가 다 차면 서버가 시작 명령을 실행한다 (로비가 생기기 전의 임시 규칙. 로비는 #22)
 var max_connections := NetProtocol.MAX_CONNECTIONS  # 테스트가 줄인다
 var max_pending := NetProtocol.MAX_PENDING
+var reconnect_grace := NetProtocol.RECONNECT_GRACE_SEC       # 끊긴 뒤 돌아올 수 있는 시간(초). 지나면 이탈 (#23). 테스트가 줄인다
+var heartbeat_timeout := NetProtocol.HEARTBEAT_TIMEOUT_SEC   # 판 중 이 시간(초) 동안 그 연결에서 아무것도 못 받으면 끊김으로 본다 (#23)
+var host_lane := -1                  # 판이 시작된 뒤의 방장 레인 (화면 표시용: 서버 권위형이라 방장 권한은 대기방에서만 의미가 있다). 이탈하면 입장 순서상 다음 사람으로 (#23)
 var hello_timeout := NetProtocol.HELLO_TIMEOUT  # hello를 이 시간(초) 안에 안 보내면 끊는다 (테스트가 줄인다)
 
-var _clients: Dictionary = {}     # peer_id -> {player_id: int(-1 = 아직 hello 전), view: int, age: float, name: String}
+var _clients: Dictionary = {}     # peer_id -> {player_id: int(-1 = 아직 hello 전), view: int, age: float, name: String, token_hash, silent}
+var _seats: Dictionary = {}       # 판이 시작될 때 만든 자리: 레인 -> {hash: 토큰 해시, name, away: 끊겨서 유예 중, left: 이탈, away_sec: 남은 유예}. 재접속은 이 자리의 주인(Identity)만 한다 (#23)
+var _join_order: Array[int] = []  # 입장 순서의 레인 (방장 승계 순서)
 var _slots: Dictionary = {}       # player_id -> peer_id
 var _prev_q: Dictionary = {}      # 이전 틱의 거칠게 한 전체 스냅샷 (변경분의 기준)
 var _snap_timer := 0.0
@@ -114,6 +126,24 @@ func joined_count() -> int:
 	return _slots.size()
 
 
+## 이 방에 아직 있는 사람 수: 접속 중 + 끊겼지만 유예 중인 사람 (방을 닫을지 정할 때 쓴다) (#23)
+func alive_count() -> int:
+	var n := _slots.size()
+	for lane in _seats:
+		if _seats[lane].away and not _seats[lane].left:
+			n += 1
+	return n
+
+
+## 이 레인의 자리가 끊겨서 유예 중인가 / 이탈했는가 (테스트와 화면 표시용)
+func is_away(lane: int) -> bool:
+	return _seats.has(lane) and _seats[lane].away and not _seats[lane].left
+
+
+func has_left(lane: int) -> bool:
+	return _seats.has(lane) and _seats[lane].left
+
+
 func player_of(peer_id: int) -> int:
 	return _clients.get(peer_id, {}).get("player_id", -1)
 
@@ -137,6 +167,12 @@ func _process(delta: float) -> void:
 		elif c.player_id < 0 and c.age > hello_timeout:  # hello를 안 보내는 연결
 			Log.warn(Log.Category.NETWORK, "hello가 안 와서 끊음: 연결 %d" % id)
 			_drop(id)
+		elif c.player_id >= 0 and not _seats.is_empty():  # 판 중 하트비트: 클라이언트는 3초마다 ping을 보낸다 (#23)
+			c.silent += delta
+			if c.silent > heartbeat_timeout:
+				Log.warn(Log.Category.NETWORK, "P%d에게서 %.0f초 동안 아무것도 못 받아 끊김으로 봄 (연결 %d)" % [c.player_id + 1, c.silent, id])
+				_drop(id)
+	_tick_away(delta)
 	if lobby != null and field == null:
 		_process_lobby(delta)
 	_snap_timer += delta
@@ -155,9 +191,13 @@ func _on_peer_connected(id: int) -> void:
 		Log.warn(Log.Category.NETWORK, "연결 수 상한이라 바로 끊음: 연결 %d (전체 %d/%d, hello 전 %d/%d)" % [id, _clients.size(), max_connections, _pending_count(), max_pending])
 		NetTransport.disconnect_peer(peer, id)
 		return
-	_clients[id] = {"player_id": -1, "view": -1, "age": 0.0, "name": "", "need_key": true,
-		"tokens": NetProtocol.RATE_BURST, "view_tokens": NetProtocol.VIEW_BURST, "ignored": 0.0}
+	_clients[id] = _new_client()
 	Log.info(Log.Category.NETWORK, "연결 %d 들어옴 (hello 기다림)" % id)
+
+
+func _new_client() -> Dictionary:
+	return {"player_id": -1, "view": -1, "age": 0.0, "name": "", "need_key": true, "token_hash": "", "silent": 0.0,
+		"tokens": NetProtocol.RATE_BURST, "view_tokens": NetProtocol.VIEW_BURST, "ignored": 0.0}
 
 
 ## 방 모드: 지금 새 사람이 들어올 수 있는 대기방인가 (시작 전이고 자리가 있다)
@@ -167,8 +207,7 @@ func is_open() -> bool:
 
 ## 방 모드: hub가 이 방으로 보낸 연결의 hello를 받는다 (hub가 버전/방 코드는 이미 확인했다). 방이 거부하면(가득/이미 시작) reject를 보내고 곧 끊는다.
 func admit(id: int, hello: Dictionary) -> void:
-	_clients[id] = {"player_id": -1, "view": -1, "age": 0.0, "name": "", "need_key": true,
-		"tokens": NetProtocol.RATE_BURST, "view_tokens": NetProtocol.VIEW_BURST, "ignored": 0.0}
+	_clients[id] = _new_client()
 	_on_hello(id, _clients[id], hello)
 
 
@@ -200,10 +239,8 @@ func _on_peer_disconnected(id: int) -> void:
 	if c.is_empty():
 		return
 	if c.player_id >= 0:
-		_slots.erase(c.player_id)
 		Log.info(Log.Category.NETWORK, "P%d 연결 끊김 (연결 %d)" % [c.player_id + 1, id])
-		_leave_lobby(id)
-		client_left.emit(id, c.player_id)
+		_release(id, c, false)
 
 
 ## 연결을 서버가 끊는다. 입장했던 클라이언트면 자리를 비우고 client_left를 낸다 (한 번만: 이 함수가 목록에서 먼저 지우므로
@@ -214,10 +251,24 @@ func _drop(id: int) -> void:
 	_send_warn_at.erase(id)
 	NetTransport.disconnect_peer(peer, id)
 	if not c.is_empty() and c.player_id >= 0:
-		_slots.erase(c.player_id)
 		Log.info(Log.Category.NETWORK, "P%d를 서버가 끊음 (연결 %d)" % [c.player_id + 1, id])
+		_release(id, c, false)
+
+
+## 입장했던 연결이 사라졌다. 판이 시작된 뒤면 자리를 비우지 않고 "끊김(유예)"으로 두고, 의도적으로 나간 것(leave)이면 바로 이탈로 처리한다.
+## 시작 전(대기방)이면 로비에서 빠진다. 이 연결의 명령은 서버에 쌓아 두지 않으므로(받는 즉시 실행) 돌아와도 옛 명령이 실행되지 않는다.
+func _release(id: int, c: Dictionary, intentional: bool) -> void:
+	var pid: int = c.player_id
+	if _slots.get(pid, -1) == id:
+		_slots.erase(pid)
+	if _seats.has(pid):
+		if intentional:
+			_leave_seat(pid, "나가기")
+		else:
+			_go_away(pid)
+	else:
 		_leave_lobby(id)
-		client_left.emit(id, c.player_id)
+	client_left.emit(id, pid)
 
 
 # ---- 받기 ------------------------------------------------------------------
@@ -237,6 +288,7 @@ func _read_packets() -> void:
 
 func _on_message(id: int, msg: Dictionary) -> void:
 	var c: Dictionary = _clients[id]
+	c.silent = 0.0  # 무슨 메시지든 살아 있다는 뜻이다 (하트비트)
 	if c.has("kick_in"):
 		return  # 이미 거부한 연결의 메시지는 무시한다
 	if not _take_token(id, c, msg.get("t", "") == NetProtocol.MSG_VIEW):
@@ -263,6 +315,12 @@ func _on_message(id: int, msg: Dictionary) -> void:
 				c.need_key = true  # 새로 보는 레인은 전체를 한 번 받아야 한다
 		NetProtocol.MSG_PING:
 			_send(id, {"t": NetProtocol.MSG_PONG, "n": msg.get("n", 0)}, true)
+		NetProtocol.MSG_LEAVE:  # 의도적 이탈: 유예 없이 바로 이탈 (#23)
+			_clients.erase(id)
+			_send_warn_at.erase(id)
+			NetTransport.disconnect_peer(peer, id)
+			Log.info(Log.Category.NETWORK, "P%d가 나갔다 (연결 %d)" % [c.player_id + 1, id])
+			_release(id, c, true)
 		_:
 			Log.debug(Log.Category.NETWORK, "모르는 메시지 무시: %s (연결 %d)" % [str(msg.get("t", "?")).left(20), id])
 
@@ -293,7 +351,12 @@ func _is_lane(lane: int) -> bool:
 func _on_hello(id: int, c: Dictionary, msg: Dictionary) -> void:
 	var bad := NetProtocol.check_hello(msg)
 	if bad == "" and (game_started or (field != null and field.bus.started)):
-		bad = NetProtocol.REJECT_STARTED
+		# 이미 시작한 판: 이 판의 자리 주인(토큰이 맞는 사람)만 같은 레인으로 돌아온다 (#23)
+		var seat_lane := _seat_for_token(msg.get("token"))
+		if seat_lane >= 0 and not _seats[seat_lane].left:
+			_resume(id, c, seat_lane)
+			return
+		bad = NetProtocol.REJECT_LEFT if seat_lane >= 0 else NetProtocol.REJECT_STARTED
 	var slot := -1
 	var nick := Nicknames.unique(str(msg.get("name", "")), _taken_names())
 	if bad == "" and lobby != null:
@@ -319,6 +382,7 @@ func _on_hello(id: int, c: Dictionary, msg: Dictionary) -> void:
 	c.player_id = slot
 	c.view = slot
 	c.name = nick
+	c.token_hash = Identity.hash_of(str(msg["token"])) if Identity.valid_token(msg.get("token")) else ""
 	_slots[slot] = id
 	var roster: Array = [] if field == null else field.session.participants.duplicate()
 	if field != null:
@@ -411,6 +475,7 @@ func _begin_game() -> void:
 	for lane in lanes:
 		session.participants.append(lane)
 	session.names = lobby.names_by_lane()
+	_make_seats()
 	Log.info(Log.Category.NETWORK, "판 시작: 참여 %d명 레인 %s" % [lanes.size(), lanes])
 	var f: GameField = field_factory.call()
 	if f == null:
@@ -424,6 +489,9 @@ func _begin_game() -> void:
 		return
 	await f.boss_ready  # 보스는 한 프레임 뒤에 만들어진다
 	field = f
+	for lane in _seats:  # 판을 만드는 동안 이탈한 사람의 레인은 바로 무너뜨린다
+		if _seats[lane].left:
+			_forfeit_lane(lane)
 	field.session.events.emitted.connect(_on_sim_event)
 	_prev_q = {}
 	for c in _clients.values():
@@ -435,10 +503,140 @@ func _begin_game() -> void:
 	for id in _clients:
 		if _clients[id].player_id >= 0:
 			_send(id, {"t": NetProtocol.MSG_STARTED, "players": lanes, "names": names}, true)
+	_send_presence()
 	# 방장이 [시작]을 누르면 바로 시작한다 (입장 후 자동 시작 대기는 없다). 첫 몬스터는 웨이브 주기(Balance.INCOME_INTERVAL, 30초) 뒤에 나온다.
 	var started := field.bus.execute(Command.make(Command.START_GAME, field.session.participants[0], {}))
 	if not started["ok"]:
 		Log.error(Log.Category.NETWORK, "시작 실패: %s" % started["reason"])
+
+
+# ---- 끊김 / 재접속 / 이탈 (#23) --------------------------------------------
+
+## 판이 시작될 때 접속자마다 자리를 만든다 (토큰 해시로 재접속 주인을 가린다). 지금 접속 중인 사람이 처음 주인이다.
+func _make_seats() -> void:
+	_seats.clear()
+	_join_order = lobby.lanes_in_join_order()
+	host_lane = -1 if _join_order.is_empty() else _join_order[0]
+	for id in _clients:
+		var c: Dictionary = _clients[id]
+		c.silent = 0.0
+		if c.player_id >= 0:
+			_seats[c.player_id] = {"hash": c.token_hash, "name": c.name, "away": false, "left": false, "away_sec": 0.0}
+
+
+## 이 토큰의 주인인 자리의 레인 (이탈한 자리 포함). 없으면 -1.
+func _seat_for_token(token) -> int:
+	for lane in _seats:
+		if Identity.authorize(_seats[lane].hash, token):
+			return lane
+	return -1
+
+
+## 끊김: 레인은 그대로 둔다 (수입은 쌓이고 몬스터는 오고 타워는 자동으로 싸운다). 유예 시간 안에 돌아오지 않으면 이탈.
+func _go_away(lane: int) -> void:
+	var seat: Dictionary = _seats[lane]
+	if seat.left or seat.away:
+		return
+	seat.away = true
+	seat.away_sec = reconnect_grace
+	Log.info(Log.Category.NETWORK, "P%d 끊김: %.0f초 안에 돌아오지 않으면 이탈" % [lane + 1, reconnect_grace])
+	seat_away.emit(lane)
+	_send_presence({"kind": "away", "lane": lane})
+
+
+func _tick_away(delta: float) -> void:
+	for lane in _seats.keys():
+		var seat: Dictionary = _seats[lane]
+		if seat.away and not seat.left:
+			seat.away_sec -= delta
+			if seat.away_sec <= 0.0:
+				_leave_seat(lane, "유예 시간 끝")
+
+
+## 이탈: #22의 탈락과 똑같이 처리한다 (레인이 무너지고 보스 레인의 그 사람 몬스터는 철수. 난이도 인원과 기여도 기록은 그대로).
+## 방장이 이탈하면 입장 순서상 다음 사람이 방장이 된다.
+func _leave_seat(lane: int, why: String) -> void:
+	var seat: Dictionary = _seats[lane]
+	if seat.left:
+		return
+	seat.left = true
+	seat.away = false
+	Log.info(Log.Category.NETWORK, "P%d 이탈 (%s)" % [lane + 1, why])
+	_forfeit_lane(lane)
+	seat_left.emit(lane)
+	var notes: Array = [{"kind": "left", "lane": lane}]
+	if lane == host_lane:
+		host_lane = -1
+		for next in _join_order:
+			if not _seats[next].left:
+				host_lane = next
+				break
+		if host_lane >= 0:
+			Log.info(Log.Category.NETWORK, "방장이 P%d로 바뀜" % [host_lane + 1])
+			notes.append({"kind": "host", "lane": host_lane})
+	for note in notes:
+		_send_presence(note)
+
+
+func _forfeit_lane(lane: int) -> void:
+	if field == null or not field.lanes.has(lane):
+		return
+	var l: LaneController = field.lanes[lane]
+	if l.active:
+		l.shutdown()
+		l.lane_failed.emit(lane)  # 보스(BossController)가 철수/전체 패배를 판단한다
+
+
+## 같은 토큰의 사람이 돌아왔다: 같은 레인에 새 연결을 붙인다. 이미 접속 중인 연결(끊긴 줄 모르는 옛 연결)이 있으면 그것을 끊는다.
+func _resume(id: int, c: Dictionary, lane: int) -> void:
+	var seat: Dictionary = _seats[lane]
+	var old: int = _slots.get(lane, -1)
+	if old >= 0 and old != id:
+		_clients.erase(old)  # 옛 연결이 늦게 보내는 것은 무시된다 (옛 명령이 실행되지 않는다)
+		_send_warn_at.erase(old)
+		NetTransport.disconnect_peer(peer, old)
+	var was_away: bool = seat.away
+	seat.away = false
+	c.player_id = lane
+	c.view = lane
+	c.name = seat.name
+	c.token_hash = seat.hash
+	c.need_key = true  # 전체 스냅샷(키프레임)을 다시 보낸다
+	c.silent = 0.0
+	_slots[lane] = id
+	var names := {}
+	for l in session.participants:
+		names[str(l)] = session.name_of(l)
+	_send(id, {"t": NetProtocol.MSG_WELCOME, "proto": NetProtocol.PROTOCOL_VERSION, "player_id": lane, "name": seat.name,
+		"players": lobby.lanes(), "names": names, "resumed": true, "snap_hz": snap_hz, "summary_hz": summary_hz, "room": room_code, "mode": game_mode}, true)
+	Log.info(Log.Category.NETWORK, "P%d 재접속: 연결 %d (%s)" % [lane + 1, id, "유예 안" if was_away else "옛 연결을 대체"])
+	client_joined.emit(id, lane)
+	if was_away:
+		seat_back.emit(lane)
+	_send_presence({"kind": "back", "lane": lane} if was_away else {})
+
+
+func _presence_msg(note: Dictionary) -> Dictionary:
+	var away: Array = []
+	var left: Array = []
+	for lane in _seats:
+		if _seats[lane].left:
+			left.append(lane)
+		elif _seats[lane].away:
+			away.append(lane)
+	away.sort()
+	left.sort()
+	var msg := {"t": NetProtocol.MSG_PRESENCE, "away": away, "left": left, "host": host_lane}
+	if not note.is_empty():
+		msg["note"] = note
+	return msg
+
+
+func _send_presence(note := {}) -> void:
+	var msg := _presence_msg(note)
+	for id in _clients:
+		if _clients[id].player_id >= 0:
+			_send(id, msg, true)
 
 
 func _on_sim_event(ev: Dictionary) -> void:
