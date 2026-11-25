@@ -42,6 +42,7 @@ static func spawn_projectile(renderer: GridRenderer, lane: LaneController, from_
 	if fx.has("snare") or fx.has("capture"):
 		p.style = "orb"  # 스킬형: 피해 없는 구체
 		p.speed = 12.0
+	p.speed = maxf(p.speed, Balance.min_projectile_speed())  # 가장 빠른 몬스터(돌격 웨이브)보다 충분히 빨라야 맞힌다 (#52)
 	p.z_index = 3
 	p.visible = lane.lane_visible
 	renderer.add_child(p)

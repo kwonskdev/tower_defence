@@ -146,6 +146,14 @@ static func slots_of(category: String) -> Array:
 	return SLOTS[category]
 
 
+## 모든 종류 중 가장 빠른 기본 이동속도(칸/초). 웨이브 변형 배율은 곱하지 않았다 (Balance.fastest_monster_speed 참고)
+static func max_speed() -> float:
+	var best := 0.0
+	for id in DATA:
+		best = maxf(best, float(DATA[id].speed))
+	return best
+
+
 ## 유저가 협력(PvE)에서 만들 수 있는 몬스터인가
 static func can_send_in_pve(kind_id: String) -> bool:
 	return DATA[kind_id].category in PVE_SENDABLE

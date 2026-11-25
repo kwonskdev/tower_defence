@@ -13,6 +13,20 @@ const INCOME_INTERVAL := 30.0      # 수입 지급 주기(초)
 const START_LIVES := 10
 const MAX_PLAYERS := 8             # 최대 참여 인원 (레인 수). 유령 점수를 인원이 달라도 비교되게 환산할 때 기준이 된다
 
+# --- 투사체 ---
+const PROJECTILE_SPEED_MARGIN := 1.3   # 투사체 속도는 가장 빠른 몬스터 속도의 이 배수 이상이어야 따라잡는다 (이슈 #52)
+
+
+## 게임 안에서 가장 빠른 몬스터의 실제 속도(칸/초): 가장 빠른 종류 x 가장 큰 웨이브 변형 배율 (지금 7.0 x 1.5 = 10.5)
+static func fastest_monster_speed() -> float:
+	return Monsters.max_speed() * BossSkills.max_speed_mult()
+
+
+## 투사체 속도의 하한 (지금 10.5 x 1.3 = 13.65)
+static func min_projectile_speed() -> float:
+	return fastest_monster_speed() * PROJECTILE_SPEED_MARGIN
+
+
 # --- 타워 ---
 # 기본 타워 4종. 지은 뒤 타워마다 진화 계열을 하나 골라 진화한다 (Evolutions.gd).
 const TOWER_KINDS := ["long", "splash", "air", "trap"]
