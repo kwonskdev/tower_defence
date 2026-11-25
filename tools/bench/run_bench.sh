@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 서버 부하 측정 (#24, Linux/macOS). 운영과 같은 방 코드 서버를 띄우고 봇 R개 방 x 8명을 붙여서 CPU/메모리/프레임 작업 시간을 잰다.
-#   GODOT=/path/to/godot tools/bench/run_bench.sh <방 수> [초=60] [몬스터 적체 수=0] [최대 fps=60]
+#   GODOT=/path/to/godot [VIEW_BOSS=1] tools/bench/run_bench.sh <방 수> [초=60] [몬스터 적체 수=0] [최대 fps=60]
+#   VIEW_BOSS=1: 봇이 모두 보스 레인을 본다 (몬스터 전체가 스냅샷에 실려 오는 최대 대역폭 경우)
 # VPS에서 실제 기계로 재려면 같은 기계에서 돌린다. 서버 CPU는 서버 프로세스가 직접 찍는 METRICS 줄의 cpu=/rss= (/proc 기준)를 쓴다.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -14,7 +15,9 @@ SRV_ARGS=(--server "--port=$PORT" "--max-rooms=$((ROOMS + 4))" --max-rooms-per-a
 SRV_PID=$!
 trap 'kill $SRV_PID 2>/dev/null || true' EXIT
 sleep 4
-"$GODOT" --headless --path . -s res://tools/bench/loadgen.gd -- "--port=$PORT" "--rooms=$ROOMS" "--seconds=$SECONDS_RUN" >"$GEN_LOG" 2>&1
+GEN_ARGS=("--port=$PORT" "--rooms=$ROOMS" "--seconds=$SECONDS_RUN")
+[ -n "${VIEW_BOSS:-}" ] && GEN_ARGS+=(--view-boss)
+"$GODOT" --headless --path . -s res://tools/bench/loadgen.gd -- "${GEN_ARGS[@]}" >"$GEN_LOG" 2>&1
 grep -a "LOADGEN" "$GEN_LOG" || true
 echo "--- 서버 METRICS (마지막 5줄, cpu는 코어 1개 = 100%) ---"
 grep -a "METRICS" "$SRV_LOG" | tail -5

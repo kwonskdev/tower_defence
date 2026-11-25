@@ -1,16 +1,15 @@
 extends Node
 ## 방 R개 x 8명의 봇이 방 코드 서버에 접속해 판을 한다 (#24). 사람과 같은 명령(건설/몬스터 보내기)만 보낸다 (골드 치트 없음).
 ## 인자: --host --port --rooms=N (기본 1) --players=N (방당 인원, 기본 8) --seconds=S (시작 뒤 이만큼 돌리고 끝, 기본 60)
+## --view-boss: 봇이 모두 보스 레인을 보고 있는 것으로 한다 (몬스터 전체가 스냅샷에 실려 오는 최대 대역폭 경우. 기본은 자기 레인만 본다)
 ## 방 하나가 끝나거나 접속이 끊긴 봇은 그냥 둔다. 끝나면 방 수/봇 수/받은 스냅샷 수를 한 줄로 출력한다.
-
-const TOWER_ROTATION := ["long", "long", "splash"]
 
 var rooms := 1
 var players := 8
 var seconds := 60.0
 var host := "127.0.0.1"
 var port := 47410
-var _bots: Array = []        # {client, room, host(bool), cells, kind_i, send_i, timer}
+var _bots: Array = []        # {bot: NetBot, client, room, host(bool)}
 var _t := 0.0
 var _started_at := -1.0
 var _joined_lanes := {}
@@ -36,11 +35,13 @@ func _add_bot(room_i: int, is_host: bool, code: String) -> void:
 	if not cl.connect_to(NetTransport.DEFAULT, host, port):
 		print("LOADGEN 접속 실패: 방 %d" % room_i)
 		return
-	var cells: Array[Vector2i] = []
-	for y in range(8, GridSystem.GRID_HEIGHT - 6, 2):
-		for x in range(1, GridSystem.GRID_WIDTH - 1, 2):
-			cells.append(Vector2i(x, y))
-	_bots.append({"client": cl, "room": room_i, "host": is_host, "cells": cells, "kind_i": 0, "send_i": 0, "timer": randf(), "ready": false})
+	var bot := NetBot.new()  # 봇 규칙은 scripts/server/NetBot.gd (#28: 테스트와 같은 봇)
+	bot.is_host = is_host
+	if "--view-boss" in OS.get_cmdline_args() or "--view-boss" in OS.get_cmdline_user_args():
+		bot.view_lane = GameField.BOSS_LANE_ID
+	bot.setup(cl)
+	add_child(bot)
+	_bots.append({"bot": bot, "client": cl, "room": room_i, "host": is_host})
 
 
 func _process(delta: float) -> void:
@@ -52,20 +53,8 @@ func _process(delta: float) -> void:
 			b["invited"] = true
 			for i in range(players - 1):
 				_add_bot(b.room, false, cl.room_code)
-		if cl.is_joined() and not cl.in_game:
+		if not b.bot.lobby_step(players):
 			all_in_game = false
-			if not b.ready:
-				b.ready = true
-				cl.set_ready(true)
-			elif b.host and cl.lobby.get("can_start", false) and cl.lobby.get("members", []).size() >= players:
-				cl.request_start()  # 전원이 모여 준비한 뒤에만 시작한다
-		elif not cl.is_joined():
-			all_in_game = false
-		if cl.in_game:
-			b.timer += delta
-			if b.timer >= 1.0:
-				b.timer = 0.0
-				_play(b)
 	if _started_at < 0.0 and all_in_game and _bots.size() == rooms * players:
 		_started_at = _t
 		print("LOADGEN game start: all joined (%.1fs)" % _t)
@@ -74,19 +63,6 @@ func _process(delta: float) -> void:
 	elif _started_at < 0.0 and _t > 60.0 + seconds:
 		print("LOADGEN 실패: 60초 안에 전원이 판에 들어가지 못함 (접속 %d명)" % _bots.size())
 		_finish()
-
-
-func _play(b: Dictionary) -> void:
-	var cl: NetClient = b.client
-	var cells: Array = b.cells
-	if not cells.is_empty():
-		var kind: String = TOWER_ROTATION[b.kind_i % TOWER_ROTATION.size()]
-		cl.send(Command.BUILD_TOWER, {"cell": cells[0], "kind_id": kind, "confirmed": false})
-		cells.pop_front()
-		b.kind_i += 1
-	var order := ["rusher", "warrior", "knight"]
-	cl.send(Command.SEND_MONSTER, {"kind_id": order[b.send_i % order.size()]})
-	b.send_i += 1
 
 
 func _finish() -> void:
