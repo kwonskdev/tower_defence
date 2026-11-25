@@ -6,7 +6,7 @@ class_name MainMenu
 ##  - [빠른 시작]: 코드 없이 자리 있는 공개 방에 들어가고, 없으면 새 공개 방을 만든다(mode=quick). 그 뒤는 방 만들기와 같은 대기방이다.
 ##  - [방 입장]: 방 코드를 쳐서 들어간다(mode=join). 없는 코드/가득 참/이미 시작/너무 많이 시도는 이유를 보여 준다.
 ## 닉네임과 서버 주소는 이 화면에서 정하고 기기에 저장한다 (닉네임은 서버가 정리/중복 제거해서 돌려준다).
-## 서버 주소 기본값은 로컬 개발 서버다. 운영 서버 주소는 호스팅(#24)이 정해지면 default_server에 넣는다.
+## 서버 주소 기본값: project.godot의 `[lanewars] network/default_server` (운영 도메인, 예: wss://game.example.com) 한 곳에서 정한다. 비어 있으면 로컬 개발 서버(#24).
 ## 방장이 시작하면 online_started를 낸다: Boot가 이 메뉴에서 접속(take_client)을 넘겨 받아 서버 스냅샷을 그리는 온라인 게임 화면으로 간다.
 
 signal solo_chosen()
@@ -19,7 +19,7 @@ const CONNECT_TIMEOUT_SEC := 8.0
 const PING_SEC := 60.0
 const SERVER_KEY := "server"
 
-var default_server := "127.0.0.1:%d" % DEFAULT_PORT
+var default_server := default_server_address()
 var profile_path := Nicknames.SAVE_PATH   # 닉네임/서버 주소를 저장하는 파일 (테스트는 다른 경로를 쓴다)
 var client: NetClient = null
 var lobby_screen: LobbyScreen = null
@@ -70,6 +70,7 @@ func _ready() -> void:
 	name_edit = _line(_form, "", Balance.NICKNAME_MAX_LENGTH)
 	_form.add_child(_caption("서버 주소"))
 	server_edit = _line(_form, default_server, 80)
+	server_edit.editable = test_build()  # 정식 빌드에서는 서버 주소를 바꿀 수 없다 (#24)
 	quick_button = _button(_form, "빠른 시작")
 	create_button = _button(_form, "방 만들기")
 	_form.add_child(_caption("방 코드"))
@@ -133,7 +134,7 @@ func _load_profile() -> void:
 	var nick := Nicknames.sanitize(str(cfg.get_value("profile", "nickname", ""))) if has else ""
 	name_edit.text = nick if nick != "" else Nicknames.generate()  # 저장은 접속할 때 한다 (메뉴만 열어 보고 닫아도 파일을 만들지 않는다)
 	var saved_server := str(cfg.get_value("profile", SERVER_KEY, "")) if has else ""
-	if saved_server != "":
+	if saved_server != "" and test_build():
 		server_edit.text = saved_server
 
 
@@ -143,6 +144,20 @@ func _save_profile(nick: String, server: String) -> void:
 	cfg.set_value("profile", "nickname", nick)
 	cfg.set_value("profile", SERVER_KEY, server)
 	cfg.save(profile_path)
+
+
+## 테스트용(debug) 빌드인가 (#24). 평문(ws://) 접속과 서버 주소 입력은 이때만 동작한다. 정식(release) 빌드는 default_server의 wss(TLS)로만 접속한다.
+## 안드로이드 쪽 짝: android/build/src/debug|release/res/xml/network_security_config.xml (debug만 평문 허용). 테스트가 정식 빌드를 흉내 낼 수 있게 force_release를 둔다.
+static var force_release := false
+
+
+static func test_build() -> bool:
+	return OS.has_feature("debug") and not force_release
+
+
+static func default_server_address() -> String:
+	var configured := str(ProjectSettings.get_setting("lanewars/network/default_server", "")).strip_edges()
+	return configured if configured != "" else "127.0.0.1:%d" % DEFAULT_PORT
 
 
 ## 서버 주소 -> {host, port, tls}. "wss://호스트[:포트]"면 TLS(기기의 인증서 목록으로 서버 확인)로, "ws://호스트[:포트]"나 접두사가 없으면 평문으로 접속한다.
@@ -170,7 +185,10 @@ static func parse_server(text: String) -> Dictionary:
 
 
 ## 서버가 거부한 이유를 사람이 읽는 말로
-static func reject_text(reason: String) -> String:
+## info는 서버가 reject에 실어 준 서버 버전({proto, snapshot}). 서버가 내 앱보다 낮으면(서버를 아직 못 올렸다) "앱 업데이트"가 아니라 기다리라고 안내한다 (#24).
+static func reject_text(reason: String, info: Dictionary = {}) -> String:
+	if reason == NetProtocol.REJECT_PROTOCOL and int(info.get("proto", -1)) >= 0 and int(info.get("proto", -1)) < NetProtocol.PROTOCOL_VERSION:
+		return "서버가 아직 이 앱 버전으로 올라오지 않았습니다. 잠시 뒤에 다시 시도하세요."
 	match reason:
 		NetProtocol.REJECT_NO_ROOM:
 			return "없는 방 코드입니다. 코드를 다시 확인하세요."
@@ -187,7 +205,7 @@ static func reject_text(reason: String) -> String:
 		NetProtocol.REJECT_BUSY:
 			return "서버가 가득 찼습니다. 잠시 뒤에 다시 시도하세요."
 		NetProtocol.REJECT_PROTOCOL:
-			return "앱 버전이 서버와 다릅니다. 앱을 업데이트하세요."
+			return "앱 버전이 서버와 다릅니다. 앱을 최신 버전으로 업데이트하세요."
 		_:
 			return "접속하지 못했습니다 (%s)." % reason
 
@@ -229,7 +247,12 @@ func resume_online() -> void:
 func start_online(mode: String, token := "") -> void:
 	if client != null:
 		return  # 접속 중
+	if not test_build():
+		server_edit.text = default_server  # 정식 빌드: 입력/저장된 주소는 무시한다
 	var target := parse_server(server_edit.text)
+	if not target.is_empty() and not target.tls and not test_build():
+		_status("정식 앱은 암호화(wss) 서버에만 접속합니다.")
+		return
 	if target.is_empty():
 		_status("서버 주소를 '호스트:포트' (또는 wss://호스트) 모양으로 쓰세요.")
 		return
@@ -308,13 +331,13 @@ func _refresh_code() -> void:
 		code_label.text = "방 코드  %s%s" % [client.room_code, "  (공개 방)" if bool(client.lobby.get("public", false)) else ""]
 
 
-func _on_rejected(reason: String, _info: Dictionary) -> void:
+func _on_rejected(reason: String, info: Dictionary) -> void:
 	if _resuming:  # 돌아갈 판이 없다 (끝났거나 이탈 처리됨): 저장해 둔 것을 지운다
 		Identity.clear_resume()
 		_refresh_resume()
 		_reset_online(reconnect_fail_text(reason))
 		return
-	_reset_online(reject_text(reason))
+	_reset_online(reject_text(reason, info))
 
 
 func _on_disconnected() -> void:

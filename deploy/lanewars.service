@@ -1,0 +1,26 @@
+# systemd 유닛 예시 (Docker 없이 VPS에서 바로 돌릴 때) (#24).
+#   sudo useradd --system --create-home lanewars
+#   sudo install -m 755 build/server/lanewars-server.x86_64 /opt/lanewars/lanewars-server.x86_64
+#   sudo cp deploy/lanewars.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now lanewars
+# 로그: journalctl -u lanewars -f   /  지표: journalctl -u lanewars | grep METRICS
+[Unit]
+Description=Lane Wars game server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=lanewars
+WorkingDirectory=/opt/lanewars
+ExecStart=/opt/lanewars/lanewars-server.x86_64 --headless --server --port=47300 --max-rooms=16 --max-rooms-per-addr=16 --metrics-interval=60
+Restart=always
+RestartSec=3
+# 죽었다 다시 뜨는 일이 짧은 시간에 반복되면 systemd가 포기하지 않게 한다
+StartLimitIntervalSec=0
+LimitNOFILE=4096
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
