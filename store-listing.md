@@ -88,7 +88,7 @@ Play Console 설문 결과로 결정됨 (판타지 폭력 - 경미함 예상)
 ---
 
 ## 스크린샷 (1080x1920, 실제 게임 화면을 캡처한 것)
-`build/store_assets/` (git에는 올라가지 않는 폴더)
+`store/` (스크린샷, 피처 그래픽, 스토어용 아이콘. `.gdignore`로 앱 패키지에서 제외)
 
 1. `screenshot_1_wave.png` - 타워와 몬스터 웨이브 플레이 화면
 2. `screenshot_2_monsters.png` - 몬스터 15종 선택 화면
@@ -98,10 +98,10 @@ Play Console 설문 결과로 결정됨 (판타지 폭력 - 경미함 예상)
 6. `screenshot_6_boss_raid.png` - 보스 레인에서 몬스터가 보스 공격
 
 ## 기능 그래픽 (1024x500)
-`build/store_assets/feature_graphic.png`
+`store/feature_graphic.png`
 
 ## 앱 아이콘
-`build/store_assets/icon_512.png` (Play Console 업로드용 512x512), `icon_1024.png`
+`assets/icon_512.png` (Play Console 업로드용 512x512), `store/icon_1024.png`
 
 ---
 
