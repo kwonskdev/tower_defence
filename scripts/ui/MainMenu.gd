@@ -178,6 +178,8 @@ static func reject_text(reason: String) -> String:
 			return "방이 가득 찼습니다 (최대 %d명)." % Balance.MAX_PLAYERS
 		NetProtocol.REJECT_STARTED:
 			return "이미 시작한 방입니다."
+		NetProtocol.REJECT_FINISHED:
+			return "이 판은 이미 끝났습니다."
 		NetProtocol.REJECT_LEFT:
 			return "이 판에서 이탈 처리됐습니다 (재접속 시간이 지났거나 직접 나갔습니다)."
 		NetProtocol.REJECT_TOO_MANY:
@@ -195,6 +197,8 @@ static func reconnect_fail_text(reason: String) -> String:
 	match reason:
 		"grace_expired", NetProtocol.REJECT_LEFT:
 			return "재접속 시간이 지나 이 판에서 이탈 처리됐습니다."
+		NetProtocol.REJECT_FINISHED:
+			return "이 판은 이미 끝났습니다."
 		NetProtocol.REJECT_NO_ROOM, NetProtocol.REJECT_STARTED:
 			return "서버와 연결이 끊겼고, 판이 이미 끝났거나 닫혀서 돌아갈 수 없습니다."
 		_:

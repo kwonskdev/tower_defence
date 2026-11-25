@@ -127,6 +127,8 @@ func _process(delta: float) -> void:
 	if _server_gone:
 		_closed()
 		return
+	# 결과 화면에서도 ping은 계속 보낸다 (#54, 소유자 결정): in_game은 판이 끝나도 true로 남는다. 서버는 끝난 판에서 하트비트를 보지 않으므로
+	# (NetServer.finished) 끊김/이탈/배너와 무관하고, 계속 보내면 RTT 표시와 연결 유지에 이롭다. tests/test_post_game_connection.gd가 고정한다.
 	if peer != null and in_game and state == State.JOINED:  # 하트비트: 주기적으로 ping을 보내고, 서버가 너무 조용하면 끊긴 것으로 본다 (#23)
 		_ping_left -= delta
 		if _ping_left <= 0.0:
