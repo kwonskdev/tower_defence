@@ -1,0 +1,5 @@
+# Caddy: 인증서(Let's Encrypt)를 자동으로 받고 갱신하고, WebSocket(wss)을 서버로 넘긴다.
+# 클라이언트 주소: wss://{$DOMAIN}   (포트 443)
+{$DOMAIN} {
+	reverse_proxy lanewars:47300
+}

@@ -1,0 +1,36 @@
+# 서버 + TLS 리버스 프록시(Caddy) 구성 예시 (#24). 사용법은 docs/server-hosting.md.
+#   cp deploy/.env.example deploy/.env  # DOMAIN 등을 채운다
+#   tools/server/build.sh && docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
+services:
+  lanewars:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped        # 프로세스가 죽거나 서버가 재부팅되면 다시 뜬다
+    environment:
+      PORT: "47300"
+    # 프록시 뒤에서는 모든 접속이 프록시 한 주소로 보인다 -> 주소당 방 한도를 방 상한과 같게 올린다 (docs/server-hosting.md "프록시 뒤 주소" 참고)
+    command: ["--max-rooms=${MAX_ROOMS:-64}", "--max-rooms-per-addr=${MAX_ROOMS:-64}", "--metrics-interval=60"]
+    expose:
+      - "47300"                    # 밖으로 직접 열지 않는다. Caddy만 접근한다
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "5"}
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on: [lanewars]
+    ports:
+      - "80:80"                    # 인증서 발급(Let's Encrypt) 확인용
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?DOMAIN을 deploy/.env에 적으세요}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data           # 발급받은 인증서 (지우면 다시 발급)
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

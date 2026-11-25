@@ -17,12 +17,16 @@ class_name ServerMain
 ##   --max-rooms-per-addr=N  (방 코드 서버) 한 접속 주소가 동시에 방장으로 쥘 수 있는 방 수 (기본 3). 리버스 프록시 뒤에서는 모든 접속이 프록시 주소로 보이니 크게 올려야 한다 (#24)
 ##   --single-room       (대기방 방식) 방 코드 없이 프로세스 하나가 방 하나만 연다 (#22 방식. 개발/부하 측정용)
 ##   --start-when-full   (고정 인원 모드) --players=N 자리가 다 차면 자동으로 시작한다. 주면 로비를 쓰지 않는다 (개발/부하 측정용)
+##   --max-fps=N         서버 프레임 상한 (기본 60). 헤드리스는 안 걸면 CPU 한 코어를 다 쓰며 돈다 (#24). 0이면 제한 없음(부하 측정용)
+##   --metrics-interval=N  방 수/접속자 수/프레임 시간 지표를 N초마다 로그에 남긴다 (기본 60, 0이면 끔) (#24)
 ## --port=가 있고 --start-when-full/--single-room이 없으면 방 코드 서버다 (#26): 한 프로세스가 방 코드로 여러 방을 연다 (RoomHub).
 ##   접속한 사람이 [방 만들기]로 코드를 받고, 친구가 그 코드로 입장한다. 방마다 아래 로비 방식이 따로 돈다.
 ## --port=가 있고 --start-when-full이 없으면 로비 방식이다 (#22): 접속한 사람이 먼저 로비에 모이고(방장 = 첫 입장자),
 ##   모두 [준비]하면 방장이 [시작]해서 그 접속자들로 게임 화면에 들어간다 (참여자/레인이 그때 확정). 이때 --players=N은 최대 인원(기본 8)이다.
 ##   대기 시간 제한은 없고 자동 시작도 없다: 방장이 [시작]을 누르면 서버가 바로 start_game을 한다 (첫 몬스터는 그 30초 뒤).
 ## 한 판이 끝나면 결과를 로그에 한 줄 남기고 종료한다 (승리 0, 패배 1).
+
+const DEFAULT_MAX_FPS := 60
 
 signal finished(victory: bool, info: Dictionary)
 
@@ -35,6 +39,7 @@ var net_transport := NetTransport.DEFAULT
 var net_tls: TLSOptions = null       # 주면 wss (--tls-cert/--tls-key 인자가 있으면 그 파일로 만든다)
 var use_rooms := false               # 방 코드 서버 (RoomHub). --port가 있고 --start-when-full/--single-room이 없으면 _ready가 켠다. 테스트는 직접 켠다
 var hub: RoomHub = null
+var metrics: ServerMetrics = null    # 방 코드 서버의 운영 지표 로그 (#24)
 var use_lobby := false               # 로비 방식 (위 설명). --port가 있고 --start-when-full이 없으면 _ready가 켠다. 테스트는 직접 켠다
 var lobby_max_players := Balance.MAX_PLAYERS
 
@@ -97,6 +102,8 @@ func _ready() -> void:
 	if seed_text != "":
 		session.rng.seed = int(seed_text)
 	Engine.time_scale = maxf(0.1, float(arg_value("time-scale", "1")))
+	if requested() and arg_value("port") != "":
+		Engine.max_fps = maxi(0, int(arg_value("max-fps", str(DEFAULT_MAX_FPS))))  # 안 걸면 서버가 쉬지 않고 돌아 CPU를 다 쓴다
 	Log.info(Log.Category.GAME, "서버 시작: 참여 %d명, 시드 %s, 배속 x%s" % [players, seed_text if seed_text != "" else "(무작위)", Engine.time_scale])
 
 	if not use_lobby:
@@ -117,6 +124,9 @@ func _ready() -> void:
 		hub.max_rooms = maxi(1, int(arg_value("max-rooms", str(hub.max_rooms))))
 		hub.max_rooms_per_addr = maxi(1, int(arg_value("max-rooms-per-addr", str(hub.max_rooms_per_addr))))
 		add_child(hub)
+		metrics = ServerMetrics.new()
+		add_child(metrics)
+		metrics.setup(hub, float(arg_value("metrics-interval", str(ServerMetrics.DEFAULT_INTERVAL_SEC))))
 		var herr := hub.start(net_transport, net_port, net_tls)
 		if herr != OK:
 			Log.error(Log.Category.NETWORK, "네트워크를 열지 못해 서버를 끝냄 (포트 %d, %s)" % [net_port, net_transport])

@@ -6,8 +6,14 @@
 /android/build/.gradle/
 /android/build/libs/
 /android/build/src/main/assets/
-/android/build/src/debug/
-/android/build/src/release/
+/android/build/src/debug/*
+!/android/build/src/debug/res/
+/android/build/src/debug/res/*
+!/android/build/src/debug/res/xml/
+/android/build/src/release/*
+!/android/build/src/release/res/
+/android/build/src/release/res/*
+!/android/build/src/release/res/xml/
 /android/build/res/mipmap*/
 /android/build/res/values*/godot_project_name_string.xml
 /android/build/res/values/themes.xml
@@ -50,6 +56,11 @@ error.md
 Godot_Multiplayer_Tower_Defense_Game_Development_Specification.md
 step.md
 /build/
+logs/
+deploy/windows/settings.local.ps1
 
 # 소유자 개인 앱스토어 등록 메모 (로컬에만 둔다)
 store-listing.md
+
+# 서버 빌드 환경 변수 (#24)
+deploy/.env

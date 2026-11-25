@@ -78,6 +78,30 @@ func room_count() -> int:
 	return _rooms.size()
 
 
+## 운영 지표용 현재 값 (#24): 방 수(대기/진행/끝남), 방에 앉은 사람 수, 연결 수, 몬스터 수(모든 방의 레인 + 보스 레인)
+func stats() -> Dictionary:
+	var waiting := 0
+	var playing := 0
+	var finished := 0
+	var players := 0
+	var monsters := 0
+	for code in _rooms:
+		var room: NetServer = _rooms[code]
+		players += room.alive_count()
+		if _finished_at.has(code) or room.finished:
+			finished += 1
+		elif room.game_started:
+			playing += 1
+		else:
+			waiting += 1
+		if room.field != null:
+			for lane in room.field.lanes.values():
+				monsters += lane.monsters.size()
+			if room.field.boss != null:
+				monsters += room.field.boss.get_sent_monsters().size()
+	return {"rooms": _rooms.size(), "waiting": waiting, "playing": playing, "finished": finished, "players": players, "conns": connection_count(), "monsters": monsters}
+
+
 func room_for(code: String) -> NetServer:
 	return _rooms.get(code)
 

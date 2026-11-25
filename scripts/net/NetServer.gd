@@ -54,6 +54,7 @@ var finished := false                # 판이 끝났다(전체 승리/패배) (#
 var host_lane := -1                  # 판이 시작된 뒤의 방장 레인 (화면 표시용: 서버 권위형이라 방장 권한은 대기방에서만 의미가 있다). 이탈하면 입장 순서상 다음 사람으로 (#23)
 var hello_timeout := NetProtocol.HELLO_TIMEOUT  # hello를 이 시간(초) 안에 안 보내면 끊는다 (테스트가 줄인다)
 
+var keepalive_sec := NetProtocol.KEEPALIVE_SEC   # 테스트가 줄인다 (#24)
 var _clients: Dictionary = {}     # peer_id -> {player_id: int(-1 = 아직 hello 전), view: int, age: float, name: String, token_hash, silent}
 var _seats: Dictionary = {}       # 판이 시작될 때 만든 자리: 레인 -> {hash: 토큰 해시, name, away: 끊겨서 유예 중, left: 이탈, away_sec: 남은 유예}. 재접속은 이 자리의 주인(Identity)만 한다 (#23)
 var _join_order: Array[int] = []  # 입장 순서의 레인 (방장 승계 순서)
@@ -189,6 +190,9 @@ func _process(delta: float) -> void:
 	for id in _clients.keys():
 		var c: Dictionary = _clients[id]
 		c.age += delta
+		c.tx_idle += delta
+		if c.player_id >= 0 and c.tx_idle >= keepalive_sec:
+			_send(id, {"t": NetProtocol.MSG_PONG, "n": 0}, true)  # 데이터가 오가게 해서 유휴 연결로 끊기지 않게 한다. 클라이언트는 n=0 pong을 그냥 센다
 		c.tokens = minf(NetProtocol.RATE_BURST, c.tokens + NetProtocol.RATE_PER_SEC * delta)
 		c.view_tokens = minf(NetProtocol.VIEW_BURST, c.view_tokens + NetProtocol.VIEW_PER_SEC * delta)
 		c.ignored = maxf(0.0, c.ignored - NetProtocol.RATE_IGNORED_DECAY * delta)
@@ -228,7 +232,7 @@ func _on_peer_connected(id: int) -> void:
 
 
 func _new_client() -> Dictionary:
-	return {"player_id": -1, "view": -1, "age": 0.0, "name": "", "need_key": true, "token_hash": "", "silent": 0.0,
+	return {"player_id": -1, "view": -1, "age": 0.0, "name": "", "need_key": true, "token_hash": "", "silent": 0.0, "tx_idle": 0.0,
 		"tokens": NetProtocol.RATE_BURST, "view_tokens": NetProtocol.VIEW_BURST, "ignored": 0.0}
 
 
@@ -705,6 +709,8 @@ func _send(id: int, msg: Dictionary, general := true) -> bool:
 		if _clients.has(id) and kind in [NetProtocol.MSG_SNAP, NetProtocol.MSG_SUMMARY]:
 			_clients[id].need_key = true
 		return false
+	if _clients.has(id):
+		_clients[id].tx_idle = 0.0
 	sent_packets += 1
 	largest_packet = maxi(largest_packet, bytes.size())
 	sent_bytes[kind] = sent_bytes.get(kind, 0) + bytes.size()
