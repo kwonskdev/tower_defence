@@ -296,6 +296,13 @@ func _remote_snapshot() -> Dictionary:
 	return remote.snapshot
 
 
+## 지금 보고 있는 레인을 서버에 다시 알린다 (재접속 뒤: 서버는 새 연결의 보는 레인을 내 레인으로 시작한다)
+func set_view_remote() -> void:
+	if remote != null:
+		remote.set_view(current_player_id)
+		_remote_pending.clear()  # 끊긴 동안 보낸 명령의 결과는 오지 않는다 (옛 명령은 서버가 실행하지 않았다)
+
+
 ## 미니맵용 요약 (자기/보고 있는 레인을 뺀 나머지 레인. 1Hz). 온라인이 아니거나 없으면 빈 Dictionary
 func summary_of(lane_id: int) -> Dictionary:
 	if remote == null:

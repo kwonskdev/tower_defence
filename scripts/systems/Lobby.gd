@@ -114,6 +114,14 @@ func lanes() -> Array[int]:
 	return out
 
 
+## 들어온 순서대로의 레인 (첫 번째가 방장). 판이 시작된 뒤 방장 승계 순서로 쓴다 (#23)
+func lanes_in_join_order() -> Array[int]:
+	var out: Array[int] = []
+	for m in _members:
+		out.append(int(m.lane))
+	return out
+
+
 ## 레인 번호 -> 닉네임
 func names_by_lane() -> Dictionary:
 	var out := {}
