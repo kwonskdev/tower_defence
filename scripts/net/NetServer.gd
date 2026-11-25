@@ -73,6 +73,12 @@ var keyframes_sent := 0
 var failed_sends := 0             # put_packet이 실패한 횟수
 var refused_connections := 0      # 상한 때문에 바로 끊은 연결 수
 var ignored_messages := 0         # 속도 제한 때문에 무시한 메시지 수
+## 방송(_broadcast) 구간별 걸린 시간 (마이크로초) (#28 부하 측정): 키 snapshot(전체 스냅샷 만들기) / quantize / diff / send(클라이언트별 자르기+인코딩+보내기) / total.
+## 각 값은 {n, sum, max, last}. 측정 도구(tools/bench/measure_load.gd)와 테스트가 읽는다. 켜 둬도 비용은 틱당 시계 읽기 몇 번뿐이다.
+var perf := {}
+var window_largest := 0          # take_perf 이후 보낸 가장 큰 메시지(바이트)
+var window_snap_bytes := 0       # take_perf 이후 보낸 스냅샷(snap) 메시지 바이트 합 (모든 클라이언트)
+var window_snap_clients := 0     # take_perf 이후 방송 때 스냅샷을 받을 수 있는 클라이언트 수의 합 (틱 x 클라이언트): 클라이언트당 값을 구하려고
 var _send_warn_at := {}           # peer_id -> 마지막으로 보내기 실패를 로그한 시각(ms). 같은 연결의 반복 로그를 줄인다
 
 
@@ -453,7 +459,9 @@ func _on_cmd(id: int, c: Dictionary, msg: Dictionary) -> void:
 		Log.warn(Log.Category.NETWORK, "사칭 명령 거절: 연결 %d는 P%d인데 P%d로 보냄 (%s)" % [id, c.player_id + 1, cmd["player_id"] + 1, cmd["type"]])
 		result = CommandBus.fail("not_your_player")
 	else:
+		var t0 := Time.get_ticks_usec()
 		result = field.bus.execute(cmd)
+		_note_perf("cmd_" + str(cmd["type"]), Time.get_ticks_usec() - t0)  # 명령 종류별 실행 시간 (건설이 길 찾기를 다시 해서 오래 걸리는지 등)
 	_send(id, {"t": NetProtocol.MSG_RESULT, "seq": seq, "ok": result["ok"], "reason": result["reason"], "events": _wire_events(result["events"])}, true)
 
 
@@ -713,6 +721,9 @@ func _send(id: int, msg: Dictionary, general := true) -> bool:
 		_clients[id].tx_idle = 0.0
 	sent_packets += 1
 	largest_packet = maxi(largest_packet, bytes.size())
+	window_largest = maxi(window_largest, bytes.size())
+	if kind == NetProtocol.MSG_SNAP:
+		window_snap_bytes += bytes.size()
 	sent_bytes[kind] = sent_bytes.get(kind, 0) + bytes.size()
 	return true
 
@@ -721,8 +732,13 @@ func _broadcast(with_summary: bool) -> void:
 	if field == null:
 		return  # 로비 중: 보낼 판이 없다
 	_tick += 1
-	var q := SnapshotDelta.quantize(field.snapshot(true))
+	var t0 := Time.get_ticks_usec()
+	var raw := field.snapshot(true)
+	var t1 := Time.get_ticks_usec()
+	var q := SnapshotDelta.quantize(raw)
+	var t2 := Time.get_ticks_usec()
 	var delta := SnapshotDelta.diff(_prev_q, q) if not _prev_q.is_empty() else {}
+	var t3 := Time.get_ticks_usec()
 	_prev_q = q
 	var events := _pending_events
 	_pending_events = []
@@ -730,6 +746,7 @@ func _broadcast(with_summary: bool) -> void:
 		var c: Dictionary = _clients[id]
 		if c.player_id < 0:
 			continue
+		window_snap_clients += 1
 		if c.need_key:
 			c.need_key = false  # 보내기가 실패하면 _send가 다시 켠다
 			if _send(id, {"t": NetProtocol.MSG_SNAP, "tick": _tick, "key": true, "snap": slice_for(q, c.player_id, c.view)}, false):
@@ -743,6 +760,31 @@ func _broadcast(with_summary: bool) -> void:
 		var mine := events.filter(func(ev): return _event_for(ev, c.player_id, c.view))
 		if not mine.is_empty():
 			_send(id, {"t": NetProtocol.MSG_EVENTS, "list": mine})
+	var t4 := Time.get_ticks_usec()
+	_note_perf("snapshot", t1 - t0)
+	_note_perf("quantize", t2 - t1)
+	_note_perf("diff", t3 - t2)
+	_note_perf("send", t4 - t3)
+	_note_perf("total", t4 - t0)
+
+
+## 지금까지 모은 방송 시간과 가장 큰 메시지를 돌려주고 비운다 (ServerMetrics가 구간마다 부른다)
+func take_perf() -> Dictionary:
+	var out := {"perf": perf, "largest": window_largest, "snap_bytes": window_snap_bytes, "snap_clients": window_snap_clients}
+	perf = {}
+	window_largest = 0
+	window_snap_bytes = 0
+	window_snap_clients = 0
+	return out
+
+
+func _note_perf(key: String, usec: int) -> void:
+	var p: Dictionary = perf.get(key, {"n": 0, "sum": 0, "max": 0, "last": 0})
+	p.n += 1
+	p.sum += usec
+	p.max = maxi(p.max, usec)
+	p.last = usec
+	perf[key] = p
 
 
 ## 이 이벤트를 이 클라이언트에게 보내는가. 레인이 붙은 연출(fx_*)은 그 레인을 보고 있을 때만, 나머지(배너, 게임 끝)는 모두에게.

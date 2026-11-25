@@ -1,5 +1,5 @@
 ﻿# 서버 부하 측정 (#24, Windows). 운영과 같은 방 코드 서버를 띄우고 봇 R개 방 x 8명을 붙여서 CPU/메모리/프레임 작업 시간을 잰다.
-#   powershell -File tools/bench/run_bench.ps1 -Godot C:\path\Godot_console.exe -Rooms 4 -Seconds 90 [-Stack 1000] [-MaxFps 60]
+#   powershell -File tools/bench/run_bench.ps1 -Godot C:\path\Godot_console.exe -Rooms 4 -Seconds 90 [-Stack 1000] [-MaxFps 60] [-ViewBoss]
 # 결과는 한 줄 요약으로 출력하고 서버 로그는 -Out 폴더에 남는다. Linux/VPS에서는 run_bench.sh를 쓴다.
 param(
     [Parameter(Mandatory = $true)][string]$Godot,
@@ -7,13 +7,14 @@ param(
     [int]$Seconds = 60,
     [int]$Stack = 0,          # 0이 아니면 방마다 보스 레인에 몬스터를 이만큼 쌓는다 (최대 몬스터 시험)
     [int]$MaxFps = 60,
+    [switch]$ViewBoss,         # 봇이 모두 보스 레인을 본다 (몬스터 전체가 스냅샷에 실려 오는 최대 대역폭 경우)
     [int]$Port = 47410,
     [string]$Out = "$env:TEMP\lanewars-bench"
 )
 $ErrorActionPreference = "Stop"
 New-Item -ItemType Directory -Force $Out | Out-Null
 $root = (Resolve-Path "$PSScriptRoot\..\..").Path
-$tag = "r$Rooms-s$Stack"
+$tag = "r$Rooms-s$Stack" + $(if ($ViewBoss) { "-vb" } else { "" })
 $srvLog = "$Out\server-$tag.log"
 $genLog = "$Out\loadgen-$tag.log"
 $srvArgs = @("--headless", "--path", $root, "-s", "res://tools/bench/bench_server.gd", "--", "--server", "--port=$Port",
@@ -25,6 +26,7 @@ Start-Sleep -Seconds 4
 $child = Get-CimInstance Win32_Process -Filter "ParentProcessId=$($srv.Id)" | Select-Object -First 1
 $meter = if ($null -ne $child) { Get-Process -Id $child.ProcessId } else { $srv }
 $genArgs = @("--headless", "--path", $root, "-s", "res://tools/bench/loadgen.gd", "--", "--port=$Port", "--rooms=$Rooms", "--seconds=$Seconds")
+if ($ViewBoss) { $genArgs += "--view-boss" }
 $gen = Start-Process -FilePath $Godot -ArgumentList $genArgs -PassThru -NoNewWindow -RedirectStandardOutput $genLog -RedirectStandardError "$genLog.err"
 # 판이 시작될 때(전원 입장)부터 끝날 때까지의 서버 CPU 시간을 잰다
 $t0 = $null; $cpu0 = $null

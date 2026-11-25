@@ -115,6 +115,7 @@ func collect() -> Dictionary:
 		"work_max_ms": _work_max,
 		"mem_mb": float(OS.get_static_memory_usage()) / 1048576.0,
 	}
+	_collect_broadcast(m)
 	var cpu := _cpu_percent()
 	if cpu >= 0.0:
 		m["cpu_pct"] = cpu
@@ -126,12 +127,48 @@ func collect() -> Dictionary:
 	return m
 
 
+## 방송(스냅샷 만들기 + 보내기) 시간과 메시지 크기 (#28): 모든 방의 이번 구간 값을 모은다.
+##   bcast_avg/max = 방송 한 번에 걸린 시간(ms), 방별 값의 평균/최대. snap_max = 가장 큰 메시지(KB, 키프레임). snap_kbps = 클라이언트 한 명이 받는 스냅샷 초당 KB (구간 길이로 나눈 값).
+func _collect_broadcast(m: Dictionary) -> void:
+	var n := 0
+	var sum := 0
+	var mx := 0
+	var largest := 0
+	var snap_bytes := 0
+	var tick_clients := 0
+	var parts := {"snapshot": 0, "quantize": 0, "diff": 0, "send": 0}
+	if hub != null:
+		for code in hub._rooms:
+			var got: Dictionary = hub._rooms[code].take_perf()
+			var total: Dictionary = got.perf.get("total", {})
+			n += int(total.get("n", 0))
+			sum += int(total.get("sum", 0))
+			mx = maxi(mx, int(total.get("max", 0)))
+			for k in parts:
+				parts[k] += int(got.perf.get(k, {}).get("sum", 0))
+			largest = maxi(largest, int(got.largest))
+			snap_bytes += int(got.snap_bytes)
+			tick_clients += int(got.snap_clients)
+	var secs := maxf(_elapsed, 0.001)
+	m["bcast_avg_ms"] = float(sum) / maxi(1, n) / 1000.0
+	m["bcast_max_ms"] = float(mx) / 1000.0
+	for k in parts:
+		m["bcast_%s_ms" % k] = float(parts[k]) / maxi(1, n) / 1000.0
+	m["msg_max_kb"] = float(largest) / 1024.0
+	# 클라이언트 한 명이 받은 스냅샷 초당 KB: (전체 바이트 / 클라이언트 수) / 초. 클라이언트 수는 (틱 x 클라이언트)를 틱 수로 나눠 평균을 낸다
+	var avg_clients := float(tick_clients) / maxi(1, n)
+	m["snap_kbps"] = float(snap_bytes) / 1024.0 / secs / maxf(avg_clients, 1.0)
+
+
 static func line_of(m: Dictionary) -> String:
 	var extra := ""
 	if float(m.get("mem_mb", 0.0)) > 0.0:  # 엔진 정적 메모리: 릴리스 템플릿에서는 0이라 줄에서 뺀다 (Linux는 아래 rss를 쓴다)
 		extra += " mem=%.1fMB" % m.mem_mb
 	if m.has("cpu_pct"):
 		extra += " cpu=%.0f%% rss=%.1fMB" % [m.cpu_pct, m.rss_mb]
+	if m.has("bcast_avg_ms"):  # 방송 시간(스냅샷 만들기/diff/보내기)과 메시지 크기 (#28)
+		extra += " bcast_avg=%.2fms bcast_max=%.1fms (snapshot %.2f quantize %.2f diff %.2f send %.2f) msg_max=%.0fKB snap_per_client=%.1fKB/s" % [
+			m.bcast_avg_ms, m.bcast_max_ms, m.bcast_snapshot_ms, m.bcast_quantize_ms, m.bcast_diff_ms, m.bcast_send_ms, m.msg_max_kb, m.snap_kbps]
 	return _base_line(m) + extra
 
 
