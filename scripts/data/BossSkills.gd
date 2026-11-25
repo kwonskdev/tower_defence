@@ -34,6 +34,14 @@ const AFFIXES := {
 		"text": "이번 웨이브는 공습: 전부 공중 몬스터. 대공 타워만 공격할 수 있다."},
 }
 
+## 웨이브 변형 중 가장 큰 이동속도 배율 (변형이 없을 때 1.0 이상)
+static func max_speed_mult() -> float:
+	var best := 1.0
+	for id in AFFIXES:
+		best = maxf(best, float(AFFIXES[id].get("speed_mult", 1.0)))
+	return best
+
+
 ## 페이즈: 보스 체력이 내려가면서 단계가 바뀐다. 키는 라운드, 값은 단계 목록 (from: 이 단계가 시작되는 체력 비율)
 ## 단계가 바뀌면 그 단계의 스킬만 켜지고 이전 단계의 스킬은 꺼진다 (주기 스킬의 시계도 새로 시작한다).
 const PHASES := {
