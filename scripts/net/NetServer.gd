@@ -50,6 +50,7 @@ var max_connections := NetProtocol.MAX_CONNECTIONS  # 테스트가 줄인다
 var max_pending := NetProtocol.MAX_PENDING
 var reconnect_grace := NetProtocol.RECONNECT_GRACE_SEC       # 끊긴 뒤 돌아올 수 있는 시간(초). 지나면 이탈 (#23). 테스트가 줄인다
 var heartbeat_timeout := NetProtocol.HEARTBEAT_TIMEOUT_SEC   # 판 중 이 시간(초) 동안 그 연결에서 아무것도 못 받으면 끊김으로 본다 (#23)
+var finished := false                # 판이 끝났다(전체 승리/패배) (#54). 끝난 판은 자리를 "끝남"으로 두고 끊김/이탈 판정, 이탈 배너, 방장 승계를 멈춘다. 결과 화면에서 ping을 보내든 끊든 서버는 똑같이 동작한다
 var host_lane := -1                  # 판이 시작된 뒤의 방장 레인 (화면 표시용: 서버 권위형이라 방장 권한은 대기방에서만 의미가 있다). 이탈하면 입장 순서상 다음 사람으로 (#23)
 var hello_timeout := NetProtocol.HELLO_TIMEOUT  # hello를 이 시간(초) 안에 안 보내면 끊는다 (테스트가 줄인다)
 
@@ -127,8 +128,11 @@ func joined_count() -> int:
 
 
 ## 이 방에 아직 있는 사람 수: 접속 중 + 끊겼지만 유예 중인 사람 (방을 닫을지 정할 때 쓴다) (#23)
+## 끝난 판은 유예 중인 사람을 세지 않는다: 접속자가 없으면 유예를 기다리지 않고 바로 닫힌다 (#54).
 func alive_count() -> int:
 	var n := _slots.size()
+	if finished:
+		return n
 	for lane in _seats:
 		if _seats[lane].away and not _seats[lane].left:
 			n += 1
@@ -137,11 +141,39 @@ func alive_count() -> int:
 
 ## 이 레인의 자리가 끊겨서 유예 중인가 / 이탈했는가 (테스트와 화면 표시용)
 func is_away(lane: int) -> bool:
-	return _seats.has(lane) and _seats[lane].away and not _seats[lane].left
+	return not finished and _seats.has(lane) and _seats[lane].away and not _seats[lane].left
 
 
 func has_left(lane: int) -> bool:
 	return _seats.has(lane) and _seats[lane].left
+
+
+## 판이 끝났다 (#54): 모든 자리는 "끝남"이다. 유예 중이던 끊김은 취소하고(이탈로 넘어가지 않는다), 하트비트로 끊지도 않고,
+## 이탈 배너/방장 승계도 하지 않는다. 화면의 끊김 배너는 지워진다(presence). 한 번만 동작한다.
+func mark_finished() -> void:
+	if finished:
+		return
+	finished = true
+	Log.info(Log.Category.NETWORK, "판 끝: 자리를 끝남으로 두고 끊김/이탈 판정을 멈춘다 (접속 %d명)" % _slots.size())
+	_send_presence()
+
+
+## 판(GameField)의 보스가 끝나면(전체 승리/패배) mark_finished를 부른다. 보스는 한 프레임 뒤에 만들어져서 신호로 기다린다.
+func _watch_finish(f: GameField) -> void:
+	var hook := func(boss: BossController):
+		if boss == null:
+			return
+		boss.boss_defeated.connect(mark_finished)
+		boss.boss_failed.connect(func(_reason: String): mark_finished())
+	if f.boss != null:
+		hook.call(f.boss)
+	else:
+		f.boss_ready.connect(hook, CONNECT_ONE_SHOT)
+
+
+## 이 토큰이 이 판의 자리 주인인가 (RoomHub가 끝난 방에서 "판이 끝났다"를 알려 줄 사람을 가릴 때 쓴다) (#54)
+func owns_seat(token) -> bool:
+	return _seat_for_token(token) >= 0
 
 
 func player_of(peer_id: int) -> int:
@@ -167,7 +199,7 @@ func _process(delta: float) -> void:
 		elif c.player_id < 0 and c.age > hello_timeout:  # hello를 안 보내는 연결
 			Log.warn(Log.Category.NETWORK, "hello가 안 와서 끊음: 연결 %d" % id)
 			_drop(id)
-		elif c.player_id >= 0 and not _seats.is_empty():  # 판 중 하트비트: 클라이언트는 3초마다 ping을 보낸다 (#23)
+		elif c.player_id >= 0 and not _seats.is_empty() and not finished:  # 판 중 하트비트 (끝난 판은 안 본다 #54): 클라이언트는 3초마다 ping을 보낸다 (#23)
 			c.silent += delta
 			if c.silent > heartbeat_timeout:
 				Log.warn(Log.Category.NETWORK, "P%d에게서 %.0f초 동안 아무것도 못 받아 끊김으로 봄 (연결 %d)" % [c.player_id + 1, c.silent, id])
@@ -353,10 +385,13 @@ func _on_hello(id: int, c: Dictionary, msg: Dictionary) -> void:
 	if bad == "" and (game_started or (field != null and field.bus.started)):
 		# 이미 시작한 판: 이 판의 자리 주인(토큰이 맞는 사람)만 같은 레인으로 돌아온다 (#23)
 		var seat_lane := _seat_for_token(msg.get("token"))
-		if seat_lane >= 0 and not _seats[seat_lane].left:
+		if finished and seat_lane >= 0:  # 끝난 판의 자리 주인이 돌아오려 한다: 판이 끝났다고 알린다 (#54)
+			bad = NetProtocol.REJECT_FINISHED
+		elif seat_lane >= 0 and not _seats[seat_lane].left:
 			_resume(id, c, seat_lane)
 			return
-		bad = NetProtocol.REJECT_LEFT if seat_lane >= 0 else NetProtocol.REJECT_STARTED
+		if bad == "":
+			bad = NetProtocol.REJECT_LEFT if seat_lane >= 0 else NetProtocol.REJECT_STARTED
 	var slot := -1
 	var nick := Nicknames.unique(str(msg.get("name", "")), _taken_names())
 	if bad == "" and lobby != null:
@@ -487,6 +522,7 @@ func _begin_game() -> void:
 		lobby.reopen()
 		_lobby_dirty = true
 		return
+	_watch_finish(f)
 	await f.boss_ready  # 보스는 한 프레임 뒤에 만들어진다
 	field = f
 	for lane in _seats:  # 판을 만드는 동안 이탈한 사람의 레인은 바로 무너뜨린다
@@ -535,7 +571,7 @@ func _seat_for_token(token) -> int:
 ## 끊김: 레인은 그대로 둔다 (수입은 쌓이고 몬스터는 오고 타워는 자동으로 싸운다). 유예 시간 안에 돌아오지 않으면 이탈.
 func _go_away(lane: int) -> void:
 	var seat: Dictionary = _seats[lane]
-	if seat.left or seat.away:
+	if finished or seat.left or seat.away:  # 끝난 판에서는 끊겨도 아무 일도 아니다 (배너/유예 없음) (#54)
 		return
 	seat.away = true
 	seat.away_sec = reconnect_grace
@@ -545,6 +581,8 @@ func _go_away(lane: int) -> void:
 
 
 func _tick_away(delta: float) -> void:
+	if finished:
+		return
 	for lane in _seats.keys():
 		var seat: Dictionary = _seats[lane]
 		if seat.away and not seat.left:
@@ -557,7 +595,7 @@ func _tick_away(delta: float) -> void:
 ## 방장이 이탈하면 입장 순서상 다음 사람이 방장이 된다.
 func _leave_seat(lane: int, why: String) -> void:
 	var seat: Dictionary = _seats[lane]
-	if seat.left:
+	if seat.left or finished:  # 끝난 판에서 나가는 것은 이탈이 아니다: 레인/방장/배너를 건드리지 않는다 (#54)
 		return
 	seat.left = true
 	seat.away = false
@@ -626,6 +664,8 @@ func _presence_msg(note: Dictionary) -> Dictionary:
 			away.append(lane)
 	away.sort()
 	left.sort()
+	if finished:
+		away = []  # 끝난 판: 끊김 표시는 없다 (#54)
 	var msg := {"t": NetProtocol.MSG_PRESENCE, "away": away, "left": left, "host": host_lane}
 	if not note.is_empty():
 		msg["note"] = note

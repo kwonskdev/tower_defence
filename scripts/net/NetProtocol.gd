@@ -54,6 +54,7 @@ const REJECT_FULL := "room_full"                # 자리가 없다
 const REJECT_BAD_HELLO := "bad_hello"           # 첫 메시지가 hello가 아니거나 모양이 틀렸다
 const REJECT_STARTED := "already_started"       # 판이 이미 시작했다 (토큰이 없거나 이 판의 자리 주인이 아니면 재접속도 못 한다)
 const REJECT_LEFT := "seat_released"            # 이 판의 내 자리가 이미 이탈로 처리됐다 (유예가 지났거나 내가 나갔다) (#23)
+const REJECT_FINISHED := "game_finished"        # 이 판이 이미 끝났다 (끝난 판으로 돌아가려 할 때) (#54)
 const REJECT_NO_ROOM := "room_not_found"        # 없는 방 코드 (모양이 틀린 코드, 반납/만료된 코드 포함) (#26)
 const REJECT_TOO_MANY := "too_many_attempts"    # 잘못된 코드를 너무 많이 시도했다 (그 연결을 끊는다) (#26)
 const REJECT_BUSY := "server_busy"              # 방을 더 만들 수 없다 (방 수 상한) (#26)

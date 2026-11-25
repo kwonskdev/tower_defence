@@ -187,6 +187,8 @@ func _on_hello(id: int, msg: Dictionary) -> void:
 				var code := RoomCodes.normalize(str(msg.get("code", "")).left(32))
 				if not codes.allowed(p.addr, t):
 					bad = NetProtocol.REJECT_TOO_MANY
+				elif RoomCodes.is_valid_format(code) and _finished_at.has(code) and _rooms.has(code) and _rooms[code].owns_seat(msg.get("token")):
+					room = _rooms[code]  # 끝난 판의 자리 주인: 방이 "판이 끝났다"(game_finished)로 거부한다 (#54)
 				elif not RoomCodes.is_valid_format(code) or not _rooms.has(code) or _finished_at.has(code):  # 끝난 방은 코드가 아직 남아 있어도 없는 방처럼 거부한다
 					bad = NetProtocol.REJECT_TOO_MANY if codes.record_bad(p.addr, t) else NetProtocol.REJECT_NO_ROOM
 					Log.warn(Log.Category.NETWORK, "없는 방 코드 시도: 연결 %d (%s)" % [id, bad])
@@ -287,6 +289,7 @@ func _on_room_finished(code: String) -> void:
 	if not _rooms.has(code) or _finished_at.has(code):
 		return
 	_finished_at[code] = now_ms()
+	_rooms[code].mark_finished()  # 끊김/이탈 판정을 멈추고, 접속자가 없으면 유예 없이 닫힐 수 있게 한다 (#54)
 	# 코드는 방을 닫을 때(_close_room) 돌려받는다: 지금 돌려주면 새 방이 같은 코드를 받아 _rooms[code]를 덮어쓸 수 있다.
 	# 그동안 끝난 방은 join 검사에서 _finished_at으로 거부한다 (room_not_found).
 	Log.info(Log.Category.NETWORK, "방 판 끝: %s (입장 거부, 코드는 방을 닫을 때 반납)" % code)
