@@ -64,3 +64,8 @@ store-listing.md
 
 # 서버 빌드 환경 변수 (#24)
 deploy/.env
+
+# 계정 서비스 데이터: DB, 백업, API 키 (#25). 절대 올리지 않는다
+/data/
+__pycache__/
+*.pyc

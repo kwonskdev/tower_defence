@@ -2,6 +2,8 @@
 
 헤드리스 서버를 빌드하고 올리는 방법과 측정 결과. **소유자 결정(#24)**: 1차 호스팅은 **집 Windows PC + Cloudflare Tunnel** (`docs/windows-hosting.md`), **한 프로세스가 여러 방**(RoomHub), 도메인은 소유자가 구매. 나중에 VPS로 옮길 수 있게 Linux 빌드/Docker(아래)도 유지한다. **실제 원격 배포, Cloudflare 터널 연결, 폰 2대 실기기 확인은 아직 하지 않았다** (맨 아래 "소유자가 할 일").
 
+**계정과 판 기록(#25)**: 서버는 `--accounts-url=`로 별도 계정 서비스(SQLite)에 붙을 수 있다 (옵션이 없으면 계정 없이 이전처럼 동작). `docs/accounts-and-db.md`, Windows 실행은 `docs/windows-hosting.md` 6절. Docker/VPS 구성에는 아직 계정 서비스를 넣지 않았다 (서비스는 어디서든 `python tools/accounts/accounts_service.py`로 돈다).
+
 ## 1. 빌드와 실행
 
 ```bash

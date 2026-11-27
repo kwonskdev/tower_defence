@@ -13,6 +13,12 @@ New-Item -ItemType Directory -Force $logDir | Out-Null
 $args = @("--headless", "--server", "--port=$($Settings.Port)",
     "--max-rooms=$($Settings.MaxRooms)", "--max-rooms-per-addr=$($Settings.MaxRooms)",   # 터널/프록시 뒤에서는 접속이 한 주소로 보인다
     "--metrics-interval=$($Settings.MetricsInterval)")
+if ($Settings.AccountsEnabled) {   # 계정/판 기록 서비스 (#25): run-accounts.ps1이 따로 돈다. 서비스가 꺼져 있어도 서버는 뜨고(모르는 접속은 게스트, 기록은 대기열) 판은 진행된다
+    . "$PSScriptRoot\accounts-key.ps1"
+    $keyFile = if ([System.IO.Path]::IsPathRooted($Settings.AccountsKeyFile)) { $Settings.AccountsKeyFile } else { Join-Path $root $Settings.AccountsKeyFile }
+    $env:LANEWARS_ACCOUNTS_KEY = Get-AccountsKey $keyFile
+    $args += "--accounts-url=http://127.0.0.1:$($Settings.AccountsPort)"
+}
 while ($true) {
     $log = Join-Path $logDir ("server-{0:yyyyMMdd}.log" -f (Get-Date))
     Add-Content -Encoding UTF8 $log ("[{0:HH:mm:ss}] ---- 서버 시작 (방 한도 {1}, 포트 {2}) ----" -f (Get-Date), $Settings.MaxRooms, $Settings.Port)

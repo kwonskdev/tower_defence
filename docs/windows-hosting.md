@@ -94,3 +94,14 @@ powershell -ExecutionPolicy Bypass -File tools\bench\run_bench.ps1 -Godot C:\pat
 ```
 
 출력 한 줄: `cpu`(코어 하나 = 100%), `peak_ws`(메모리), `work_avg/work_max`(한 프레임에서 서버가 일한 시간 ms), `frame_max`(가장 긴 프레임), `monsters_max`. 판단 기준 제안: `work_avg`가 8ms(60fps 예산 16.7ms의 절반)를 넘거나 `frame_max`가 1초 이상 나오기 시작하는 방 수의 **절반 이하**를 `MaxRooms`로 한다. 결과를 알려 주면 값을 정한다.
+
+## 6. 계정/판 기록 서비스 (#25)
+
+방 서버 옆에서 작은 Python 서비스(`tools/accounts/accounts_service.py`, SQLite 파일 하나)가 계정과 판 기록을 저장한다. **자세한 내용은 `docs/accounts-and-db.md`** (결정, 규칙, 수집 항목, 백업/복원).
+
+- 필요한 것: **Python 3** (표준 라이브러리만 쓴다. 따로 설치할 패키지 없음). `deploy\windows\settings.ps1`의 `Python`이 실행 파일 이름이다 (기본 `python`).
+- 실행: `powershell -ExecutionPolicy Bypass -File deploy\windows\run-accounts.ps1` (죽으면 다시 시작, 로그 `logs\accounts-*.log`). `install-autostart.ps1`이 `LaneWarsAccounts` 작업도 같이 등록한다. 서비스는 **127.0.0.1에만** 열려서 터널/포트 포워딩과 무관하다.
+- 방 서버(`run-server.ps1`)는 `AccountsEnabled = $true`이면 `--accounts-url=http://127.0.0.1:47310`과 같은 키(`data\accounts.key`, 처음 실행에 자동 생성)로 서비스에 붙는다. **서비스가 죽어도 방 서버와 진행 중인 판은 영향이 없다** (모르는 접속은 기록 없이 임시 입장, 판 기록은 대기열에 쌓였다가 복구되면 저장).
+- 데이터: `data\accounts.db` (DB), `data\backups\` (매일 스냅샷 14개), `data\accounts.key` (API 키). 모두 git에 안 올라간다. **`AccountsBackupDir`를 OneDrive 같은 동기화 폴더로 바꾸면 PC가 고장나도 백업이 남는다.**
+- 방 서버가 못 보낸 판 기록 대기열은 서버 사용자 폴더의 `user://match_spool.jsonl`(Windows: `%APPDATA%\Godot\app_userdata\Lane Wars\`)에 적힌다.
+- 이 PC에서 실행해 확인하지 않은 것: 작업 스케줄러 등록, 서버 exe와 같이 도는 것 (docs/accounts-and-db.md 9절).
