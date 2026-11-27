@@ -256,7 +256,7 @@ func _release() -> void:
 	g.request_start()
 	await wait_until(func(): return hub.room_for(gcode).field != null, 8000)
 	check(hub.codes.has(gcode), "판 중에는 코드가 유지된다")
-	hub._on_room_finished(gcode)
+	hub._on_room_finished(gcode, true)
 	check(hub.codes.has(gcode) and hub.room_for(gcode) != null, "판이 끝나도 코드는 방을 닫을 때까지 쥐고 있다 (새 방이 같은 코드를 받아 덮어쓰지 못하게)")
 	var other_codes := []
 	for i in range(200):

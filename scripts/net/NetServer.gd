@@ -53,10 +53,13 @@ var heartbeat_timeout := NetProtocol.HEARTBEAT_TIMEOUT_SEC   # 판 중 이 시�
 var finished := false                # 판이 끝났다(전체 승리/패배) (#54). 끝난 판은 자리를 "끝남"으로 두고 끊김/이탈 판정, 이탈 배너, 방장 승계를 멈춘다. 결과 화면에서 ping을 보내든 끊든 서버는 똑같이 동작한다
 var host_lane := -1                  # 판이 시작된 뒤의 방장 레인 (화면 표시용: 서버 권위형이라 방장 권한은 대기방에서만 의미가 있다). 이탈하면 입장 순서상 다음 사람으로 (#23)
 var hello_timeout := NetProtocol.HELLO_TIMEOUT  # hello를 이 시간(초) 안에 안 보내면 끊는다 (테스트가 줄인다)
+## 판 기록용 (#25): 판이 시작된 시각(unix 초)과 시작 뒤 흐른 게임 시간(초). 판 기록(MatchRecord)이 읽는다 (서버가 센 값만 쓴다)
+var started_unix := 0
+var game_seconds := 0.0
 
 var keepalive_sec := NetProtocol.KEEPALIVE_SEC   # 테스트가 줄인다 (#24)
-var _clients: Dictionary = {}     # peer_id -> {player_id: int(-1 = 아직 hello 전), view: int, age: float, name: String, token_hash, silent}
-var _seats: Dictionary = {}       # 판이 시작될 때 만든 자리: 레인 -> {hash: 토큰 해시, name, away: 끊겨서 유예 중, left: 이탈, away_sec: 남은 유예}. 재접속은 이 자리의 주인(Identity)만 한다 (#23)
+var _clients: Dictionary = {}     # peer_id -> {player_id: int(-1 = 아직 hello 전), view: int, age: float, name: String, token_hash, account: 계정 ID("" = 게스트), silent}
+var _seats: Dictionary = {}       # 판이 시작될 때 만든 자리: 레인 -> {hash: 토큰 해시, account: 계정 ID, name, away: 끊겨서 유예 중, left: 이탈, away_sec: 남은 유예}. 재접속은 이 자리의 주인(Identity)만 한다 (#23)
 var _join_order: Array[int] = []  # 입장 순서의 레인 (방장 승계 순서)
 var _slots: Dictionary = {}       # player_id -> peer_id
 var _prev_q: Dictionary = {}      # 이전 틱의 거칠게 한 전체 스냅샷 (변경분의 기준)
@@ -178,6 +181,19 @@ func _watch_finish(f: GameField) -> void:
 		f.boss_ready.connect(hook, CONNECT_ONE_SHOT)
 
 
+## 이 레인의 자리 정보 {hash, account, name, away, left, ...} (없으면 빈 Dictionary). 판 기록이 읽는다 (#25)
+func seat_of(lane: int) -> Dictionary:
+	return _seats.get(lane, {})
+
+
+## 같은 계정의 다른 연결이 이 방에 이미 들어와 있으면 내보낸다 (판 시작 전 대기방. 시작된 뒤의 같은 계정은 _resume이 옛 연결을 대체한다) (#25)
+func _replace_old_connection(new_id: int, account: String) -> void:
+	for old in _clients.keys():
+		if old != new_id and _clients[old].get("account", "") == account and _clients[old].player_id >= 0:
+			Log.info(Log.Category.NETWORK, "같은 계정의 옛 연결 %d를 내보냄 (새 연결 %d)" % [old, new_id])
+			_drop(old)
+
+
 ## 이 토큰이 이 판의 자리 주인인가 (RoomHub가 끝난 방에서 "판이 끝났다"를 알려 줄 사람을 가릴 때 쓴다) (#54)
 func owns_seat(token) -> bool:
 	return _seat_for_token(token) >= 0
@@ -215,6 +231,8 @@ func _process(delta: float) -> void:
 				Log.warn(Log.Category.NETWORK, "P%d에게서 %.0f초 동안 아무것도 못 받아 끊김으로 봄 (연결 %d)" % [c.player_id + 1, c.silent, id])
 				_drop(id)
 	_tick_away(delta)
+	if field != null and game_started and not finished:
+		game_seconds += delta
 	if lobby != null and field == null:
 		_process_lobby(delta)
 	_snap_timer += delta
@@ -238,7 +256,7 @@ func _on_peer_connected(id: int) -> void:
 
 
 func _new_client() -> Dictionary:
-	return {"player_id": -1, "view": -1, "age": 0.0, "name": "", "need_key": true, "token_hash": "", "silent": 0.0, "tx_idle": 0.0,
+	return {"player_id": -1, "view": -1, "age": 0.0, "name": "", "need_key": true, "token_hash": "", "account": "", "silent": 0.0, "tx_idle": 0.0,
 		"tokens": NetProtocol.RATE_BURST, "view_tokens": NetProtocol.VIEW_BURST, "ignored": 0.0}
 
 
@@ -248,8 +266,10 @@ func is_open() -> bool:
 
 
 ## 방 모드: hub가 이 방으로 보낸 연결의 hello를 받는다 (hub가 버전/방 코드는 이미 확인했다). 방이 거부하면(가득/이미 시작) reject를 보내고 곧 끊는다.
-func admit(id: int, hello: Dictionary) -> void:
+## auth는 계정 확인 결과 (Accounts.login: {account_id, nickname, name_result, guest}). 비어 있으면 계정 없이 hello의 이름/토큰을 그대로 쓴다.
+func admit(id: int, hello: Dictionary, auth: Dictionary = {}) -> void:
 	_clients[id] = _new_client()
+	_clients[id]["auth"] = auth
 	_on_hello(id, _clients[id], hello)
 
 
@@ -403,7 +423,11 @@ func _on_hello(id: int, c: Dictionary, msg: Dictionary) -> void:
 		if bad == "":
 			bad = NetProtocol.REJECT_LEFT if seat_lane >= 0 else NetProtocol.REJECT_STARTED
 	var slot := -1
-	var nick := Nicknames.unique(str(msg.get("name", "")), _taken_names())
+	var auth: Dictionary = c.get("auth", {})
+	var account := str(auth.get("account_id", ""))
+	if bad == "" and account != "":
+		_replace_old_connection(id, account)  # 같은 계정의 옛 연결(앱이 죽었는데 서버는 아직 모른다)이 대기방에 남아 있으면 그것을 내보낸다: 한 계정이 한 방에 두 번 앉지 않게
+	var nick := Nicknames.unique(str(auth.get("nickname", msg.get("name", ""))), _taken_names())
 	if bad == "" and lobby != null:
 		var joined := lobby.join(id, nick)
 		if joined.ok:
@@ -428,12 +452,14 @@ func _on_hello(id: int, c: Dictionary, msg: Dictionary) -> void:
 	c.view = slot
 	c.name = nick
 	c.token_hash = Identity.hash_of(str(msg["token"])) if Identity.valid_token(msg.get("token")) else ""
+	c.account = account
 	_slots[slot] = id
 	var roster: Array = [] if field == null else field.session.participants.duplicate()
 	if field != null:
 		field.session.names[slot] = nick
 	_send(id, {"t": NetProtocol.MSG_WELCOME, "proto": NetProtocol.PROTOCOL_VERSION, "player_id": slot, "name": nick,
-		"players": roster, "snap_hz": snap_hz, "summary_hz": summary_hz, "room": room_code, "mode": game_mode}, true)
+		"players": roster, "snap_hz": snap_hz, "summary_hz": summary_hz, "room": room_code, "mode": game_mode,
+		"name_result": str(auth.get("name_result", "")), "guest": bool(auth.get("guest", false))}, true)
 	Log.info(Log.Category.NETWORK, "P%d 입장: 연결 %d '%s' (앱 '%s')" % [slot + 1, id, c.name, str(msg.get("game", "")).left(20)])
 	client_joined.emit(id, slot)
 	if lobby != null:
@@ -537,6 +563,8 @@ func _begin_game() -> void:
 	_watch_finish(f)
 	await f.boss_ready  # 보스는 한 프레임 뒤에 만들어진다
 	field = f
+	started_unix = int(Time.get_unix_time_from_system())
+	game_seconds = 0.0
 	for lane in _seats:  # 판을 만드는 동안 이탈한 사람의 레인은 바로 무너뜨린다
 		if _seats[lane].left:
 			_forfeit_lane(lane)
@@ -569,7 +597,7 @@ func _make_seats() -> void:
 		var c: Dictionary = _clients[id]
 		c.silent = 0.0
 		if c.player_id >= 0:
-			_seats[c.player_id] = {"hash": c.token_hash, "name": c.name, "away": false, "left": false, "away_sec": 0.0}
+			_seats[c.player_id] = {"hash": c.token_hash, "account": c.account, "name": c.name, "away": false, "left": false, "away_sec": 0.0}
 
 
 ## 이 토큰의 주인인 자리의 레인 (이탈한 자리 포함). 없으면 -1.
@@ -651,6 +679,7 @@ func _resume(id: int, c: Dictionary, lane: int) -> void:
 	c.view = lane
 	c.name = seat.name
 	c.token_hash = seat.hash
+	c.account = seat.get("account", "")
 	c.need_key = true  # 전체 스냅샷(키프레임)을 다시 보낸다
 	c.silent = 0.0
 	_slots[lane] = id

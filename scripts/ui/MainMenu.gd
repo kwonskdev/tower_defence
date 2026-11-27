@@ -204,10 +204,27 @@ static func reject_text(reason: String, info: Dictionary = {}) -> String:
 			return "잘못된 코드를 너무 많이 입력했습니다. 잠시 뒤에 다시 시도하세요."
 		NetProtocol.REJECT_BUSY:
 			return "서버가 가득 찼습니다. 잠시 뒤에 다시 시도하세요."
+		NetProtocol.REJECT_BANNED:
+			return "이 계정은 이용이 제한되었습니다."
 		NetProtocol.REJECT_PROTOCOL:
 			return "앱 버전이 서버와 다릅니다. 앱을 최신 버전으로 업데이트하세요."
 		_:
 			return "접속하지 못했습니다 (%s)." % reason
+
+
+## 서버가 원하는 이름을 그대로 받아 주지 않았을 때 알림 (#25). 평범한 접속("")은 알릴 것이 없다.
+static func name_result_text(result: String) -> String:
+	match result:
+		"taken":
+			return "이미 쓰는 닉네임이라 기존 닉네임을 그대로 씁니다."
+		"cooldown":
+			return "닉네임은 7일에 한 번만 바꿀 수 있어 기존 닉네임을 그대로 씁니다."
+		"banned_word":
+			return "쓸 수 없는 낱말이 들어 있어 닉네임을 바꾸지 못했습니다."
+		"ok":
+			return "닉네임을 바꿨습니다."
+		_:
+			return ""
 
 
 ## 재접속하다 실패한 이유를 사람이 읽는 말로 (판 중 연결이 끊겼다가 돌아오지 못했을 때, 또는 앱 재시작 뒤 복귀가 거부됐을 때) (#23)
@@ -243,7 +260,7 @@ func resume_online() -> void:
 
 
 ## 방 만들기/입장을 시작한다 (MODE_CREATE/MODE_JOIN). 입력이 틀렸으면 이유를 보여 주고 접속하지 않는다.
-## token을 주면 그 토큰으로 접속한다 (앱 재시작 뒤 판으로 돌아올 때, #23). 없으면 새 임시 토큰이다.
+## token을 주면 그 토큰으로 접속한다 (앱 재시작 뒤 판으로 돌아올 때, #23). 없으면 이 기기의 계정 토큰이다 (#25: 첫 실행에 만들어 저장한 것).
 func start_online(mode: String, token := "") -> void:
 	if client != null:
 		return  # 접속 중
@@ -269,7 +286,7 @@ func start_online(mode: String, token := "") -> void:
 	client.player_name = nick
 	client.join_mode = mode
 	client.join_code = code if mode == NetProtocol.MODE_JOIN else ""
-	client.token = token
+	client.token = token if token != "" else Identity.account_token()
 	_resuming = token != ""
 	add_child(client)
 	client.joined.connect(_on_joined)
@@ -315,7 +332,10 @@ func _on_joined(_player_id: int) -> void:
 	_lobby_box.visible = true
 	_refresh_code()
 	client.lobby_changed.connect(func(_v): _refresh_code())
-	_status("")
+	_status(name_result_text(client.name_result))
+	if client.my_name != "" and client.my_name != Nicknames.sanitize(name_edit.text):  # 서버가 정한 계정 닉네임이 내 이름이다: 다음에도 그 이름으로 보낸다 (#25)
+		name_edit.text = client.my_name
+		_save_profile(client.my_name, server_edit.text.strip_edges())
 	lobby_screen = LobbyScreen.new()
 	_lobby_box.add_child(lobby_screen)
 	lobby_screen.setup(client)

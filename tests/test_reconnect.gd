@@ -112,7 +112,7 @@ func _identity_and_lobby_units() -> void:
 	check(lobby.lanes_in_join_order() == [0, 1, 2], "입장 순서의 레인 목록 (방장 승계 순서)")
 	var hello := NetProtocol.make_hello("x", NetProtocol.MODE_JOIN, "ABCDEF", t)
 	check(hello["token"] == t and not NetProtocol.make_hello("x").has("token"), "hello에 토큰이 실린다 (없으면 필드 없음)")
-	check(NetProtocol.PROTOCOL_VERSION == 4, "프로토콜 버전 4 (재접속)")
+	check(NetProtocol.PROTOCOL_VERSION >= 4, "프로토콜 버전 4 이상 (재접속은 4에서 들어왔다. 현재 %d)" % NetProtocol.PROTOCOL_VERSION)
 
 
 func _heartbeat_and_away() -> void:

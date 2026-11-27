@@ -17,6 +17,7 @@ signal game_started(players: Array, names: Dictionary)   # 판이 시작됐다: 
 signal link_lost()                              # 판 중 연결이 끊겼다: 자동으로 다시 접속을 시도한다 (#23)
 signal reconnected()                            # 다시 접속해서 같은 레인으로 돌아왔다 (스냅샷은 키프레임부터 다시 온다)
 signal reconnect_failed(reason: String)         # 돌아오지 못했다: 유예가 지났거나("grace_expired") 서버가 거부했다 (reject 사유) (#23)
+signal board_received(period: String, status: String, rows: Array)   # 순위 조회 결과 (join_mode가 MODE_BOARD일 때) (#25)
 signal presence_changed(note: Dictionary)       # 끊긴/이탈한 사람이나 방장이 바뀌었다. note: {kind: away/back/left/host, lane} 또는 빈 Dictionary
 
 enum State { IDLE, CONNECTING, HELLO_SENT, JOINED, REJECTED, CLOSED }
@@ -32,7 +33,10 @@ var player_name := "player"       # 내가 입력한 닉네임 (서버가 정리
 var room_code := ""                # 서버가 알려 준 방 코드 (방 코드 서버에서만, welcome/lobby)
 var join_mode := ""                 # hello에 실을 방 모드: NetProtocol.MODE_CREATE/MODE_JOIN ("" = 예전 방식)
 var join_code := ""                 # MODE_JOIN일 때 입력한 방 코드
-var my_name := ""                   # 서버가 정해 준 내 닉네임
+var my_name := ""                   # 서버가 정해 준 내 닉네임 (계정 닉네임)
+var name_result := ""               # 원하는 이름이 안 받아들여진 이유 "taken"/"cooldown"/"banned_word"/"unavailable", 바뀌었으면 "ok", 아니면 "" (#25)
+var is_guest := false               # 계정 없이(기록이 안 남는) 임시로 입장했다 (#25)
+var board_period := "all"           # MODE_BOARD일 때 조회할 기간 "all"/"week" (#25)
 var hello_disabled := false   # 테스트용: hello를 보내지 않는다 (말 없는 연결 시험)
 var proto_override := -1   # 테스트용: 이 값이 -1이 아니면 hello의 proto를 이 값으로 속인다 (버전 불일치 시험)
 var snapshot: Dictionary = {}       # 키프레임에 변경분을 적용해 맞춘 스냅샷 (자기 레인 + 보고 있는 레인 + 보스 HUD)
@@ -43,7 +47,7 @@ var reject_reason := ""
 var pongs := 0                      # 받은 pong 수 (테스트가 속도 제한을 볼 때 쓴다)
 var rtt_ms := -1.0                  # 가장 최근 ping 왕복(밀리초)
 ## 재접속 (#23)
-var token := ""                     # 재접속 식별용 기기 임시 토큰 (Identity). 비어 있으면 connect_to가 새로 만든다
+var token := ""                     # 계정/재접속 식별용 토큰 (Identity). 앱은 기기의 계정 토큰을 넣고(Identity.account_token), 비어 있으면 connect_to가 임시 토큰을 새로 만든다 (테스트/봇)
 var resumed := false                # 마지막 welcome이 재접속이었는가 (판 중간에 돌아옴)
 var reconnecting := false           # 끊겨서 다시 접속을 시도하는 중
 var away: Array = []                # 끊겨서 유예 중인 레인들 (서버가 알려 준다)
@@ -164,7 +168,7 @@ func _on_peer_connected(id: int) -> void:
 		return
 	if hello_disabled:
 		return
-	var hello := NetProtocol.make_hello(player_name, join_mode, join_code, token)
+	var hello := NetProtocol.make_hello(player_name, join_mode, join_code, token, board_period if join_mode == NetProtocol.MODE_BOARD else "")
 	if proto_override >= 0:
 		hello["proto"] = proto_override
 	_send(hello)
@@ -316,6 +320,8 @@ func _on_message(msg: Dictionary) -> void:
 			player_id = int(msg.get("player_id", -1))
 			players = _as_ints(msg.get("players", []))
 			my_name = str(msg.get("name", player_name))
+			name_result = str(msg.get("name_result", ""))
+			is_guest = bool(msg.get("guest", false))
 			room_code = str(msg.get("room", ""))
 			resumed = bool(msg.get("resumed", false))
 			state = State.JOINED
@@ -341,6 +347,10 @@ func _on_message(msg: Dictionary) -> void:
 			close()  # 서버가 끊기 전에 내가 먼저 끊는다 (state는 REJECTED로 남는다)
 			if was_reconnecting:
 				reconnect_failed.emit(reject_reason)
+		NetProtocol.MSG_BOARD:
+			var rows = msg.get("rows", [])
+			board_received.emit(str(msg.get("period", "")), str(msg.get("status", "")), rows if rows is Array else [])
+			close()  # 조회만 하는 연결이다
 		NetProtocol.MSG_PRESENCE:
 			away = _as_ints(msg.get("away", []))
 			left = _as_ints(msg.get("left", []))

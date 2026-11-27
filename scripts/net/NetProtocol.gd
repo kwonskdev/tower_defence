@@ -5,7 +5,7 @@ class_name NetProtocol
 ## 밖에서 온 바이트가 객체를 만들 수 없게 하려는 것이고, 명령(Command.to_wire/from_wire)과 같은 방식이다.
 ##
 ## 클라이언트 -> 서버
-##   hello   {proto, snapshot, game, name, mode?, code?}   접속 직후 첫 메시지. 버전이 다르면 서버가 reject하고 끊는다.
+##   hello   {proto, snapshot, game, name, token?, mode?, code?, period?}   접속 직후 첫 메시지. 버전이 다르면 서버가 reject하고 끊는다.
 ##                                           방 코드 서버(RoomHub)에서는 mode가 "create"(방 만들기) / "join"(code로 입장) / "quick"(빠른 시작: 공개 방) (#26)
 ##   cmd     {seq, cmd: Command.to_wire 글자}  명령 하나. 서버는 결과를 같은 seq로 돌려준다
 ##   view    {lane}                          지금 보고 있는 레인 (이 레인은 자주 받고 나머지는 드물게 받는다)
@@ -13,9 +13,9 @@ class_name NetProtocol
 ##   ready   {on}                            로비에서 준비/준비 취소 (방장은 늘 준비됨) (#22)
 ##   start   {}                              로비에서 방장이 시작한다. 모두 준비했을 때만 받아 준다 (#22)
 ##   leave   {}                              게임 중 의도적으로 나간다 (#23). 서버는 유예 없이 바로 이탈로 처리한다
-##   (hello의 token: 재접속 식별용 기기 임시 토큰. 판이 시작된 방에 같은 token으로 다시 들어오면 같은 레인으로 복귀한다 (#23))
+##   (hello의 token: 기기의 계정 토큰 (#25: 서버는 해시로 익명 계정을 찾거나 만든다). 재접속 식별에도 같이 쓴다. 판이 시작된 방에 같은 token으로 다시 들어오면 같은 레인으로 복귀한다 (#23))
 ## 서버 -> 클라이언트
-##   welcome {proto, player_id, players, snap_hz, summary_hz, room, mode, resumed?, names?}   접속 허가. player_id는 서버가 정한다. resumed=true면 재접속이다 (같은 레인 복귀, 곧 키프레임이 온다) (#23)
+##   welcome {proto, player_id, players, snap_hz, summary_hz, room, mode, resumed?, names?, name_result?, guest?}   접속 허가. name은 서버가 정한 닉네임(계정 닉네임). name_result는 원하는 이름이 안 받아들여진 이유(taken/cooldown/banned_word) 또는 바뀜(ok), guest=true면 계정 없이(기록 안 남는) 임시 입장 (#25). player_id는 서버가 정한다. resumed=true면 재접속이다 (같은 레인 복귀, 곧 키프레임이 온다) (#23)
 ##   reject  {reason, proto, snapshot}       접속 거부 (REJECT_* 중 하나). 이 뒤에 서버가 연결을 끊는다
 ##   snap    {tick, key, snap: {...}}        내가 받기로 한 범위(자기 레인, 보고 있는 레인, 보스 HUD)의 스냅샷. key=true면 전체(키프레임: 그대로 교체),
 ##                                           false면 이전 틱 위에 적용할 변경분(SnapshotDelta.apply). 모두 신뢰 순서로 오므로 빠지지 않는다
@@ -28,7 +28,7 @@ class_name NetProtocol
 ##   started {players, names: {"<레인>": 닉네임}}   방장이 시작해서 게임이 시작됐다 (서버가 바로 start_game을 한다. 첫 몬스터는 30초 뒤). 이 뒤로 snap이 온다. 이때 참여자(레인)가 확정된다.
 
 ## 선로 형식(메시지 모양)이 바뀌면 올린다. 클라이언트와 서버가 같은 값이어야만 접속된다 (큰 호환 규칙: 다르면 거부).
-const PROTOCOL_VERSION := 4  # 2: 로비(lobby/started), 닉네임 (#22) / 3: 방 코드(hello mode/code, welcome/lobby room) (#26) / 4: 재접속(hello token, leave, presence, welcome resumed) (#23)
+const PROTOCOL_VERSION := 5  # 5: 계정(hello name은 "원하는 이름", welcome name_result/guest, board 조회) (#25) / 2: 로비(lobby/started), 닉네임 (#22) / 3: 방 코드(hello mode/code, welcome/lobby room) (#26) / 4: 재접속(hello token, leave, presence, welcome resumed) (#23)
 
 const MSG_HELLO := "hello"
 const MSG_CMD := "cmd"
@@ -47,6 +47,7 @@ const MSG_READY := "ready"
 const MSG_START := "start"
 const MSG_LEAVE := "leave"
 const MSG_PRESENCE := "presence"
+const MSG_BOARD := "board"       # 서버 -> 클라이언트: 순위 조회 결과 {period, status: "ok"/"unavailable", rows: [...]} (hello mode "board"의 응답, 그 뒤 연결을 끊는다) (#25)
 
 ## 접속 거부 사유
 const REJECT_PROTOCOL := "protocol_mismatch"   # 프로토콜/스냅샷 버전이 다르다
@@ -58,10 +59,12 @@ const REJECT_FINISHED := "game_finished"        # 이 판이 이미 끝났다 (�
 const REJECT_NO_ROOM := "room_not_found"        # 없는 방 코드 (모양이 틀린 코드, 반납/만료된 코드 포함) (#26)
 const REJECT_TOO_MANY := "too_many_attempts"    # 잘못된 코드를 너무 많이 시도했다 (그 연결을 끊는다) (#26)
 const REJECT_BUSY := "server_busy"              # 방을 더 만들 수 없다 (방 수 상한) (#26)
+const REJECT_BANNED := "account_banned"         # 차단된 계정 (#25)
 
 ## hello의 mode (방 코드 서버). 없거나 다르면 bad_hello
 const MODE_CREATE := "create"
 const MODE_JOIN := "join"
+const MODE_BOARD := "board"      # 순위 조회: 방에 들어가지 않고 board 메시지 하나만 받고 끊긴다. hello의 period는 "all"/"week" (#25)
 const MODE_QUICK := "quick"      # 빠른 시작: 자리 있는 공개 방에 들어가고, 없으면 새 공개 방을 만든다 (코드 없이)
 
 ## 연결 끊김 감지 (#23, 오너 결정). 게임 중 클라이언트가 이 간격(초)마다 ping을 보내고, 서버는 그 연결에서 이 시간(초) 동안
@@ -124,7 +127,7 @@ static func decode(bytes: PackedByteArray) -> Dictionary:
 
 ## 클라이언트가 보낼 hello
 ## mode/code는 방 코드 서버용 (#26): MODE_CREATE면 code 없이, MODE_JOIN이면 방 코드를 준다. 안 주면 필드를 싣지 않는다 (예전 서버와 같은 모양).
-static func make_hello(player_name: String, mode := "", code := "", token := "") -> Dictionary:
+static func make_hello(player_name: String, mode := "", code := "", token := "", period := "") -> Dictionary:
 	var hello := {"t": MSG_HELLO, "proto": PROTOCOL_VERSION, "snapshot": Snapshot.VERSION, "game": game_version(), "name": player_name}
 	if mode != "":
 		hello["mode"] = mode
@@ -132,6 +135,8 @@ static func make_hello(player_name: String, mode := "", code := "", token := "")
 		hello["code"] = code
 	if token != "":
 		hello["token"] = token
+	if period != "":
+		hello["period"] = period
 	return hello
 
 

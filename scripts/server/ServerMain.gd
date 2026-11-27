@@ -19,6 +19,9 @@ class_name ServerMain
 ##   --start-when-full   (고정 인원 모드) --players=N 자리가 다 차면 자동으로 시작한다. 주면 로비를 쓰지 않는다 (개발/부하 측정용)
 ##   --max-fps=N         서버 프레임 상한 (기본 60). 헤드리스는 안 걸면 CPU 한 코어를 다 쓰며 돈다 (#24). 0이면 제한 없음(부하 측정용)
 ##   --metrics-interval=N  방 수/접속자 수/프레임 시간 지표를 N초마다 로그에 남긴다 (기본 60, 0이면 끔) (#24)
+##   --accounts-url=http://127.0.0.1:47310  (방 코드 서버) 계정/판 기록 서비스 주소 (#25). 주면 익명 계정과 판 기록이 켜진다. 키는 환경 변수 LANEWARS_ACCOUNTS_KEY
+##   --accounts-memory   (방 코드 서버) 계정을 메모리에만 둔다 (개발용. 서버를 끄면 사라진다)
+##   --accounts-spool=경로  저장 못 한 판 기록을 적어 두는 파일 (기본 user://match_spool.jsonl)
 ## --port=가 있고 --start-when-full/--single-room이 없으면 방 코드 서버다 (#26): 한 프로세스가 방 코드로 여러 방을 연다 (RoomHub).
 ##   접속한 사람이 [방 만들기]로 코드를 받고, 친구가 그 코드로 입장한다. 방마다 아래 로비 방식이 따로 돈다.
 ## --port=가 있고 --start-when-full이 없으면 로비 방식이다 (#22): 접속한 사람이 먼저 로비에 모이고(방장 = 첫 입장자),
@@ -40,6 +43,7 @@ var net_tls: TLSOptions = null       # 주면 wss (--tls-cert/--tls-key 인자�
 var use_rooms := false               # 방 코드 서버 (RoomHub). --port가 있고 --start-when-full/--single-room이 없으면 _ready가 켠다. 테스트는 직접 켠다
 var hub: RoomHub = null
 var metrics: ServerMetrics = null    # 방 코드 서버의 운영 지표 로그 (#24)
+var accounts: Accounts = null        # 방 코드 서버의 계정/판 기록 (#25). 옵션이 없으면 null: 계정 없이 이전처럼 동작
 var use_lobby := false               # 로비 방식 (위 설명). --port가 있고 --start-when-full이 없으면 _ready가 켠다. 테스트는 직접 켠다
 var lobby_max_players := Balance.MAX_PLAYERS
 
@@ -127,6 +131,9 @@ func _ready() -> void:
 		metrics = ServerMetrics.new()
 		add_child(metrics)
 		metrics.setup(hub, float(arg_value("metrics-interval", str(ServerMetrics.DEFAULT_INTERVAL_SEC))))
+		accounts = _make_accounts()
+		if accounts != null:
+			hub.accounts = accounts
 		var herr := hub.start(net_transport, net_port, net_tls)
 		if herr != OK:
 			Log.error(Log.Category.NETWORK, "네트워크를 열지 못해 서버를 끝냄 (포트 %d, %s)" % [net_port, net_transport])
@@ -149,6 +156,31 @@ func _ready() -> void:
 			result = {"victory": false, "boss_level": 0, "reason": "net_open_failed"}
 			if requested():
 				get_tree().quit.call_deferred(2)
+
+
+## 계정/판 기록 (#25). --accounts-url(계정 서비스) 또는 --accounts-memory(개발)를 주었을 때만 만든다. 서비스 주소가 틀려도 서버는 뜬다 (모르는 토큰은 임시로 입장, 기록은 대기열에 쌓임).
+func _make_accounts() -> Accounts:
+	var url := arg_value("accounts-url")
+	var memory := "--accounts-memory" in OS.get_cmdline_args() or "--accounts-memory" in OS.get_cmdline_user_args()
+	if url == "" and not memory:
+		return null
+	var a := Accounts.new()
+	if arg_value("accounts-spool") != "":
+		a.spool_path = arg_value("accounts-spool")
+	add_child(a)
+	if url != "":
+		var store := HttpAccountStore.new()
+		store.base_url = url.rstrip("/")
+		store.api_key = OS.get_environment("LANEWARS_ACCOUNTS_KEY")
+		if store.api_key == "":
+			Log.error(Log.Category.NETWORK, "LANEWARS_ACCOUNTS_KEY가 비어 있어 계정 서비스가 요청을 거부한다")
+		a.set_store(store)
+		Log.info(Log.Category.NETWORK, "계정/판 기록: 계정 서비스 %s" % url)
+	else:
+		a.set_store(MemoryAccountStore.new())
+		Log.warn(Log.Category.NETWORK, "계정/판 기록: 메모리 저장소 (서버를 끄면 사라진다. 개발용)")
+	a.load_spool()
+	return a
 
 
 ## 시뮬레이션 필드(레인 + 보스)를 만든다. 고정 인원 모드는 시작할 때, 로비 방식은 참여자가 확정된 뒤에 부른다.

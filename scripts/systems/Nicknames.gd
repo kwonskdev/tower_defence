@@ -1,7 +1,7 @@
 class_name Nicknames
 ## 닉네임 (#22). 클라이언트가 입력하고, 입력이 없으면 형용사+명사로 자동 만든다 ("아름다운사과", "더러운컴퓨터").
 ## 서버는 받은 이름을 항상 다시 정리한다 (sanitize): 밖에서 온 글자를 그대로 화면에 올리지 않는다.
-## 중복은 서버가 뒤에 숫자를 붙여 구별한다 (unique). 계정(#25)이 생기면 계정 이름이 이 값을 대체한다.
+## 중복은 서버가 뒤에 숫자를 붙여 구별한다 (unique). 계정(#25)이 있으면 서버 전체에서 유일한 계정 닉네임이 쓰이고(key로 비교), 금칙어는 is_clean이 검사한다.
 
 const ADJECTIVES := [
 	"아름다운", "더러운", "용감한", "졸린", "배고픈", "수상한", "빠른", "느긋한", "엉뚱한", "거대한",
@@ -40,6 +40,27 @@ static func sanitize(raw: String) -> String:
 static func _is_invisible(code: int) -> bool:
 	return (code >= 0x200B and code <= 0x200F) or code == 0x2028 or code == 0x2029 or (code >= 0x202A and code <= 0x202E) \
 		or (code >= 0x2066 and code <= 0x2069) or code == 0x061C or code == 0xFEFF
+
+
+## 서버 전체 중복 비교용 키 (#25): 소문자로 바꾸고 공백을 뺀다. "철 수"와 "철수", "Kim"과 "kim"은 같은 이름이다.
+static func key(nickname: String) -> String:
+	return nickname.to_lower().replace(" ", "")
+
+
+## 금칙어 검사용으로 정리한 글자 (#25): 소문자, 공백/기호(ASCII 영숫자가 아닌 ASCII) 제거. 한글/그 밖의 글자는 그대로 둔다.
+## "시 발", "s.h.i.t" 처럼 틈을 둔 우회를 잡는다.
+static func screen_text(nickname: String) -> String:
+	var out := ""
+	for ch in nickname.to_lower():
+		var code := ch.unicode_at(0)
+		if code >= 128 or (code >= 48 and code <= 57) or (code >= 97 and code <= 122):
+			out += ch
+	return out
+
+
+## 금칙어가 없는 이름인가 (#25)
+static func is_clean(nickname: String) -> bool:
+	return not BannedWords.contains_banned(screen_text(nickname))
 
 
 ## taken(이미 쓰는 이름들)에 없는 이름으로. 겹치면 "이름2", "이름3"... (길이 제한 안에서 앞을 줄여 붙인다). 이름이 비면 자동 생성.
