@@ -73,13 +73,23 @@ class PurgeTest(unittest.TestCase):
         self.t[0] -= 2 * DAY + 1                   # 정확히 365일 안(364일 + 소량)에서는 안 지운다
         self.assertEqual(self.db.purge()["players"], 0)
 
-    def test_banned_accounts_are_purged_too_and_zero_disables(self):
-        self.db.login(h("b"), "차단", "차단")
+    def test_banned_accounts_survive_365_days_and_zero_disables(self):
+        """소유자 결정(#66): 차단 계정은 365일이 지나도 지우지 않고 보관한다 (차단 기록 유지). 그 판 기록도 남는다."""
+        b = self.db.login(h("b"), "차단", "차단")["account"]["id"]
+        self.db.login(h("n"), "일반", "일반")
+        self.db.record_match(match(players=[player(b, nickname="차단")]))
         self.db.set_banned("차단", True)
         self.t[0] += 400 * DAY
         self.assertEqual(self.db.purge(0)["players"], 0)        # 0이면 계정 정리는 건너뛴다
-        self.assertEqual(self.db.purge()["players"], 1)         # 방침에 예외가 없으므로 차단 계정도 지운다
-        self.assertEqual(self.db.stats()["players"], 0)
+        self.assertEqual(self.db.purge(), {"players": 1, "matches_deleted": 0, "matches_anonymized": 0})   # 지워진 것은 일반 계정 하나뿐
+        self.assertEqual(self.db.stats(), {"players": 1, "banned": 1, "matches": 1})
+        self.assertIsNotNone(self.db.find_player("차단"))
+        self.assertEqual(self.db.login(h("b"))["status"], "banned")       # 여전히 차단 상태
+        self.t[0] += 3650 * DAY
+        self.assertEqual(self.db.purge()["players"], 0)         # 몇 년이 지나도 그대로
+        self.db.set_banned("차단", False)                       # 차단을 풀면 다시 365일 기준을 따른다
+        self.assertEqual(self.db.purge()["players"], 1)
+        self.assertEqual(self.db.stats()["matches"], 0)
 
     def test_match_records_go_with_the_account_without_a_separate_retention(self):
         old = self.db.login(h("old"), "옛날", "옛날")["account"]["id"]

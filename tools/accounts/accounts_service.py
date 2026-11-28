@@ -298,7 +298,7 @@ class Db:
         return {"matches_deleted": len(doomed), "matches_anonymized": touched - len(doomed)}
 
     def delete_account(self, ident: str):
-        """삭제 요청 처리: 계정 ID 또는 닉네임으로 계정을 지운다. 없으면 None. 차단 계정도 지운다."""
+        """삭제 요청 처리: 계정 ID 또는 닉네임으로 계정을 지운다. 없으면 None. (보관 기간 정리와 달리 운영자가 직접 요청을 처리하는 것이므로 차단 계정도 지울 수 있다.)"""
         with self._lock:
             row = self.find_player(ident)
             if row is None:
@@ -313,7 +313,8 @@ class Db:
             return {"id": row["id"], **res}
 
     def purge(self, inactive_days: int = ACCOUNT_RETENTION_DAYS) -> dict:
-        """방침(#27)의 보관 기간 정리: 마지막 접속 후 inactive_days가 지난 계정(차단 계정 포함)을 그 판 기록과 함께 지운다 (_erase_player).
+        """방침(#27)의 보관 기간 정리: 마지막 접속 후 inactive_days가 지난 계정을 그 판 기록과 함께 지운다 (_erase_player).
+        **차단(banned) 계정은 지우지 않고 계속 보관한다** (소유자 결정 #66: 차단 기록을 남기려고. 방침 쪽 예외 문구는 #27에서 추가한다).
         별도 판 기록 보관 기간은 없다 (판 기록은 계정과 함께만 사라진다). 어느 계정과도 이어지지 않는 판(이전 버전이 남긴 전원 게스트/연결 끊긴 판)도 같이 지운다.
         inactive_days <= 0이면 계정 정리는 건너뛴다."""
         with self._lock:
@@ -322,7 +323,7 @@ class Db:
             self.conn.execute("BEGIN IMMEDIATE")
             try:
                 if inactive_days > 0:
-                    ids = [r[0] for r in self.conn.execute("SELECT id FROM players WHERE last_seen_at < ?", (t - inactive_days * 86400,)).fetchall()]
+                    ids = [r[0] for r in self.conn.execute("SELECT id FROM players WHERE banned = 0 AND last_seen_at < ?", (t - inactive_days * 86400,)).fetchall()]
                     for pid in ids:
                         res = self._erase_player(pid)
                         out["players"] += 1
