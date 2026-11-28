@@ -20,6 +20,9 @@ enum Category { SYSTEM, GRID, TOWER, MONSTER_AI, ECONOMY, COLOR, UI, NETWORK, GA
 
 const LOG_DIR := "user://logs"
 const MAX_LOG_FILES := 10
+## 방침(#27, #67): 서버 로그는 30일 후 삭제한다. 서버는 닉네임이 든 같은 출력을 이 폴더에도 남기므로 개수(MAX_LOG_FILES)뿐 아니라 기간으로도 지운다.
+## 기준은 파일의 마지막 수정 시각이다 (오래 켜 둔 서버의 현재 파일은 계속 쓰이므로 지워지지 않는다).
+const MAX_LOG_AGE_DAYS := 30
 const PERF_INTERVAL_SEC := 30.0
 
 # 최근 로그 보관 (디버그 오버레이 등에서 사용 예정)
@@ -134,16 +137,35 @@ func _open_log_file() -> void:
 
 
 func _cleanup_old_logs() -> void:
+	cleanup_old_logs(LOG_DIR, int(Time.get_unix_time_from_system()))
+
+
+## dir의 game_*.log 중 (1) 마지막 수정이 MAX_LOG_AGE_DAYS일보다 오래된 것, (2) 그걸 빼고도 새 파일 하나를 더하면 MAX_LOG_FILES개를 넘는 오래된 것을 지운다.
+## now_unix를 받는 이유는 시험에서 시각을 앞당겨 보기 위해서다. 지운 개수를 돌려준다.
+func cleanup_old_logs(dir: String, now_unix: int) -> int:
 	var files: Array[String] = []
-	for f in DirAccess.get_files_at(LOG_DIR):
+	for f in DirAccess.get_files_at(dir):
 		if f.begins_with("game_") and f.ends_with(".log"):
 			files.append(f)
 	files.sort()  # 파일명에 날짜가 있어 오름차순 = 오래된 순
 
+	var removed := 0
+	var kept: Array[String] = []
+	var cutoff := now_unix - MAX_LOG_AGE_DAYS * 86400
+	for f in files:
+		var path := "%s/%s" % [dir, f]
+		if FileAccess.get_modified_time(path) < cutoff:
+			if DirAccess.remove_absolute(path) == OK:
+				removed += 1
+				continue
+		kept.append(f)
+
 	# 새 파일 하나가 추가될 것이므로 MAX-1개만 남김
-	var to_delete := files.size() - (MAX_LOG_FILES - 1)
+	var to_delete := kept.size() - (MAX_LOG_FILES - 1)
 	for i in range(maxi(to_delete, 0)):
-		DirAccess.remove_absolute("%s/%s" % [LOG_DIR, files[i]])
+		if DirAccess.remove_absolute("%s/%s" % [dir, kept[i]]) == OK:
+			removed += 1
+	return removed
 
 
 func _log_performance() -> void:
