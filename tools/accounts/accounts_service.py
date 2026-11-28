@@ -9,7 +9,10 @@ Godot 서버(방 서버)가 직접 DB에 붙지 않고 이 작은 HTTP 서비스
 실행:
   LANEWARS_ACCOUNTS_KEY=비밀 python tools/accounts/accounts_service.py --db data/accounts.db serve --port 47310   (--db는 항상 서브명령 앞)
 관리 (서비스를 끄지 않고 쓸 수 있다):
-  python tools/accounts/accounts_service.py --db data/accounts.db ban <계정ID 또는 닉네임> / unban <...> / backup / purge --inactive-days 180 --match-days 365 / stats
+  python tools/accounts/accounts_service.py --db data/accounts.db ban <계정ID 또는 닉네임> / unban <...> / backup / stats
+  python tools/accounts/accounts_service.py --db data/accounts.db show <계정ID 또는 닉네임>                 # 삭제 요청 확인용 (토큰 해시는 보여 주지 않는다)
+  python tools/accounts/accounts_service.py --db data/accounts.db delete-account <계정ID 또는 닉네임> --yes   # 삭제 요청 처리 (--yes가 없으면 미리보기만, #66)
+  python tools/accounts/accounts_service.py --db data/accounts.db purge [--inactive-days 365] [--log-dir logs --log-days 30]   # 보관 기간 정리 (서비스가 매일 자동으로도 한다, #66)
 
 엔드포인트 (JSON):
   GET  /v1/health
@@ -34,6 +37,10 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 SCHEMA_VERSION = 1
+ACCOUNT_RETENTION_DAYS = 365             # 방침(#27): 마지막 접속 후 365일이 지나면 계정과 판 기록을 함께 삭제한다
+LOG_RETENTION_DAYS = 30                  # 방침(#27): 서버 로그는 30일 후 삭제한다
+PURGE_INTERVAL_HOURS = 24.0              # 서비스가 보관 기간 정리를 자동으로 도는 간격
+DELETED_NICKNAME = "(삭제된 사용자)"      # 계정이 삭제된 참가자의 줄에 남는 이름 (기록 속 닉네임은 지운다)
 NICK_COOLDOWN_SEC = 7 * 24 * 3600        # 닉네임 변경은 7일에 한 번 (가입 뒤 첫 변경은 바로)
 NEW_ACCOUNTS_PER_MIN = 30                # 서버 전체 신규 계정 분당 한도 (계정 남발 방지)
 WEEK_SEC = 7 * 24 * 3600
@@ -85,6 +92,15 @@ def now() -> int:
     return int(time.time())
 
 
+def _readable(info: dict) -> dict:
+    """show 출력용: unix 초를 사람이 읽는 시각으로"""
+    out = dict(info)
+    for k in ("created_at", "last_seen_at", "last_match_at"):
+        if out.get(k):
+            out[k] = datetime.fromtimestamp(out[k]).strftime("%Y-%m-%d %H:%M:%S")
+    return out
+
+
 class Db:
     """저장소. 요청마다 락을 잡고 한 연결을 쓴다 (쓰기는 판이 끝날 때뿐이라 충분하다)."""
 
@@ -99,6 +115,7 @@ class Db:
         self.conn = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
+        self.conn.execute("PRAGMA secure_delete = ON")   # 지운 닉네임/계정 정보가 빈 페이지에 글자 그대로 남지 않게 0으로 덮어쓴다 (#66)
         if path != ":memory:":
             self.conn.execute("PRAGMA journal_mode = WAL")
         self._migrate()
@@ -172,26 +189,35 @@ class Db:
     # ---- 판 기록 -------------------------------------------------------------
 
     def record_match(self, m: dict) -> dict:
+        """판 기록을 저장한다. 방침(#27): 판 기록은 계정과 함께 삭제되므로 **살아 있는 계정이 한 명도 없는 판은 저장하지 않는다**
+        (전원 게스트이거나 참가 계정이 이미 삭제됨: 지워 줄 계정이 없어 영원히 남게 된다). 줄 단위로는 계정이 이미 삭제됐으면(대기열에서 늦게 도착한 기록)
+        닉네임을 DELETED_NICKNAME으로 바꿔 익명으로 저장한다. 게스트 줄은 닉네임 그대로(판 기록이 지워질 때 같이 사라진다)."""
         with self._lock:
             if self.conn.execute("SELECT 1 FROM matches WHERE id = ?", (m["match_id"],)).fetchone():
                 return {"status": "ok", "duplicate": True}
+            rows = []
+            for p in m["players"]:
+                pid = p["account_id"] or None
+                nickname = p["nickname"]
+                if pid is not None and not self.conn.execute("SELECT 1 FROM players WHERE id = ?", (pid,)).fetchone():
+                    pid, nickname = None, DELETED_NICKNAME
+                rows.append((p, pid, nickname))
+            if not any(pid is not None for _, pid, _ in rows):
+                return {"status": "ok", "duplicate": False, "stored": False}
             self.conn.execute("BEGIN")
             try:
                 self.conn.execute(
                     "INSERT INTO matches (id, started_at, ended_at, player_count, result, boss_level, duration_s, version) VALUES (?,?,?,?,?,?,?,?)",
                     (m["match_id"], m["started_at"], m["ended_at"], m["player_count"], m["result"], m["boss_level"], m["duration_s"], m["version"]))
-                for p in m["players"]:
-                    pid = p["account_id"] or None
-                    if pid is not None and not self.conn.execute("SELECT 1 FROM players WHERE id = ?", (pid,)).fetchone():
-                        pid = None  # 지워진 계정: 기록만 남긴다
+                for p, pid, nickname in rows:
                     self.conn.execute(
                         "INSERT INTO match_players (match_id, lane, player_id, nickname, boss_damage, lane_damage, ghost_boss_damage, left_early) VALUES (?,?,?,?,?,?,?,?)",
-                        (m["match_id"], p["lane"], pid, p["nickname"], p["boss_damage"], p["lane_damage"], p["ghost_boss_damage"], 1 if p["left"] else 0))
+                        (m["match_id"], p["lane"], pid, nickname, p["boss_damage"], p["lane_damage"], p["ghost_boss_damage"], 1 if p["left"] else 0))
                 self.conn.execute("COMMIT")
             except Exception:
                 self.conn.execute("ROLLBACK")
                 raise
-            return {"status": "ok", "duplicate": False}
+            return {"status": "ok", "duplicate": False, "stored": True}
 
     def leaderboard(self, period: str, limit: int) -> list:
         """방(팀) 기록 순위: 보스 도달 레벨 높은 순 -> 승리 먼저 -> 걸린 시간 짧은 순 -> 먼저 끝난 순."""
@@ -237,20 +263,137 @@ class Db:
             p.unlink()
         return str(target)
 
-    def purge(self, inactive_days: int, match_days: int) -> dict:
-        """보관 기간(초안)을 넘긴 것을 지운다. 오래 안 들어온 계정(차단 계정 제외)과 오래된 판 기록.
-        지워진 계정이 낀 판 기록은 남기되 계정 연결(player_id)만 끊는다 (닉네임 글자는 기록에 남는다: 판 기록을 지울 때 같이 사라진다)."""
+    # ---- 삭제 (#66) ----------------------------------------------------------
+
+    def describe_player(self, ident: str):
+        """삭제 요청 확인용 요약 (토큰 해시는 내보내지 않는다). 없으면 None."""
+        with self._lock:
+            row = self.find_player(ident)
+            if row is None:
+                return None
+            matches = self.conn.execute("SELECT COUNT(DISTINCT match_id) FROM match_players WHERE player_id = ?", (row["id"],)).fetchone()[0]
+            last = self.conn.execute(
+                "SELECT MAX(m.ended_at) FROM matches m JOIN match_players mp ON mp.match_id = m.id WHERE mp.player_id = ?", (row["id"],)).fetchone()[0]
+            doomed = len(self._orphaned_if_erased(row["id"]))
+            return {"id": row["id"], "nickname": row["nickname"], "created_at": row["created_at"], "last_seen_at": row["last_seen_at"],
+                    "banned": bool(row["banned"]), "matches": matches, "last_match_at": last,
+                    "matches_deleted": doomed, "matches_anonymized": matches - doomed}
+
+    def _orphaned_if_erased(self, pid: str) -> list:
+        """이 계정이 지워지면 계정이 연결된 참가자가 한 명도 안 남아 통째로 지워질 판 ID들."""
+        return [r[0] for r in self.conn.execute(
+            "SELECT DISTINCT match_id FROM match_players WHERE player_id = ? AND match_id NOT IN "
+            "(SELECT match_id FROM match_players WHERE player_id IS NOT NULL AND player_id <> ?)", (pid, pid)).fetchall()]
+
+    def _erase_player(self, pid: str) -> dict:
+        """계정 하나와 그 판 기록을 지운다 (호출하는 쪽이 트랜잭션을 잡는다).
+        - 그 계정의 참가자 줄: 닉네임을 DELETED_NICKNAME으로 바꾸고 계정 연결을 끊는다 (판의 숫자는 누구 것인지 알 수 없게 남는다).
+        - 계정이 연결된 참가자가 한 명도 안 남은 판은 통째로 삭제한다 (게스트 줄도 같이 사라진다)."""
+        doomed = self._orphaned_if_erased(pid)
+        touched = self.conn.execute("SELECT COUNT(DISTINCT match_id) FROM match_players WHERE player_id = ?", (pid,)).fetchone()[0]
+        self.conn.execute("UPDATE match_players SET player_id = NULL, nickname = ? WHERE player_id = ?", (DELETED_NICKNAME, pid))
+        self.conn.execute("DELETE FROM players WHERE id = ?", (pid,))
+        for mid in doomed:
+            self.conn.execute("DELETE FROM matches WHERE id = ?", (mid,))   # match_players는 ON DELETE CASCADE
+        return {"matches_deleted": len(doomed), "matches_anonymized": touched - len(doomed)}
+
+    def delete_account(self, ident: str):
+        """삭제 요청 처리: 계정 ID 또는 닉네임으로 계정을 지운다. 없으면 None. (보관 기간 정리와 달리 운영자가 직접 요청을 처리하는 것이므로 차단 계정도 지울 수 있다.)"""
+        with self._lock:
+            row = self.find_player(ident)
+            if row is None:
+                return None
+            self.conn.execute("BEGIN IMMEDIATE")
+            try:
+                res = self._erase_player(row["id"])
+                self.conn.execute("COMMIT")
+            except Exception:
+                self.conn.execute("ROLLBACK")
+                raise
+            return {"id": row["id"], **res}
+
+    def purge(self, inactive_days: int = ACCOUNT_RETENTION_DAYS) -> dict:
+        """방침(#27)의 보관 기간 정리: 마지막 접속 후 inactive_days가 지난 계정을 그 판 기록과 함께 지운다 (_erase_player).
+        **차단(banned) 계정은 지우지 않고 계속 보관한다** (소유자 결정 #66: 차단 기록을 남기려고. 방침 쪽 예외 문구는 #27에서 추가한다).
+        별도 판 기록 보관 기간은 없다 (판 기록은 계정과 함께만 사라진다). 어느 계정과도 이어지지 않는 판(이전 버전이 남긴 전원 게스트/연결 끊긴 판)도 같이 지운다.
+        inactive_days <= 0이면 계정 정리는 건너뛴다."""
         with self._lock:
             t = self.clock()
-            out = {"players": 0, "matches": 0}
-            if inactive_days > 0:
-                cur = self.conn.execute("DELETE FROM players WHERE banned = 0 AND last_seen_at < ?", (t - inactive_days * 86400,))
-                out["players"] = cur.rowcount
-                self.conn.execute("UPDATE match_players SET player_id = NULL WHERE player_id IS NOT NULL AND player_id NOT IN (SELECT id FROM players)")
-            if match_days > 0:
-                cur = self.conn.execute("DELETE FROM matches WHERE ended_at < ?", (t - match_days * 86400,))
-                out["matches"] = cur.rowcount
+            out = {"players": 0, "matches_deleted": 0, "matches_anonymized": 0}
+            self.conn.execute("BEGIN IMMEDIATE")
+            try:
+                if inactive_days > 0:
+                    ids = [r[0] for r in self.conn.execute("SELECT id FROM players WHERE banned = 0 AND last_seen_at < ?", (t - inactive_days * 86400,)).fetchall()]
+                    for pid in ids:
+                        res = self._erase_player(pid)
+                        out["players"] += 1
+                        out["matches_deleted"] += res["matches_deleted"]
+                        out["matches_anonymized"] += res["matches_anonymized"]
+                cur = self.conn.execute("DELETE FROM matches WHERE id NOT IN (SELECT match_id FROM match_players WHERE player_id IS NOT NULL)")
+                out["matches_deleted"] += cur.rowcount
+                self.conn.execute("COMMIT")
+            except Exception:
+                self.conn.execute("ROLLBACK")
+                raise
             return out
+
+
+def purge_logs(log_dir, days: int, at=None) -> int:
+    """방침(#27): 서버 로그는 30일 후 삭제한다. log_dir의 *.log 중 마지막 수정이 days일 전보다 오래된 것을 지운다. 지운 개수."""
+    if not log_dir or days <= 0:
+        return 0
+    d = Path(log_dir)
+    if not d.is_dir():
+        return 0
+    cutoff = (time.time() if at is None else at) - days * 86400
+    n = 0
+    for f in d.glob("*.log"):
+        try:
+            if f.is_file() and f.stat().st_mtime < cutoff:
+                f.unlink()
+                n += 1
+        except OSError as e:   # 쓰는 중이거나 권한 문제: 다음에 다시 시도한다
+            print("로그 삭제 실패:", f.name, repr(e), file=sys.stderr, flush=True)
+    return n
+
+
+class Maintenance:
+    """서비스 안에서 도는 정기 작업: 백업과 보관 기간 정리(#66). tick()을 주기적으로(기본 60초) 부르면 때가 된 일을 한다.
+    첫 tick에 바로 한 번 하고(서비스가 꺼져 있던 동안 밀린 정리를 따라잡는다) 그 뒤 간격마다 한다."""
+
+    def __init__(self, db, *, backup_dir=None, backup_keep=14, backup_hours=24.0, purge_hours=PURGE_INTERVAL_HOURS,
+                 inactive_days=ACCOUNT_RETENTION_DAYS, log_dir=None, log_days=LOG_RETENTION_DAYS, mono=time.monotonic, out=None):
+        self.db, self.backup_dir, self.backup_keep, self.backup_hours = db, backup_dir, backup_keep, backup_hours
+        self.purge_hours, self.inactive_days, self.log_dir, self.log_days = purge_hours, inactive_days, log_dir, log_days
+        self.mono = mono
+        self.out = out or (lambda line: print(line, flush=True))
+        self._last_backup = None
+        self._last_purge = None
+
+    def _due(self, last, hours) -> bool:
+        return hours > 0 and (last is None or self.mono() - last >= hours * 3600)
+
+    def tick(self) -> None:
+        if self.backup_dir and self._due(self._last_backup, self.backup_hours):
+            self._last_backup = self.mono()
+            try:
+                self.out("백업: " + self.db.backup(self.backup_dir, self.backup_keep))
+            except Exception as e:
+                print("백업 실패:", repr(e), file=sys.stderr, flush=True)
+        if self._due(self._last_purge, self.purge_hours):
+            self._last_purge = self.mono()
+            self.run_retention()
+
+    def run_retention(self) -> dict:
+        """보관 기간 정리 한 번. 결과는 개수만 로그에 남긴다 (삭제한 계정의 ID/닉네임은 남기지 않는다)."""
+        try:
+            res = self.db.purge(self.inactive_days)
+            res["logs"] = purge_logs(self.log_dir, self.log_days)
+            self.out("보관 기간 정리: " + json.dumps(res))
+            return res
+        except Exception as e:
+            print("보관 기간 정리 실패:", repr(e), file=sys.stderr, flush=True)
+            return {}
 
 
 # ---- 입력 검사 ------------------------------------------------------------------
@@ -399,18 +542,17 @@ def serve(args) -> int:
     server.daemon_threads = True
     stop = threading.Event()
 
+    maint = Maintenance(db, backup_dir=args.backup_dir, backup_keep=args.backup_keep, backup_hours=args.backup_interval_hours,
+                        purge_hours=args.purge_interval_hours, inactive_days=args.inactive_days, log_dir=args.log_dir, log_days=args.log_days)
+
     def maintenance() -> None:
-        last = 0.0
-        while not stop.wait(60):
-            if time.time() - last >= args.backup_interval_hours * 3600 and args.backup_interval_hours > 0:
-                last = time.time()
-                try:
-                    print("백업:", db.backup(args.backup_dir, args.backup_keep), flush=True)
-                except Exception as e:
-                    print("백업 실패:", repr(e), file=sys.stderr, flush=True)
+        while True:
+            maint.tick()
+            if stop.wait(args.tick_sec):
+                return
 
     threading.Thread(target=maintenance, daemon=True).start()
-    print(f"계정 서비스 열림: http://{args.host}:{args.port} (DB {args.db}, 백업 {args.backup_dir} 매 {args.backup_interval_hours}시간 {args.backup_keep}개)", flush=True)
+    print(f"계정 서비스 열림: http://{args.host}:{args.port} (DB {args.db}, 백업 {args.backup_dir} 매 {args.backup_interval_hours}시간 {args.backup_keep}개, 보관 기간 정리 매 {args.purge_interval_hours}시간: 계정 {args.inactive_days}일, 로그 {args.log_dir or '안 함'} {args.log_days}일)", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -433,6 +575,11 @@ def main(argv=None) -> int:
     s.add_argument("--backup-dir", default=None)
     s.add_argument("--backup-keep", type=int, default=14)
     s.add_argument("--backup-interval-hours", type=float, default=24.0)
+    s.add_argument("--tick-sec", type=float, default=60.0, help="정기 작업(백업/정리)이 때가 됐는지 보는 간격 (시험용으로 줄일 수 있다)")
+    s.add_argument("--purge-interval-hours", type=float, default=PURGE_INTERVAL_HOURS, help="보관 기간 정리 간격 (0이면 자동 정리 끔)")
+    s.add_argument("--inactive-days", type=int, default=ACCOUNT_RETENTION_DAYS)
+    s.add_argument("--log-dir", default=None, help="이 폴더의 *.log를 --log-days 지나면 지운다 (없으면 로그는 안 건드린다)")
+    s.add_argument("--log-days", type=int, default=LOG_RETENTION_DAYS)
     for name in ("ban", "unban"):
         b = sub.add_parser(name)
         b.add_argument("who", help="계정 ID 또는 닉네임")
@@ -440,8 +587,14 @@ def main(argv=None) -> int:
     bk.add_argument("--backup-dir", default=None)
     bk.add_argument("--backup-keep", type=int, default=14)
     pg = sub.add_parser("purge")
-    pg.add_argument("--inactive-days", type=int, default=0)
-    pg.add_argument("--match-days", type=int, default=0)
+    pg.add_argument("--inactive-days", type=int, default=ACCOUNT_RETENTION_DAYS)
+    pg.add_argument("--log-dir", default=None)
+    pg.add_argument("--log-days", type=int, default=LOG_RETENTION_DAYS)
+    sh = sub.add_parser("show", help="삭제 요청 확인용: 계정 요약")
+    sh.add_argument("who", help="계정 ID 또는 닉네임")
+    da = sub.add_parser("delete-account", help="삭제 요청 처리: 계정과 판 기록 삭제")
+    da.add_argument("who", help="계정 ID 또는 닉네임")
+    da.add_argument("--yes", action="store_true", help="이게 없으면 지우지 않고 미리보기만 한다")
     sub.add_parser("stats")
     args = ap.parse_args(argv)
     cmd = args.cmd or "serve"
@@ -450,6 +603,9 @@ def main(argv=None) -> int:
     if getattr(args, "backup_dir", None) is None and cmd in ("serve", "backup"):
         args.backup_dir = str(Path(args.db).parent / "backups")
     if cmd == "serve":
+        for stream in (sys.stdout, sys.stderr):   # 로그를 파일로 돌릴 때(run-accounts.ps1은 UTF-8로 읽는다) 한글이 깨지지 않게
+            if hasattr(stream, "reconfigure"):
+                stream.reconfigure(encoding="utf-8")
         return serve(args)
     db = Db(args.db)
     try:
@@ -460,7 +616,26 @@ def main(argv=None) -> int:
         if cmd == "backup":
             print(db.backup(args.backup_dir, args.backup_keep))
         elif cmd == "purge":
-            print(json.dumps(db.purge(args.inactive_days, args.match_days)))
+            res = db.purge(args.inactive_days)
+            res["logs"] = purge_logs(args.log_dir, args.log_days)
+            print(json.dumps(res))
+        elif cmd == "show":
+            info = db.describe_player(args.who)
+            if info is None:
+                print("그런 계정이 없다", args.who)
+                return 1
+            print(json.dumps(_readable(info), ensure_ascii=False, indent=2))
+        elif cmd == "delete-account":
+            info = db.describe_player(args.who)
+            if info is None:
+                print("그런 계정이 없다", args.who)
+                return 1
+            if not args.yes:
+                print(json.dumps(_readable(info), ensure_ascii=False, indent=2))
+                print(f"미리보기: 계정 {info['id']}을 지우면 판 기록 {info['matches_deleted']}개가 삭제되고 {info['matches_anonymized']}개는 이 사람의 줄만 익명이 된다. 지우려면 --yes를 붙여 다시 실행한다.")
+                return 2
+            res = db.delete_account(info["id"])
+            print(json.dumps(res, ensure_ascii=False))
         elif cmd == "stats":
             print(json.dumps(db.stats()))
         return 0

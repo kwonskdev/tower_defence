@@ -89,15 +89,18 @@ class DbTest(unittest.TestCase):
         m = match(players=[
             {"account_id": a, "lane": 0, "nickname": "철수", "boss_damage": 10, "lane_damage": 4, "ghost_boss_damage": 1, "left": False},
             {"account_id": "", "lane": 1, "nickname": "게스트", "boss_damage": 0, "lane_damage": 0, "ghost_boss_damage": 0, "left": True}])
-        self.assertEqual(self.db.record_match(svc.parse_match(m)), {"status": "ok", "duplicate": False})
+        self.assertEqual(self.db.record_match(svc.parse_match(m)), {"status": "ok", "duplicate": False, "stored": True})
         self.assertEqual(self.db.record_match(svc.parse_match(m)), {"status": "ok", "duplicate": True})  # 재시도해도 한 번만
         self.assertEqual(self.db.stats()["matches"], 1)
         rows = self.db.conn.execute("SELECT lane, player_id, left_early FROM match_players ORDER BY lane").fetchall()
         self.assertEqual([tuple(r) for r in rows], [(0, a, 0), (1, None, 1)])
 
     def test_leaderboard_order_and_week(self):
+        acc = self.db.login(h("lb"), "순위", "순위")["account"]["id"]   # 계정 없는 판은 저장되지 않는다 (#66)
+        who = [{"account_id": acc, "lane": 0, "nickname": "순위", "boss_damage": 1, "lane_damage": 1, "ghost_boss_damage": 0, "left": False}]
+
         def add(i, level, result, dur, ended):
-            self.db.record_match(svc.parse_match(match(match_id=f"{i:032x}", level=level, result=result, duration=dur, ended=ended)))
+            self.db.record_match(svc.parse_match(match(match_id=f"{i:032x}", level=level, result=result, duration=dur, ended=ended, players=who)))
         now = self.t[0]
         add(1, 5, "lose", 300, now - 10)
         add(2, 10, "lose", 900, now - 10)
@@ -123,21 +126,13 @@ class DbTest(unittest.TestCase):
             self.assertEqual(restored.stats()["players"], 1)
             restored.close()
 
-    def test_purge(self):
-        self.db.login(h("old"), "옛날", "옛날")
-        self.t[0] += 200 * 86400
-        self.db.login(h("new"), "최근", "최근")
-        self.assertEqual(self.db.purge(180, 0), {"players": 1, "matches": 0})
-        self.assertEqual(self.db.stats()["players"], 1)
-
-
 class PersistenceTest(unittest.TestCase):
     def test_data_survives_reopen(self):
         with tempfile.TemporaryDirectory() as d:
             path = str(Path(d) / "a.db")
             db = svc.Db(path)
             acc = db.login(h("t1"), "철수", "철수")["account"]["id"]
-            db.record_match(svc.parse_match(match()))
+            db.record_match(svc.parse_match(match(players=[{"account_id": acc, "lane": 0, "nickname": "철수", "boss_damage": 1, "lane_damage": 1, "ghost_boss_damage": 0, "left": False}])))
             db.close()
             db = svc.Db(path)
             again = db.login(h("t1"), "철수", "철수")

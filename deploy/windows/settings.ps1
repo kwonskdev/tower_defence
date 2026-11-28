@@ -17,4 +17,8 @@ $Settings = @{
     AccountsBackupDir   = "data\backups"            # 매일 SQLite 스냅샷. OneDrive 같은 동기화 폴더로 바꾸면 PC 밖에도 사본이 생긴다
     AccountsBackupKeep  = 14                        # 남길 백업 개수
     AccountsBackupHours = 24                        # 백업 간격(시간)
+    # ---- 보관 기간 자동 정리 (#66, docs/account-deletion.md). 계정 서비스가 켜질 때 한 번, 그 뒤 간격마다 서비스 안에서 돈다 (작업 스케줄러 등록 없음) ----
+    AccountsPurgeHours  = 24                        # 정리 간격(시간). 0이면 자동 정리 끔 (끄면 방침과 어긋난다)
+    AccountsInactiveDays = 365                      # 마지막 접속 후 이 기간이 지난 계정을 그 판 기록과 함께 삭제 (방침: 365일)
+    LogRetentionDays    = 30                        # LogDir 의 *.log 를 이 기간 뒤 삭제 (방침: 30일)
 }

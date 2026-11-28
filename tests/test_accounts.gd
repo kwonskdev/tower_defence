@@ -6,6 +6,7 @@ extends "res://tests/case_base.gd"
 ##  [3] 판이 끝나면 서버가 기록을 저장한다: 값은 서버 상태에서만 (클라이언트가 보낸 점수/결과 메시지는 무시), 이탈한 사람, 패배/승리, 게스트
 ##  [4] DB가 죽어도 진행 중인 판은 영향받지 않고(재접속 포함) 기록 저장만 재시도한다 / 서버를 다시 켜도 대기열이 이어진다 / 서비스 주소가 죽어 있어도 접속이 빨리 처리된다
 ##  [5] 순위(리더보드): hello mode board로 조회, 기록과 정확히 일치, 주간/전체, 방에 들어가지 않는다 / 저장소가 죽으면 unavailable
+##  [8] 계정 삭제(#66): 삭제 요청 명령(CLI)이 실제 서비스의 계정과 판 기록을 지운다 / 순위 조회(방 서버 board)에 삭제된 닉네임이 안 나온다 / 다인원 판에서는 그 사람 줄만 익명 / 삭제된 계정의 늦은 기록도 익명 / 계정 없는 판은 저장 안 함
 ##  [6] 실제 계정 서비스(Python+SQLite)와 메모리 저장소가 같은 규칙인지(계약 시험) / 서비스를 껐다 켜도 계정·기록이 남아 있다 / 백업 사본으로 복원
 ## (실서버/Cloudflare/실기기는 보지 않는다. Python 서비스 자체의 시험은 tools/accounts/test_accounts_service.py)
 
@@ -28,6 +29,7 @@ func run() -> void:
 	await _http_dead()
 	await _leaderboard()
 	await _real_service()
+	await _account_deletion()
 	await _main_menu_token()
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(SPOOL))
 	Engine.time_scale = 1.0
@@ -365,6 +367,7 @@ func _db_down() -> void:
 	acc2.retry_min_sec = 0.3
 	g.server.add_child(acc2)
 	var store2 := MemoryAccountStore.new()
+	store2.players = store.players   # 같은 계정 서비스에 다시 붙은 것처럼 (계정이 없는 판은 저장하지 않으므로 계정을 공유한다)
 	store2.fail = true
 	acc2.set_store(store2)
 	check(acc2.load_spool() == 1 and acc2.queue_size() == 1, "서버를 다시 켜면 못 보낸 기록을 대기열로 읽어 온다")
@@ -411,12 +414,22 @@ func _http_dead() -> void:
 
 # ---- [5] 순위 ----------------------------------------------------------------------
 
-func _rec(i: int, level: int, result: String, dur: float, ended: int, names: Array) -> Dictionary:
+## ids: 참여자별 계정 ID (비면 게스트). 계정이 하나도 없는 판은 저장되지 않는다 (#66)
+func _rec(i: int, level: int, result: String, dur: float, ended: int, names: Array, ids: Array = []) -> Dictionary:
 	var ps: Array = []
 	for lane in range(names.size()):
-		ps.append({"account_id": "", "lane": lane, "nickname": names[lane], "boss_damage": 10.0 * (lane + 1), "lane_damage": 1.0, "ghost_boss_damage": 0.0, "left": false})
+		ps.append({"account_id": ids[lane] if lane < ids.size() else "", "lane": lane, "nickname": names[lane], "boss_damage": 10.0 * (lane + 1), "lane_damage": 1.0, "ghost_boss_damage": 0.0, "left": false})
 	return {"match_id": "%032x" % i, "started_at": ended - 100, "ended_at": ended, "player_count": names.size(), "result": result,
 		"boss_level": level, "duration_s": dur, "version": "t", "players": ps}
+
+
+## 저장소에 계정을 만들고 ID를 돌려준다 (판 기록은 계정이 있어야 저장된다)
+func _make_accounts(s: AccountStore, names: Array) -> Array:
+	var ids: Array = []
+	for n in names:
+		var r: Dictionary = await s.login(Identity.hash_of(Identity.new_token()), n, n)
+		ids.append(str(r.account.id))
+	return ids
 
 
 func _leaderboard() -> void:
@@ -425,11 +438,13 @@ func _leaderboard() -> void:
 	var store: MemoryAccountStore = g.store
 	var now := _fake_now
 	var week_ago := now - 8 * 86400
-	await store.record_match(_rec(1, 5, "lose", 300.0, now - 10, ["가"]))
-	await store.record_match(_rec(2, 10, "lose", 900.0, now - 10, ["나", "다"]))
-	await store.record_match(_rec(3, 10, "win", 1200.0, now - 10, ["라"]))
-	await store.record_match(_rec(4, 10, "win", 1000.0, now - 10, ["마", "바", "사"]))
-	await store.record_match(_rec(5, 10, "win", 1000.0, week_ago, ["옛날"]))
+	var names := ["가", "나", "다", "라", "마", "바", "사", "옛날"]
+	var ids: Array = await _make_accounts(store, names)
+	await store.record_match(_rec(1, 5, "lose", 300.0, now - 10, ["가"], [ids[0]]))
+	await store.record_match(_rec(2, 10, "lose", 900.0, now - 10, ["나", "다"], [ids[1], ids[2]]))
+	await store.record_match(_rec(3, 10, "win", 1200.0, now - 10, ["라"], [ids[3]]))
+	await store.record_match(_rec(4, 10, "win", 1000.0, now - 10, ["마", "바", "사"], [ids[4], ids[5], ids[6]]))
+	await store.record_match(_rec(5, 10, "win", 1000.0, week_ago, ["옛날"], [ids[7]]))
 	var accounts_before := store.players.size()
 	var rooms_before: int = g.hub.room_count()
 	var cl := NetClient.new()
@@ -511,7 +526,7 @@ func _service_script() -> String:
 
 func _start_service(db: String, port: int) -> int:
 	OS.set_environment("LANEWARS_ACCOUNTS_KEY", KEY)
-	return OS.create_process(_python(), [_service_script(), "--db", db, "serve", "--port", str(port), "--backup-interval-hours", "0"])
+	return OS.create_process(_python(), [_service_script(), "--db", db, "serve", "--port", str(port), "--backup-interval-hours", "0", "--purge-interval-hours", "0"])
 
 
 func _http_store(port: int) -> HttpAccountStore:
@@ -568,10 +583,11 @@ func _contract(s: AccountStore, label: String) -> void:
 	bad.players = []
 	r = await s.record_match(bad)
 	check(r.status == "bad_request", "[%s] 모양이 틀린 기록은 bad_request (다시 보내도 소용없음)" % label)
-	var m2 := _rec(2, 10, "win", 900.0, now - 9 * 86400, ["옛날"])
+	var more: Array = await _make_accounts(s, ["옛날", "최근", "둘"])
+	var m2 := _rec(2, 10, "win", 900.0, now - 9 * 86400, ["옛날"], [more[0]])
 	m2.match_id = Crypto.new().generate_random_bytes(16).hex_encode()
 	await s.record_match(m2)
-	var m3 := _rec(3, 10, "win", 800.0, now - 5, ["최근", "둘"])
+	var m3 := _rec(3, 10, "win", 800.0, now - 5, ["최근", "둘"], [more[1], more[2]])
 	m3.match_id = Crypto.new().generate_random_bytes(16).hex_encode()
 	await s.record_match(m3)
 	var all: Dictionary = await s.leaderboard("all", 10)
@@ -684,6 +700,105 @@ func _real_service() -> void:
 	OS.kill(pid)
 	await wait_seconds(0.5)
 	await _free([store, wrong, restored])
+	for f in [db, db + "-wal", db + "-shm"]:
+		if FileAccess.file_exists(f):
+			DirAccess.remove_absolute(f)
+
+
+# ---- [8] 계정 삭제 (#66) -------------------------------------------------------------
+
+func _board_rows(port: int) -> Array:
+	var cl := NetClient.new()
+	cl.join_mode = NetProtocol.MODE_BOARD
+	cl.board_period = "all"
+	cl.player_name = "관전"
+	var got := {}
+	cl.board_received.connect(func(_period, status, list): got["r"] = {"status": status, "rows": list})
+	add_child(cl)
+	cl.connect_to(NetTransport.DEFAULT, "127.0.0.1", port)
+	var ok := await wait_until(func(): return got.has("r"), 5000)
+	cl.queue_free()
+	return got.r.rows if ok and got.r.status == "ok" else []
+
+
+func _nicknames(rows: Array) -> Array:
+	var out: Array = []
+	for r in rows:
+		for p in r.players:
+			out.append(str(p.nickname))
+	return out
+
+
+func _account_deletion() -> void:
+	print("[8] 계정 삭제: 삭제 요청 명령, 판 기록 함께 삭제, 순위에서 사라짐")
+	if _python() == "":
+		check(false, "Python 3가 필요하다")
+		return
+	var db := ProjectSettings.globalize_path("user://test_deletion.db")
+	for f in [db, db + "-wal", db + "-shm"]:
+		if FileAccess.file_exists(f):
+			DirAccess.remove_absolute(f)
+	var port := SERVICE_PORT + 2
+	var pid := _start_service(db, port)
+	var store := _http_store(port)
+	check(pid > 0 and await _wait_service(store), "서비스가 떴다")
+	var gone_token := Identity.new_token()
+	var first: Dictionary = await store.login(Identity.hash_of(gone_token), "지울사람", "지울사람")
+	var second: Dictionary = await store.login(Identity.hash_of(Identity.new_token()), "남을사람", "남을사람")
+	var ids: Array = [str(first.account.id), str(second.account.id)]
+	var now := int(Time.get_unix_time_from_system())
+	var team := _rec(1, 10, "win", 1000.0, now - 10, ["지울사람", "남을사람", "손님"], [ids[0], ids[1], ""])
+	var solo := _rec(2, 5, "lose", 300.0, now - 10, ["지울사람"], [ids[0]])
+	var guests := _rec(3, 9, "win", 500.0, now - 10, ["손님만"])
+	check((await store.record_match(team)).stored == true and (await store.record_match(solo)).stored == true, "다인원 판과 혼자 한 판이 저장됐다")
+	var gr: Dictionary = await store.record_match(guests)
+	check(gr.status == "ok" and gr.stored == false, "계정이 한 명도 없는(전원 게스트) 판은 저장하지 않는다 (계정과 함께 지워 줄 수 없어서)")
+	var g := await _server(PORT + 10, store)
+	var before := await _board_rows(PORT + 10)
+	check(before.size() == 2 and _nicknames(before).has("지울사람"), "삭제 전: 순위에 두 판이 있고 지울사람이 나온다 (%d)" % before.size())
+	# 삭제 요청 명령: 미리보기(--yes 없음)는 지우지 않는다
+	var out := []
+	var code := OS.execute(_python(), [_service_script(), "--db", db, "delete-account", "지울사람"], out)
+	check(code == 2 and str(out[0]).contains("--yes"), "--yes가 없으면 미리보기만 하고 종료 코드 2 (%d)" % code)
+	var still := await store.leaderboard("all", 10)
+	check(still.rows.size() == 2, "미리보기는 아무것도 지우지 않았다")
+	# 서비스가 떠 있는 채로 삭제
+	out = []
+	code = OS.execute(_python(), [_service_script(), "--db", db, "delete-account", ids[0], "--yes"], out)
+	var res: Dictionary = JSON.parse_string(str(out[0]).strip_edges()) if code == 0 else {}
+	check(code == 0 and res.get("id", "") == ids[0] and res.get("matches_deleted", -1) == 1 and res.get("matches_anonymized", -1) == 1, "삭제 명령: 계정을 지웠고 혼자 한 판 1개는 삭제, 다인원 판 1개는 익명 처리 %s" % str(out[0]).strip_edges())
+	# 서버의 순위 캐시(30초)를 지나서 다시 조회: 실제로는 캐시 시간 안의 조회도 곧 갱신된다
+	g.acc._boards.clear()
+	var after := await _board_rows(PORT + 10)
+	var names := _nicknames(after)
+	check(after.size() == 1 and after[0].match_id == team.match_id, "삭제 뒤 순위(서버 board 조회): 혼자 한 판은 사라지고 다인원 판만 남는다")
+	check(not names.has("지울사람") and names.has("남을사람") and names.has("손님") and names.has("(삭제된 사용자)"), "삭제된 닉네임은 안 나오고 남은 참가자와 (삭제된 사용자) 줄만 나온다 %s" % str(names))
+	check(after[0].player_count == 3, "방(팀) 기록의 인원수는 그대로")
+	var gone: Dictionary = await store.login(Identity.hash_of(gone_token), "", "")
+	check(gone.status == "error" and gone.get("reason", "") == "name_required", "삭제된 계정의 토큰으로는 더 이상 계정이 조회되지 않는다")
+	var reborn: Dictionary = await store.login(Identity.hash_of(gone_token), "새로운", "새로운")
+	check(reborn.status == "ok" and reborn.account.created and reborn.account.id != ids[0], "같은 토큰으로 다시 접속하면 새 계정이 만들어진다")
+	# 삭제된 뒤 늦게 도착한 기록: 닉네임이 되살아나지 않는다
+	var late := _rec(4, 12, "win", 700.0, now - 5, ["지울사람", "남을사람"], [ids[0], ids[1]])
+	var lr: Dictionary = await store.record_match(late)
+	check(lr.stored == true, "삭제된 계정이 낀 늦은 기록도 남은 참가자 때문에 저장된다")
+	g.acc._boards.clear()
+	var late_rows := await _board_rows(PORT + 10)
+	check(late_rows.size() == 2 and not _nicknames(late_rows).has("지울사람"), "늦은 기록에서도 삭제된 닉네임은 나오지 않는다")
+	# 보관 기간 정리 명령: 방금 접속한 계정은 안 지운다
+	out = []
+	code = OS.execute(_python(), [_service_script(), "--db", db, "purge"], out)
+	var pr: Dictionary = JSON.parse_string(str(out[0]).strip_edges()) if code == 0 else {}
+	check(code == 0 and pr.get("players", -1) == 0 and pr.get("matches_deleted", -1) == 0, "purge 명령(기본 365일): 방금 접속한 계정은 지우지 않는다 %s" % str(out[0]).strip_edges())
+	# 마지막 참가 계정까지 지워지면 판 전체가 사라진다
+	out = []
+	code = OS.execute(_python(), [_service_script(), "--db", db, "delete-account", "남을사람", "--yes"], out)
+	check(code == 0, "닉네임으로도 삭제할 수 있다")
+	g.acc._boards.clear()
+	check((await _board_rows(PORT + 10)).is_empty(), "참가 계정이 모두 삭제되면 판 기록이 전부 사라진다 (게스트 줄 포함)")
+	OS.kill(pid)
+	await wait_seconds(0.5)
+	await _free([store, g.server])
 	for f in [db, db + "-wal", db + "-shm"]:
 		if FileAccess.file_exists(f):
 			DirAccess.remove_absolute(f)

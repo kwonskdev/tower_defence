@@ -79,8 +79,22 @@ func record_match(record: Dictionary) -> Dictionary:
 		return {"status": "bad_request"}
 	if matches.has(id):
 		return {"status": "ok", "duplicate": true}
+	# 계정 서비스와 같은 규칙 (#66): 살아 있는 계정이 한 명도 없는 판(전원 게스트)은 계정과 함께 지워 줄 수 없으니 저장하지 않는다
+	var live := false
+	for p in record.get("players", []):
+		if str(p.get("account_id", "")) != "" and _has_account(str(p.account_id)):
+			live = true
+	if not live:
+		return {"status": "ok", "duplicate": false, "stored": false}
 	matches[id] = record.duplicate(true)
-	return {"status": "ok", "duplicate": false}
+	return {"status": "ok", "duplicate": false, "stored": true}
+
+
+func _has_account(account_id: String) -> bool:
+	for p in players.values():
+		if p.id == account_id:
+			return true
+	return false
 
 
 func leaderboard(period: String, limit: int) -> Dictionary:

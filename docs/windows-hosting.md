@@ -104,4 +104,5 @@ powershell -ExecutionPolicy Bypass -File tools\bench\run_bench.ps1 -Godot C:\pat
 - 방 서버(`run-server.ps1`)는 `AccountsEnabled = $true`이면 `--accounts-url=http://127.0.0.1:47310`과 같은 키(`data\accounts.key`, 처음 실행에 자동 생성)로 서비스에 붙는다. **서비스가 죽어도 방 서버와 진행 중인 판은 영향이 없다** (모르는 접속은 기록 없이 임시 입장, 판 기록은 대기열에 쌓였다가 복구되면 저장).
 - 데이터: `data\accounts.db` (DB), `data\backups\` (매일 스냅샷 14개), `data\accounts.key` (API 키). 모두 git에 안 올라간다. **`AccountsBackupDir`를 OneDrive 같은 동기화 폴더로 바꾸면 PC가 고장나도 백업이 남는다.**
 - 방 서버가 못 보낸 판 기록 대기열은 서버 사용자 폴더의 `user://match_spool.jsonl`(Windows: `%APPDATA%\Godot\app_userdata\Lane Wars\`)에 적힌다.
+- **보관 기간 자동 정리(#66)**: 계정 서비스가 켜질 때와 24시간마다 마지막 접속 후 365일 지난 계정을 판 기록과 함께, `logs\`의 30일 지난 `*.log`를 지운다 (`settings.ps1`의 `AccountsPurgeHours`/`AccountsInactiveDays`/`LogRetentionDays`). 작업 스케줄러 등록은 필요 없다. 로그에 `보관 기간 정리: {...}` 줄이 매일 남는지 본다. 삭제 요청 처리 명령과 절차는 **`docs/account-deletion.md`**.
 - 이 PC에서 실행해 확인하지 않은 것: 작업 스케줄러 등록, 서버 exe와 같이 도는 것 (docs/accounts-and-db.md 9절).
