@@ -243,12 +243,13 @@ class RetentionJobTest(unittest.TestCase):
     def test_purge_logs_removes_only_old_log_files(self):
         with tempfile.TemporaryDirectory() as d:
             now_ts = 10_000_000.0
-            for name, age_days in (("server-old.log", 31), ("accounts-old.log", 40), ("server-new.log", 29), ("keep.txt", 99)):
+            for name, age_days in (("server-old.log", 31), ("accounts-old.log", 40), ("server-new.log", 29), ("keep.txt", 99),
+                                  ("server-20260101.log.out", 31), ("server-20260101.log.err", 31), ("server-new.log.out", 1)):
                 f = Path(d) / name
                 f.write_text("x")
                 os.utime(f, (now_ts - age_days * DAY, now_ts - age_days * DAY))
-            self.assertEqual(svc.purge_logs(d, 30, at=now_ts), 2)
-            self.assertEqual(sorted(p.name for p in Path(d).iterdir()), ["keep.txt", "server-new.log"])
+            self.assertEqual(svc.purge_logs(d, 30, at=now_ts), 4)   # 오래된 .log 2개 + 합치지 못한 오래된 .out/.err 2개
+            self.assertEqual(sorted(p.name for p in Path(d).iterdir()), ["keep.txt", "server-new.log", "server-new.log.out"])
             self.assertEqual(svc.purge_logs(d, 0, at=now_ts), 0)
             self.assertEqual(svc.purge_logs(None, 30), 0)
             self.assertEqual(svc.purge_logs(str(Path(d) / "없는폴더"), 30), 0)

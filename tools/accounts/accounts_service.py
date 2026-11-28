@@ -338,8 +338,12 @@ class Db:
             return out
 
 
+LOG_SUFFIXES = (".log", ".log.out", ".log.err")   # run-server/run-accounts.ps1이 프로세스가 끝날 때 .out/.err를 날짜 .log에 합친다. 강제 종료로 못 합친 조각도 같은 보관 기간을 따른다
+
+
 def purge_logs(log_dir, days: int, at=None) -> int:
-    """방침(#27): 서버 로그는 30일 후 삭제한다. log_dir의 *.log 중 마지막 수정이 days일 전보다 오래된 것을 지운다. 지운 개수."""
+    """방침(#27): 서버 로그는 30일 후 삭제한다. log_dir의 로그 파일(*.log, 합치지 못한 *.log.out/.err) 중 마지막 수정이 days일 전보다 오래된 것을 지운다. 지운 개수.
+    기준이 파일의 마지막 수정 시각이라, 오래 켜 둔 프로세스의 현재 출력 파일은 계속 쓰이는 동안 지워지지 않는다 (방침 문구도 '파일 단위, 마지막 기록 후 30일')."""
     if not log_dir or days <= 0:
         return 0
     d = Path(log_dir)
@@ -347,9 +351,9 @@ def purge_logs(log_dir, days: int, at=None) -> int:
         return 0
     cutoff = (time.time() if at is None else at) - days * 86400
     n = 0
-    for f in d.glob("*.log"):
+    for f in d.iterdir():
         try:
-            if f.is_file() and f.stat().st_mtime < cutoff:
+            if f.name.endswith(LOG_SUFFIXES) and f.is_file() and f.stat().st_mtime < cutoff:
                 f.unlink()
                 n += 1
         except OSError as e:   # 쓰는 중이거나 권한 문제: 다음에 다시 시도한다
