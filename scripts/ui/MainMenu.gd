@@ -18,6 +18,12 @@ const CONNECT_TIMEOUT_SEC := 8.0
 ## 살아 있는 클라이언트는 이 ping으로 "기다리는 중"임을 알린다 (사람이 얼마나 오래 기다려도 방이 닫히지 않게).
 const PING_SEC := 60.0
 const SERVER_KEY := "server"
+## 신고/삭제 요청/방침 경로 (#27). 웹 양식 주소가 정해지면 DELETION_REQUEST_URL / REPORT_URL을 그 주소로 바꾼다 (지금은 메일).
+## PRIVACY_POLICY_URL은 방침 페이지를 웹에 올린 뒤 채운다 (비어 있으면 메일 안내만 보인다).
+const SUPPORT_EMAIL := "nerochaos1@gmail.com"
+const PRIVACY_POLICY_URL := ""
+const DELETION_REQUEST_URL := "mailto:nerochaos1@gmail.com?subject=%5B%EB%A0%88%EC%9D%B8%20%EC%9B%8C%EC%A6%88%5D%20%EB%8D%B0%EC%9D%B4%ED%84%B0%20%EC%82%AD%EC%A0%9C%20%EC%9A%94%EC%B2%AD"
+const REPORT_URL := "mailto:nerochaos1@gmail.com?subject=%5B%EB%A0%88%EC%9D%B8%20%EC%9B%8C%EC%A6%88%5D%20%EB%8B%89%EB%84%A4%EC%9E%84%20%EC%8B%A0%EA%B3%A0"
 
 var default_server := default_server_address()
 var profile_path := Nicknames.SAVE_PATH   # 닉네임/서버 주소를 저장하는 파일 (테스트는 다른 경로를 쓴다)
@@ -94,6 +100,18 @@ func _ready() -> void:
 	status_label.add_theme_color_override("font_color", Color(1.0, 0.85, 0.3))
 	root.add_child(status_label)
 
+	# 개인정보처리방침 / 데이터 삭제 요청 / 닉네임 신고 (#27): 웹/메일을 연다. 오프라인이어도 화면은 막히지 않는다 (열기 실패는 안내만)
+	var links := HBoxContainer.new()
+	links.alignment = BoxContainer.ALIGNMENT_CENTER
+	links.add_theme_constant_override("separation", 14)
+	root.add_child(links)
+	for entry in [["개인정보처리방침", PRIVACY_POLICY_URL], ["데이터 삭제 요청", DELETION_REQUEST_URL], ["닉네임 신고", REPORT_URL]]:
+		var lb := LinkButton.new()
+		lb.text = entry[0]
+		var url: String = entry[1]
+		lb.pressed.connect(func(): open_link(url))
+		links.add_child(lb)
+
 	_load_profile()
 	_refresh_resume()
 	resume_button.pressed.connect(resume_online)
@@ -103,6 +121,17 @@ func _ready() -> void:
 	join_button.pressed.connect(func(): start_online(NetProtocol.MODE_JOIN))
 	copy_button.pressed.connect(copy_code)
 	code_edit.text_submitted.connect(func(_t): start_online(NetProtocol.MODE_JOIN))
+
+
+## 웹/메일 링크를 연다. 열 수 없으면(오프라인 등) 안내만 보이고 아무것도 막히지 않는다. 열었는지 돌려준다 (테스트용)
+func open_link(url: String) -> bool:
+	if url == "":
+		_status("링크가 아직 준비되지 않았습니다. %s 로 메일을 보내 주세요." % SUPPORT_EMAIL)
+		return false
+	if OS.shell_open(url) != OK:
+		_status("링크를 열 수 없습니다. %s 로 메일을 보내 주세요." % SUPPORT_EMAIL)
+		return false
+	return true
 
 
 func _button(parent: Control, text: String) -> Button:
