@@ -83,12 +83,13 @@ func _draw() -> void:
 	# 여럿이 하는 판: 닉네임과 생명 (탈락이면 "탈락"). 혼자 하는 판은 이름이 없으니 그리지 않는다 (#22)
 	if participating and not is_boss_lane and snap.players.size() > 1:
 		var nick := str(snap.get("names", {}).get(str(lane_index), ""))
-		var status := "탈락" if eliminated else "♥%d" % int(floorf(lane.lives))
+		var is_away: bool = game_field.remote != null and lane_index in game_field.remote.away  # 연결이 끊긴 사람 (#23)
+		var status := "탈락" if eliminated else ("끊김" if is_away else "♥%d" % int(floorf(lane.lives)))
 		var font_size := 10
-		var tag := "%s %s" % [nick, status]
+		var tag := "%s%s %s" % ["★" if game_field.remote != null and game_field.remote.host_lane == lane_index else "", nick, status]
 		draw_rect(Rect2(Vector2(2, size.y - 15), Vector2(size.x - 4, 13)), Color(0, 0, 0, 0.6))
 		draw_string(ThemeDB.fallback_font, Vector2(4, size.y - 5), tag, HORIZONTAL_ALIGNMENT_LEFT, size.x - 6, font_size,
-			Color(1.0, 0.5, 0.45) if eliminated else Color(1, 1, 1, 0.95))
+			Color(1.0, 0.5, 0.45) if eliminated else (Color(1.0, 0.8, 0.3) if is_away else Color(1, 1, 1, 0.95)))
 
 	# 지금 보고 있는 레인 표시
 	if game_field.current_player_id == lane_index:

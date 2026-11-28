@@ -6,7 +6,7 @@ class_name MainMenu
 ##  - [빠른 시작]: 코드 없이 자리 있는 공개 방에 들어가고, 없으면 새 공개 방을 만든다(mode=quick). 그 뒤는 방 만들기와 같은 대기방이다.
 ##  - [방 입장]: 방 코드를 쳐서 들어간다(mode=join). 없는 코드/가득 참/이미 시작/너무 많이 시도는 이유를 보여 준다.
 ## 닉네임과 서버 주소는 이 화면에서 정하고 기기에 저장한다 (닉네임은 서버가 정리/중복 제거해서 돌려준다).
-## 서버 주소 기본값은 로컬 개발 서버다. 운영 서버 주소는 호스팅(#24)이 정해지면 default_server에 넣는다.
+## 서버 주소 기본값: project.godot의 `[lanewars] network/default_server` (운영 도메인, 예: wss://game.example.com) 한 곳에서 정한다. 비어 있으면 로컬 개발 서버(#24).
 ## 방장이 시작하면 online_started를 낸다: Boot가 이 메뉴에서 접속(take_client)을 넘겨 받아 서버 스냅샷을 그리는 온라인 게임 화면으로 간다.
 
 signal solo_chosen()
@@ -19,7 +19,7 @@ const CONNECT_TIMEOUT_SEC := 8.0
 const PING_SEC := 60.0
 const SERVER_KEY := "server"
 
-var default_server := "127.0.0.1:%d" % DEFAULT_PORT
+var default_server := default_server_address()
 var profile_path := Nicknames.SAVE_PATH   # 닉네임/서버 주소를 저장하는 파일 (테스트는 다른 경로를 쓴다)
 var client: NetClient = null
 var lobby_screen: LobbyScreen = null
@@ -31,6 +31,7 @@ var solo_button: Button
 var create_button: Button
 var quick_button: Button
 var join_button: Button
+var resume_button: Button      # 앱이 꺼졌다 켜졌을 때 "진행 중인 판으로 돌아가기" (#23). 저장된 방/토큰이 있을 때만 보인다
 var status_label: Label
 var code_label: Label
 var copy_button: Button
@@ -38,6 +39,7 @@ var copy_button: Button
 var _form: VBoxContainer
 var _lobby_box: VBoxContainer
 var _connecting_left := -1.0
+var _resuming := false
 var _ping_left := PING_SEC
 
 
@@ -60,12 +62,15 @@ func _ready() -> void:
 	_form = VBoxContainer.new()
 	_form.add_theme_constant_override("separation", 10)
 	root.add_child(_form)
+	resume_button = _button(_form, "")
+	resume_button.visible = false
 	solo_button = _button(_form, "혼자 하기")
 	_form.add_child(HSeparator.new())
 	_form.add_child(_caption("닉네임"))
 	name_edit = _line(_form, "", Balance.NICKNAME_MAX_LENGTH)
 	_form.add_child(_caption("서버 주소"))
 	server_edit = _line(_form, default_server, 80)
+	server_edit.editable = test_build()  # 정식 빌드에서는 서버 주소를 바꿀 수 없다 (#24)
 	quick_button = _button(_form, "빠른 시작")
 	create_button = _button(_form, "방 만들기")
 	_form.add_child(_caption("방 코드"))
@@ -90,6 +95,8 @@ func _ready() -> void:
 	root.add_child(status_label)
 
 	_load_profile()
+	_refresh_resume()
+	resume_button.pressed.connect(resume_online)
 	solo_button.pressed.connect(func(): solo_chosen.emit())
 	quick_button.pressed.connect(func(): start_online(NetProtocol.MODE_QUICK))
 	create_button.pressed.connect(func(): start_online(NetProtocol.MODE_CREATE))
@@ -127,7 +134,7 @@ func _load_profile() -> void:
 	var nick := Nicknames.sanitize(str(cfg.get_value("profile", "nickname", ""))) if has else ""
 	name_edit.text = nick if nick != "" else Nicknames.generate()  # 저장은 접속할 때 한다 (메뉴만 열어 보고 닫아도 파일을 만들지 않는다)
 	var saved_server := str(cfg.get_value("profile", SERVER_KEY, "")) if has else ""
-	if saved_server != "":
+	if saved_server != "" and test_build():
 		server_edit.text = saved_server
 
 
@@ -137,6 +144,20 @@ func _save_profile(nick: String, server: String) -> void:
 	cfg.set_value("profile", "nickname", nick)
 	cfg.set_value("profile", SERVER_KEY, server)
 	cfg.save(profile_path)
+
+
+## 테스트용(debug) 빌드인가 (#24). 평문(ws://) 접속과 서버 주소 입력은 이때만 동작한다. 정식(release) 빌드는 default_server의 wss(TLS)로만 접속한다.
+## 안드로이드 쪽 짝: android/build/src/debug|release/res/xml/network_security_config.xml (debug만 평문 허용). 테스트가 정식 빌드를 흉내 낼 수 있게 force_release를 둔다.
+static var force_release := false
+
+
+static func test_build() -> bool:
+	return OS.has_feature("debug") and not force_release
+
+
+static func default_server_address() -> String:
+	var configured := str(ProjectSettings.get_setting("lanewars/network/default_server", "")).strip_edges()
+	return configured if configured != "" else "127.0.0.1:%d" % DEFAULT_PORT
 
 
 ## 서버 주소 -> {host, port, tls}. "wss://호스트[:포트]"면 TLS(기기의 인증서 목록으로 서버 확인)로, "ws://호스트[:포트]"나 접두사가 없으면 평문으로 접속한다.
@@ -164,7 +185,10 @@ static func parse_server(text: String) -> Dictionary:
 
 
 ## 서버가 거부한 이유를 사람이 읽는 말로
-static func reject_text(reason: String) -> String:
+## info는 서버가 reject에 실어 준 서버 버전({proto, snapshot}). 서버가 내 앱보다 낮으면(서버를 아직 못 올렸다) "앱 업데이트"가 아니라 기다리라고 안내한다 (#24).
+static func reject_text(reason: String, info: Dictionary = {}) -> String:
+	if reason == NetProtocol.REJECT_PROTOCOL and int(info.get("proto", -1)) >= 0 and int(info.get("proto", -1)) < NetProtocol.PROTOCOL_VERSION:
+		return "서버가 아직 이 앱 버전으로 올라오지 않았습니다. 잠시 뒤에 다시 시도하세요."
 	match reason:
 		NetProtocol.REJECT_NO_ROOM:
 			return "없는 방 코드입니다. 코드를 다시 확인하세요."
@@ -172,21 +196,80 @@ static func reject_text(reason: String) -> String:
 			return "방이 가득 찼습니다 (최대 %d명)." % Balance.MAX_PLAYERS
 		NetProtocol.REJECT_STARTED:
 			return "이미 시작한 방입니다."
+		NetProtocol.REJECT_FINISHED:
+			return "이 판은 이미 끝났습니다."
+		NetProtocol.REJECT_LEFT:
+			return "이 판에서 이탈 처리됐습니다 (재접속 시간이 지났거나 직접 나갔습니다)."
 		NetProtocol.REJECT_TOO_MANY:
 			return "잘못된 코드를 너무 많이 입력했습니다. 잠시 뒤에 다시 시도하세요."
 		NetProtocol.REJECT_BUSY:
 			return "서버가 가득 찼습니다. 잠시 뒤에 다시 시도하세요."
+		NetProtocol.REJECT_BANNED:
+			return "이 계정은 이용이 제한되었습니다."
 		NetProtocol.REJECT_PROTOCOL:
-			return "앱 버전이 서버와 다릅니다. 앱을 업데이트하세요."
+			return "앱 버전이 서버와 다릅니다. 앱을 최신 버전으로 업데이트하세요."
 		_:
 			return "접속하지 못했습니다 (%s)." % reason
 
 
+## 서버가 원하는 이름을 그대로 받아 주지 않았을 때 알림 (#25). 평범한 접속("")은 알릴 것이 없다.
+static func name_result_text(result: String) -> String:
+	match result:
+		"taken":
+			return "이미 쓰는 닉네임이라 기존 닉네임을 그대로 씁니다."
+		"cooldown":
+			return "닉네임은 7일에 한 번만 바꿀 수 있어 기존 닉네임을 그대로 씁니다."
+		"banned_word":
+			return "쓸 수 없는 낱말이 들어 있어 닉네임을 바꾸지 못했습니다."
+		"ok":
+			return "닉네임을 바꿨습니다."
+		_:
+			return ""
+
+
+## 재접속하다 실패한 이유를 사람이 읽는 말로 (판 중 연결이 끊겼다가 돌아오지 못했을 때, 또는 앱 재시작 뒤 복귀가 거부됐을 때) (#23)
+static func reconnect_fail_text(reason: String) -> String:
+	match reason:
+		"grace_expired", NetProtocol.REJECT_LEFT:
+			return "재접속 시간이 지나 이 판에서 이탈 처리됐습니다."
+		NetProtocol.REJECT_FINISHED:
+			return "이 판은 이미 끝났습니다."
+		NetProtocol.REJECT_NO_ROOM, NetProtocol.REJECT_STARTED:
+			return "서버와 연결이 끊겼고, 판이 이미 끝났거나 닫혀서 돌아갈 수 없습니다."
+		_:
+			return reject_text(reason)
+
+
+## 저장된 "진행 중인 판"이 있으면 [돌아가기] 버튼을 보인다
+func _refresh_resume() -> void:
+	var info := Identity.load_resume()
+	resume_button.visible = not info.is_empty()
+	if not info.is_empty():
+		resume_button.text = "진행 중인 판으로 돌아가기 (방 %s)" % info.room
+
+
+## 앱이 꺼졌다 켜진 뒤 같은 방/자리로 돌아간다: 저장해 둔 서버 주소, 방 코드, 토큰으로 입장을 요청한다 (서버가 토큰으로 자리 주인을 확인한다)
+func resume_online() -> void:
+	var info := Identity.load_resume()
+	if info.is_empty() or client != null:
+		return
+	server_edit.text = info.server
+	code_edit.text = info.room
+	name_edit.text = info.name if info.name != "" else name_edit.text
+	start_online(NetProtocol.MODE_JOIN, info.token)
+
+
 ## 방 만들기/입장을 시작한다 (MODE_CREATE/MODE_JOIN). 입력이 틀렸으면 이유를 보여 주고 접속하지 않는다.
-func start_online(mode: String) -> void:
+## token을 주면 그 토큰으로 접속한다 (앱 재시작 뒤 판으로 돌아올 때, #23). 없으면 이 기기의 계정 토큰이다 (#25: 첫 실행에 만들어 저장한 것).
+func start_online(mode: String, token := "") -> void:
 	if client != null:
 		return  # 접속 중
+	if not test_build():
+		server_edit.text = default_server  # 정식 빌드: 입력/저장된 주소는 무시한다
 	var target := parse_server(server_edit.text)
+	if not target.is_empty() and not target.tls and not test_build():
+		_status("정식 앱은 암호화(wss) 서버에만 접속합니다.")
+		return
 	if target.is_empty():
 		_status("서버 주소를 '호스트:포트' (또는 wss://호스트) 모양으로 쓰세요.")
 		return
@@ -203,6 +286,8 @@ func start_online(mode: String) -> void:
 	client.player_name = nick
 	client.join_mode = mode
 	client.join_code = code if mode == NetProtocol.MODE_JOIN else ""
+	client.token = token if token != "" else Identity.account_token()
+	_resuming = token != ""
 	add_child(client)
 	client.joined.connect(_on_joined)
 	client.rejected.connect(_on_rejected)
@@ -229,7 +314,7 @@ func _process(delta: float) -> void:
 
 
 func _set_busy(busy: bool) -> void:
-	for b in [solo_button, quick_button, create_button, join_button]:
+	for b in [solo_button, quick_button, create_button, join_button, resume_button]:
 		b.disabled = busy
 
 
@@ -239,17 +324,25 @@ func _status(text: String) -> void:
 
 func _on_joined(_player_id: int) -> void:
 	_connecting_left = -1.0
+	if client.resumed:  # 진행 중인 판으로 돌아왔다: 대기방을 거치지 않고 바로 게임 화면 (Boot가 접속을 넘겨 받는다)
+		_status("게임을 불러오는 중...")
+		online_started.emit()
+		return
 	_form.visible = false
 	_lobby_box.visible = true
 	_refresh_code()
 	client.lobby_changed.connect(func(_v): _refresh_code())
-	_status("")
+	_status(name_result_text(client.name_result))
+	if client.my_name != "" and client.my_name != Nicknames.sanitize(name_edit.text):  # 서버가 정한 계정 닉네임이 내 이름이다: 다음에도 그 이름으로 보낸다 (#25)
+		name_edit.text = client.my_name
+		_save_profile(client.my_name, server_edit.text.strip_edges())
 	lobby_screen = LobbyScreen.new()
 	_lobby_box.add_child(lobby_screen)
 	lobby_screen.setup(client)
 	lobby_screen.leave_requested.connect(func(): _reset_online(""))
 	lobby_screen.started.connect(func():
 		_status("게임을 불러오는 중...")
+		Identity.save_resume({"server": server_edit.text.strip_edges(), "room": client.room_code, "token": client.token, "name": client.player_name})  # 앱이 꺼져도 돌아올 수 있게
 		online_started.emit())
 
 
@@ -258,8 +351,13 @@ func _refresh_code() -> void:
 		code_label.text = "방 코드  %s%s" % [client.room_code, "  (공개 방)" if bool(client.lobby.get("public", false)) else ""]
 
 
-func _on_rejected(reason: String, _info: Dictionary) -> void:
-	_reset_online(reject_text(reason))
+func _on_rejected(reason: String, info: Dictionary) -> void:
+	if _resuming:  # 돌아갈 판이 없다 (끝났거나 이탈 처리됨): 저장해 둔 것을 지운다
+		Identity.clear_resume()
+		_refresh_resume()
+		_reset_online(reconnect_fail_text(reason))
+		return
+	_reset_online(reject_text(reason, info))
 
 
 func _on_disconnected() -> void:
@@ -270,6 +368,7 @@ func _on_disconnected() -> void:
 ## 접속/대기방에서 처음 화면으로 돌아간다 (message가 있으면 보여 준다)
 func _reset_online(message: String) -> void:
 	_connecting_left = -1.0
+	_resuming = false
 	if client != null:
 		client.close()
 		client.queue_free()

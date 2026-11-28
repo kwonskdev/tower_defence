@@ -134,7 +134,7 @@ func _scenario(label: String, kind: String, secure: bool) -> void:
 	check(lane_b.towers.size() == tower_n and is_equal_approx(lane_b.gold, gold_b), "사칭 명령은 B의 레인을 바꾸지 않았다")
 
 	# 7) 스냅샷: 자기 레인 + 보스 레인은 자세히, 남의 레인은 요약. 보는 레인을 바꾸면 자세히 온다
-	await wait_until(func(): return a.snapshot_count > 3 and b.snapshot_count > 3 and not a.summary.is_empty() and not b.summary.is_empty(), 8000)
+	await wait_until(func(): return a.snapshot_count > 3 and b.snapshot_count > 3 and not a.summary.is_empty() and not b.summary.is_empty() and not a.summary.get("1", {}).get("towers", []).is_empty(), 8000)  # 요약(1Hz)에 B의 타워가 실릴 때까지 (타워를 짓기 전에 온 요약만 보고 판단하면 가끔 비어 있다)
 	var sn_a: Dictionary = a.snapshot
 	check(sn_a.lanes.has("0") and not sn_a.lanes.has("1"), "A는 자기 레인만 자세히 받는다 (레인 %s)" % [sn_a.lanes.keys()])
 	var own_towers: Array = sn_a.lanes["0"].towers

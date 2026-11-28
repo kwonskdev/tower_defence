@@ -8,6 +8,8 @@ var fail_n := 0
 
 
 func _ready() -> void:
+	Identity.resume_path = "user://test_resume.cfg"  # 테스트가 실제 앱의 복귀 정보(user://resume.cfg)를 건드리지 않게 (#23)
+	Identity.account_path = "user://test_account.cfg"  # 실제 앱의 계정 토큰(user://account.cfg)도 (#25)
 	await run()
 	print("RESULT: pass=%d fail=%d" % [pass_n, fail_n])
 	finished.emit()

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 테스트용(debug) 빌드 전용 (#24): 평문(ws://) 접속을 허용한다. 집 Wi-Fi의 PC 내부 IP, cloudflared 빠른 터널, Tailscale 같은 테스트 서버에 붙는 용도.
+     정식(release) 빌드는 src/release/res/xml/network_security_config.xml (평문 불허)을 쓴다. 코드 쪽 안전장치: MainMenu.test_build() -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

@@ -10,7 +10,9 @@ extends Node
 ##   - 방 만들기/빠른 시작은 접속 주소당 동시에 방장으로 쥘 수 있는 방 수(MAX_ROOMS_PER_ADDR)와 전체 방 수(MAX_ROOMS)로 막고 server_busy로 거부한다. 방장 연결이 끊기면 그 자리는 풀린다.
 ## 방마다 판(GameField)이 따로 있어서 한 프로세스에서 여러 방이 동시에 돈다. 방이 서로 상태를 공유하지 않는다.
 ## 무차별 대입은 RoomCodes가 막는다: 잘못된 코드를 접속 주소마다 1분에 5번, 서버 전체로 분당 60번 넘으면 거부하고 그 연결을 끊는다.
-## 연결을 끊는 것은 그 소켓만 닫는 것이고 계정과는 상관없다 (계정은 #25).
+## 계정 (#25): accounts(Accounts)가 있으면 hello의 토큰으로 익명 계정을 찾거나 만들고(닉네임은 서버가 정한 계정 닉네임), 판이 끝나면 서버가 계산한 기록(MatchRecord)을 저장한다.
+##   hello mode "board"는 방에 들어가지 않고 순위만 조회한다. accounts가 없으면(null) 이전과 똑같이 동작한다 (계정 없음).
+##   연결을 끊는 것은 그 소켓만 닫는 것이고 계정과는 상관없다.
 
 signal room_opened(code: String)
 signal room_closed(code: String)
@@ -34,7 +36,10 @@ var idle_close_sec := IDLE_CLOSE_SEC
 var max_connections := MAX_CONNECTIONS
 var max_pending := MAX_PENDING
 var hello_timeout := NetProtocol.HELLO_TIMEOUT
+var reconnect_grace := NetProtocol.RECONNECT_GRACE_SEC       # 방에 넘기는 값 (#23): 끊긴 뒤 돌아올 수 있는 시간
+var heartbeat_timeout := NetProtocol.HEARTBEAT_TIMEOUT_SEC   # 방에 넘기는 값 (#23): 판 중 이만큼 아무것도 못 받으면 끊김
 var room_max_players := Balance.MAX_PLAYERS
+var accounts: Accounts = null        # 계정/판 기록 (#25). null이면 계정 없이 이전처럼 동작
 var clock := Callable()              # () -> 지금(ms). 테스트가 만료/시도 제한 시계를 조작한다. 비면 엔진 시계
 
 var _rooms: Dictionary = {}          # 코드 -> NetServer (방 모드)
@@ -74,6 +79,30 @@ func now_ms() -> int:
 
 func room_count() -> int:
 	return _rooms.size()
+
+
+## 운영 지표용 현재 값 (#24): 방 수(대기/진행/끝남), 방에 앉은 사람 수, 연결 수, 몬스터 수(모든 방의 레인 + 보스 레인)
+func stats() -> Dictionary:
+	var waiting := 0
+	var playing := 0
+	var finished := 0
+	var players := 0
+	var monsters := 0
+	for code in _rooms:
+		var room: NetServer = _rooms[code]
+		players += room.alive_count()
+		if _finished_at.has(code) or room.finished:
+			finished += 1
+		elif room.game_started:
+			playing += 1
+		else:
+			waiting += 1
+		if room.field != null:
+			for lane in room.field.lanes.values():
+				monsters += lane.monsters.size()
+			if room.field.boss != null:
+				monsters += room.field.boss.get_sent_monsters().size()
+	return {"rooms": _rooms.size(), "waiting": waiting, "playing": playing, "finished": finished, "players": players, "conns": connection_count(), "monsters": monsters}
 
 
 func room_for(code: String) -> NetServer:
@@ -151,13 +180,46 @@ func _read_packets() -> void:
 			_on_hello(from, msg)
 
 
-## hello를 받아 방을 정하고(만들기/입장) 그 방에 넣는다. 거부하면 이유를 보내고 곧 끊는다.
+## hello를 받는다. 계정이 있으면 먼저 계정을 확인하고(저장소 호출은 비동기라 기다리는 동안 이 연결의 다른 메시지는 무시한다) 방으로 보낸다.
 func _on_hello(id: int, msg: Dictionary) -> void:
 	var p: Dictionary = _pending[id]
-	if p.has("kick_in"):
-		return  # 이미 거부한 연결의 메시지는 무시한다
+	if p.has("kick_in") or p.has("authing"):
+		return  # 이미 거부한 연결/계정 확인 중인 연결의 메시지는 무시한다
+	var auth := {}
+	if NetProtocol.check_hello(msg) == "" and msg.get("mode") == NetProtocol.MODE_BOARD:
+		p["authing"] = true
+		await _serve_board(id, msg)
+		return
+	if accounts != null and NetProtocol.check_hello(msg) == "":
+		p["authing"] = true
+		auth = await accounts.login(msg.get("token"), str(msg.get("name", "")))
+		if not _pending.has(id):
+			return  # 기다리는 동안 연결이 끊겼다
+		p.erase("authing")
+	_route_hello(id, msg, auth)
+
+
+## 순위 조회 (#25): 결과 메시지 하나를 보내고 연결을 닫게 한다. 방에는 들어가지 않는다.
+func _serve_board(id: int, msg: Dictionary) -> void:
+	var period := str(msg.get("period", "all"))
+	if period not in ["all", "week"]:
+		period = "all"
+	var res :={"status": "unavailable", "period": period, "rows": []}   # 계정이 없는 서버(개발)는 순위가 없다
+	if accounts != null:
+		res = await accounts.leaderboard(period)
+	if not _pending.has(id):
+		return
+	_send(id, {"t": NetProtocol.MSG_BOARD, "period": res.period, "status": res.status, "rows": res.rows})
+	_pending[id]["kick_in"] = REJECT_GRACE   # 클라이언트가 받고 스스로 끊게 두고, 안 끊으면 끊는다
+
+
+## 방을 정하고(만들기/입장) 그 방에 넣는다. 거부하면 이유를 보내고 곧 끊는다. auth는 계정 확인 결과 (비어 있으면 계정 없음).
+func _route_hello(id: int, msg: Dictionary, auth: Dictionary) -> void:
+	var p: Dictionary = _pending[id]
 	var bad := NetProtocol.check_hello(msg)
 	var room: NetServer = null
+	if bad == "" and not auth.is_empty() and not auth.ok:
+		bad = str(auth.reject)   # 차단된 계정 (account_banned)
 	if bad == "":
 		match msg.get("mode"):
 			NetProtocol.MODE_CREATE:
@@ -185,6 +247,8 @@ func _on_hello(id: int, msg: Dictionary) -> void:
 				var code := RoomCodes.normalize(str(msg.get("code", "")).left(32))
 				if not codes.allowed(p.addr, t):
 					bad = NetProtocol.REJECT_TOO_MANY
+				elif RoomCodes.is_valid_format(code) and _finished_at.has(code) and _rooms.has(code) and _rooms[code].owns_seat(msg.get("token")):
+					room = _rooms[code]  # 끝난 판의 자리 주인: 방이 "판이 끝났다"(game_finished)로 거부한다 (#54)
 				elif not RoomCodes.is_valid_format(code) or not _rooms.has(code) or _finished_at.has(code):  # 끝난 방은 코드가 아직 남아 있어도 없는 방처럼 거부한다
 					bad = NetProtocol.REJECT_TOO_MANY if codes.record_bad(p.addr, t) else NetProtocol.REJECT_NO_ROOM
 					Log.warn(Log.Category.NETWORK, "없는 방 코드 시도: 연결 %d (%s)" % [id, bad])
@@ -198,7 +262,7 @@ func _on_hello(id: int, msg: Dictionary) -> void:
 		return
 	_pending.erase(id)
 	_conn_room[id] = room.room_code
-	room.admit(id, msg)
+	room.admit(id, msg, auth)
 
 
 func _send(id: int, msg: Dictionary) -> void:
@@ -254,6 +318,8 @@ func _create_room(public := false) -> NetServer:
 	room.lobby = Lobby.new()
 	room.lobby.max_players = room_max_players
 	room.game_mode = room.session.game_mode
+	room.reconnect_grace = reconnect_grace
+	room.heartbeat_timeout = heartbeat_timeout
 	room.field_factory = func() -> GameField: return _make_field(room)
 	add_child(room)
 	if room.start_hosted(self, peer, transport) != OK:
@@ -274,18 +340,29 @@ func _make_field(room: NetServer) -> GameField:
 	f.play_effects = false
 	room.add_child(f)
 	f.boss_ready.connect(func(boss: BossController):
-		boss.boss_defeated.connect(func(): _on_room_finished(room.room_code))
-		boss.boss_failed.connect(func(_reason: String): _on_room_finished(room.room_code)), CONNECT_ONE_SHOT)
+		boss.boss_defeated.connect(func(): _on_room_finished(room.room_code, true))
+		boss.boss_failed.connect(func(_reason: String): _on_room_finished(room.room_code, false)), CONNECT_ONE_SHOT)
 	return f
 
 
-func _on_room_finished(code: String) -> void:
+func _on_room_finished(code: String, victory: bool) -> void:
 	if not _rooms.has(code) or _finished_at.has(code):
 		return
 	_finished_at[code] = now_ms()
+	_rooms[code].mark_finished()  # 끊김/이탈 판정을 멈추고, 접속자가 없으면 유예 없이 닫힐 수 있게 한다 (#54)
+	_record_match(_rooms[code], victory)
 	# 코드는 방을 닫을 때(_close_room) 돌려받는다: 지금 돌려주면 새 방이 같은 코드를 받아 _rooms[code]를 덮어쓸 수 있다.
 	# 그동안 끝난 방은 join 검사에서 _finished_at으로 거부한다 (room_not_found).
 	Log.info(Log.Category.NETWORK, "방 판 끝: %s (입장 거부, 코드는 방을 닫을 때 반납)" % code)
+
+
+## 끝난 판의 기록을 서버가 계산해서 저장한다 (#25). 값은 시뮬레이션 상태에서만 읽는다 (MatchRecord). 저장이 안 돼도 방은 그대로 닫힌다 (Accounts가 다시 시도).
+func _record_match(room: NetServer, victory: bool) -> void:
+	if accounts == null or room.field == null or room.field.boss == null:
+		return
+	var rec := MatchRecord.build(room, victory, int(Time.get_unix_time_from_system()))
+	Log.info(Log.Category.NETWORK, "판 기록: 방 %s %s 보스 Lv.%d %.0f초 %d명" % [room.room_code, rec.result, rec.boss_level, rec.duration_s, rec.player_count])
+	accounts.record_match(rec)
 
 
 ## 빈 방(모두 나감)과 끝난 지 오래된 방을 닫는다. 사람이 있는 동안은 대기 시간 제한이 없다 (몇 시간이든 기다릴 수 있다).
@@ -296,7 +373,7 @@ func _housekeeping() -> void:
 		var starting := room.game_started and room.field == null  # 판을 만드는 중(몇 프레임)에는 닫지 않는다
 		if starting:
 			continue
-		if room.joined_count() == 0:
+		if room.alive_count() == 0:  # 끊겨서 유예 중인 사람도 아직 방에 있는 사람이다 (#23)
 			_close_room(code, "비었음")
 		elif not room.game_started and now - int(_last_msg.get(code, now)) >= int(idle_close_sec * 1000.0):
 			_close_room(code, "대기방에 오래 아무 메시지도 없음")
