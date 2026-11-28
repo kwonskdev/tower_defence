@@ -17,7 +17,10 @@ $env:LANEWARS_ACCOUNTS_KEY = Get-AccountsKey (Resolve-RootPath $Settings.Account
 $db = Resolve-RootPath $Settings.AccountsDb
 $backups = Resolve-RootPath $Settings.AccountsBackupDir
 $script = Join-Path $root "tools\accounts\accounts_service.py"
-$svcArgs = @($script, "--db", $db, "serve", "--port", $Settings.AccountsPort, "--backup-dir", $backups, "--backup-keep", $Settings.AccountsBackupKeep, "--backup-interval-hours", $Settings.AccountsBackupHours)
+# settings.local.ps1 이 옛 설정 목록을 통째로 덮어써도 보관 기간 정리(#66)가 꺼지지 않게 기본값을 채운다 (방침: 계정 365일, 로그 30일)
+foreach ($d in @{ AccountsPurgeHours = 24; AccountsInactiveDays = 365; LogRetentionDays = 30 }.GetEnumerator()) { if ($null -eq $Settings[$d.Key]) { $Settings[$d.Key] = $d.Value } }
+$svcArgs = @($script, "--db", $db, "serve", "--port", $Settings.AccountsPort, "--backup-dir", $backups, "--backup-keep", $Settings.AccountsBackupKeep, "--backup-interval-hours", $Settings.AccountsBackupHours,
+    "--purge-interval-hours", $Settings.AccountsPurgeHours, "--inactive-days", $Settings.AccountsInactiveDays, "--log-dir", $logDir, "--log-days", $Settings.LogRetentionDays)
 while ($true) {
     $log = Join-Path $logDir ("accounts-{0:yyyyMMdd}.log" -f (Get-Date))
     Add-Content -Encoding UTF8 $log ("[{0:HH:mm:ss}] ---- 계정 서비스 시작 (포트 {1}, DB {2}) ----" -f (Get-Date), $Settings.AccountsPort, $db)

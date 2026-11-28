@@ -56,8 +56,11 @@ lanewars-server.exe --headless --server --port=47300 --accounts-url=http://127.0
 python tools\accounts\accounts_service.py --db data\accounts.db stats
 python tools\accounts\accounts_service.py --db data\accounts.db ban <계정ID 또는 닉네임>      # unban 도 있다
 python tools\accounts\accounts_service.py --db data\accounts.db backup --backup-dir <폴더>
-python tools\accounts\accounts_service.py --db data\accounts.db purge --inactive-days 180 --match-days 365   # 보관 기간 정리 (자동 실행 아님)
+python tools\accounts\accounts_service.py --db data\accounts.db show <계정ID 또는 닉네임>              # 삭제 요청 확인용
+python tools\accounts\accounts_service.py --db data\accounts.db delete-account <계정ID> --yes           # 삭제 요청 처리 (--yes 없으면 미리보기)
+python tools\accounts\accounts_service.py --db data\accounts.db purge --log-dir logs                    # 보관 기간 정리를 지금 한 번 (서비스가 매일 자동으로도 한다)
 ```
+삭제 요청 처리 절차와 자동 정리는 `docs/account-deletion.md` (#66).
 
 ## 4. 프로토콜 (PROTOCOL_VERSION 4 -> 5)
 
@@ -85,6 +88,7 @@ python tools\accounts\accounts_service.py --db data\accounts.db purge --inactive
 | 플레이어별 `account_id`(게스트는 빈 값), `lane`, `nickname`, `boss_damage`(`damage_by_player`), `lane_damage`(유령 구간 레인 데미지), `ghost_boss_damage`(유령 구간 보스 레인 데미지), `left`(판 중 이탈) | 서버 상태 |
 
 - 시작하지 않은 대기방, 모두 나가서 닫힌 판(끝 신호 없이 방이 사라진 경우)은 기록이 없다.
+- **계정이 한 명도 없는 판(전원 게스트)은 저장하지 않는다** (#66): 판 기록은 계정과 함께 삭제되는데 지워 줄 계정이 없으면 게스트 닉네임이 영원히 남기 때문이다. 계정이 삭제된 참가자의 줄은 닉네임 없이 `(삭제된 사용자)`로 저장된다 (`docs/account-deletion.md` 2절).
 - 순위 기준: **방(팀) 기록**, 보스 도달 레벨 높은 순 -> 승리 먼저 -> 걸린 시간 짧은 순 -> 먼저 끝난 순. 주간 = 최근 7일(굴러가는 창). 참여자 닉네임이 같이 나온다. 인원수가 달라도 같은 줄에 선다 (인원별 구분은 하지 않았다: 필요하면 `player_count`로 나눈다).
 
 ## 6. 수집하는 정보 (#27 개인정보처리방침/스토어 설문용 초안)
@@ -93,13 +97,13 @@ python tools\accounts\accounts_service.py --db data\accounts.db purge --inactive
 |---|---|---|---|
 | 기기 (`user://account.cfg`) | 계정 토큰(무작위 128비트) | 같은 사람 식별 | 앱을 지울 때까지 |
 | 기기 (`user://profile.cfg`, `resume.cfg`) | 닉네임, 서버 주소, 진행 중인 방 코드와 토큰 | 입력 기억, 판으로 돌아오기 | 앱을 지울 때까지 / 판이 끝나면 삭제 |
-| 서버 DB `players` | 계정 ID(무작위), **토큰 해시**(SHA-256), 닉네임, 만든 시각, 마지막 접속 시각, 차단 여부, 닉네임 변경 시각 | 계정, 중복 방지, 차단 | 마지막 접속 후 **180일** 뒤 삭제 (제안. `purge --inactive-days 180`. 자동 실행은 아직 아님) |
-| 서버 DB `matches`, `match_players` | 판 시각, 인원, 결과, 도달 레벨, 걸린 시간, 앱 버전, 플레이어별 계정 ID·**그 시점의 닉네임**·레인·피해량·이탈 여부 | 기록, 순위 | **365일** 뒤 삭제 (제안. `purge --match-days 365`). 계정이 지워지면 기록은 남지만 계정 연결만 끊긴다 |
+| 서버 DB `players` | 계정 ID(무작위), **토큰 해시**(SHA-256), 닉네임, 만든 시각, 마지막 접속 시각, 차단 여부, 닉네임 변경 시각 | 계정, 중복 방지, 차단 | 마지막 접속 후 **365일** 뒤 삭제 (방침 #27, 소유자 결정. 서비스가 매일 자동으로 한다: `docs/account-deletion.md`) |
+| 서버 DB `matches`, `match_players` | 판 시각, 인원, 결과, 도달 레벨, 걸린 시간, 앱 버전, 플레이어별 계정 ID·**그 시점의 닉네임**·레인·피해량·이탈 여부 | 기록, 순위 | **계정과 함께** 삭제 (별도 보관 없음). 다인원 판에서 한 명이 지워지면 그 사람 줄만 익명(`(삭제된 사용자)`), 계정이 연결된 참가자가 남지 않으면 판 전체 삭제 (`docs/account-deletion.md` 2절) |
 | 서버 메모리 | 방, 접속 중인 연결 | 게임 진행 | 판/접속이 끝나면 |
-| 서버 로그 | 닉네임, 연결 번호, 방 코드, 거부 사유 (접속 **IP 주소는 로그에 남기지 않는다**) | 운영 | Windows 로그 폴더 `logs\`, 수동 정리 (보관 기간 미정) |
+| 서버 로그 | 닉네임, 연결 번호, 방 코드, 거부 사유 (접속 **IP 주소는 로그에 남기지 않는다**) | 운영 | Windows 로그 폴더 `logs\`, **30일** 뒤 삭제 (계정 서비스의 정기 작업이 `*.log`를 지운다) |
 
 수집하지 않는 것: 이메일, 전화번호, 실명, 기기 ID(광고 ID 포함), 위치, IP 주소(Cloudflare는 자체적으로 본다: Cloudflare 정책 확인 필요). 닉네임은 다른 플레이어에게 보이고(방, 순위), 사용자가 직접 정한 이름이라 실명을 쓰지 말라는 안내가 필요하다.
-사용자가 삭제를 요청하는 경로는 아직 없다 (운영자가 `players`에서 계정 ID로 지우는 방법뿐): #27에서 정할 일.
+삭제 요청은 메일로 받고 운영자가 `delete-account` 명령으로 처리한다 (절차: `docs/account-deletion.md` 4절, #66).
 
 ## 7. 서버를 나눌 때 / DB를 바꿀 때
 
